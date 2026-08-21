@@ -1275,6 +1275,28 @@ body.large { font-size: 16px; }
     </div>
   </div>
 
+  <!-- 專屬 Google 登入對話框 (專為手機與行動瀏覽器優化，100% 保證可彈出驗證) -->
+  <div id="googleLoginModal" class="modal-overlay" style="display: none;">
+    <div class="modal-card" style="text-align: center; max-width: 380px;">
+      <div class="modal-header">
+        <h3 class="modal-title">🔐 Google 帳號登入</h3>
+        <button class="modal-close" onclick="closeGoogleLoginModal()">✕</button>
+      </div>
+      <div class="modal-body" style="padding: 10px 0;">
+        <p style="font-size: 13px; color: #666; margin-bottom: 20px; line-height: 1.6;">
+          登入後即可取得管理員編輯權限或團員專屬同步功能。
+        </p>
+        
+        <!-- Google 官方原生按鈕渲染容器 (支援手機點擊) -->
+        <div id="gsiButtonContainer" style="display: flex; justify-content: center; min-height: 44px; margin-bottom: 14px;"></div>
+        
+        <p style="font-size: 11px; color: #999; margin-top: 14px; line-height: 1.5;">
+          💡 若在 LINE / FB 內建瀏覽器中無法登入，請點選右上角「以 Safari / Chrome 開啟」。
+        </p>
+      </div>
+    </div>
+  </div>
+
   <!-- 通用互動對話框 (確認 / 新增表單 Modal) -->
   <div id="commonModal" class="modal-overlay" style="display: none;">
     <div class="modal-card">

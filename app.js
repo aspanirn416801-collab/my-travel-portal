@@ -119,7 +119,12 @@ function initGoogleAuth() {
       google.accounts.id.initialize({
         client_id: GOOGLE_CLIENT_ID,
         callback: handleCredentialResponse,
+        auto_select: false,
+        cancel_on_tap_outside: true,
       });
+
+      // 預先在彈窗中渲染 Google 官方原生按鈕 (100% 手機相容)
+      renderGsiOfficialButton();
     }
   } catch (e) {
     console.warn("Google SDK 初始化警示:", e);
@@ -128,21 +133,53 @@ function initGoogleAuth() {
   updateAuthUI();
 }
 
+function renderGsiOfficialButton() {
+  const container = document.getElementById("gsiButtonContainer");
+  if (container && window.google && google.accounts && google.accounts.id) {
+    container.innerHTML = "";
+    google.accounts.id.renderButton(container, {
+      theme: "outline",
+      size: "large",
+      type: "standard",
+      shape: "pill",
+      text: "signin_with",
+      logo_alignment: "left",
+      width: 260,
+    });
+  }
+}
+
 function triggerGoogleLogin() {
+  const modal = document.getElementById("googleLoginModal");
+  if (modal) modal.style.display = "flex";
+
   if (window.google && google.accounts && google.accounts.id) {
     try {
       google.accounts.id.initialize({
         client_id: GOOGLE_CLIENT_ID,
         callback: handleCredentialResponse,
+        auto_select: false,
       });
-      google.accounts.id.prompt();
+
+      renderGsiOfficialButton();
+
+      // 同時嘗試喚起 One Tap 快速登入
+      google.accounts.id.prompt((notification) => {
+        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+          console.log("One Tap 未直接顯示，請點選彈窗按鈕進行登入");
+        }
+      });
     } catch (e) {
-      console.error("觸發 Google 登入失敗:", e);
-      alert("無法啟動 Google 登入，請檢查網路連線或稍後再試。");
+      console.warn("GSI 觸發狀態:", e);
     }
   } else {
-    alert("Google 登入服務正在連線中，請稍候重試。");
+    alert("Google 登入服務載入中，請稍候重試。");
   }
+}
+
+function closeGoogleLoginModal() {
+  const modal = document.getElementById("googleLoginModal");
+  if (modal) modal.style.display = "none";
 }
 
 function updateAuthUI() {
@@ -176,6 +213,7 @@ function updateAuthUI() {
 
 // 登入成功回呼
 function handleCredentialResponse(response) {
+  closeGoogleLoginModal();
   idToken = response.credential;
   localStorage.setItem("google_id_token", idToken);
   showToast("登入成功，驗證權限中...");
