@@ -11,6 +11,18 @@ const MASTER_SHEET_ID = "YOUR_MASTER_SHEET_ID_HERE";
 // 請填寫您的 Google Client ID (用於防止 Token 偽造/跨應用替換)
 const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID_HERE";
 
+// 雲端硬碟總資料夾名稱（當建立新行程且未指定 ID 時，所有行程資料夾與手冊將自動歸檔於此路徑下）
+const ROOT_TRAVEL_FOLDER_NAME = "my-travels";
+
+// 輔助函式：取得或建立雲端硬碟根目錄下的指定資料夾
+function getOrCreateRootFolder(folderName) {
+  const folders = DriveApp.getFoldersByName(folderName);
+  if (folders.hasNext()) {
+    return folders.next();
+  }
+  return DriveApp.createFolder(folderName);
+}
+
 // 驗證前端傳過來的 Google ID Token (JWT)
 // 透過 Google Tokeninfo API 安全解析出使用者的 Email，並驗證 Audience
 function verifyIdToken(token) {
@@ -210,16 +222,51 @@ function doPost(e) {
   
   const masterSpreadsheet = SpreadsheetApp.openById(MASTER_SHEET_ID);
   
-  // 1. 建立新行程與初始化
+  // 1. 建立新行程與初始化 (支援自動建立 Google 雲端硬碟資料夾與試算表)
   if (action === "createTrip") {
     const uuid = postData.uuid;
     const name = postData.name;
-    const sheetId = postData.sheetId;
-    const folderId = postData.folderId;
+    let sheetId = (postData.sheetId || "").trim();
+    let folderId = (postData.folderId || "").trim();
     const allowedUsers = postData.allowedUsers || "";
     const startDate = postData.startDate || "";
     const endDate = postData.endDate || "";
     const duration = postData.duration || "";
+    
+    // 若 sheetId 或 folderId 為空，啟動全自動建立機制
+    if (!sheetId || !folderId) {
+      try {
+        // 1. 取得或建立總目錄 my-travels
+        const rootFolder = getOrCreateRootFolder(ROOT_TRAVEL_FOLDER_NAME);
+        
+        // 2. 在 my-travels 底下為該行程建立專屬主資料夾
+        const tripFolder = rootFolder.createFolder(name);
+        
+        // 3. 若 folderId 為空，在行程資料夾內建立「景點照片與上傳檔案」相簿資料夾
+        if (!folderId) {
+          const photoFolder = tripFolder.createFolder("景點照片與上傳檔案");
+          // 設定共享權限為「任何知道連結的人均可檢視」，避免圖片讀取 403
+          photoFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+          folderId = photoFolder.getId();
+        }
+        
+        // 4. 若 sheetId 為空，在行程資料夾內建立專屬試算表
+        if (!sheetId) {
+          const newSS = SpreadsheetApp.create(name + " - 行程手冊");
+          sheetId = newSS.getId();
+          
+          // 將建立於根目錄的試算表檔案移入 tripFolder
+          const file = DriveApp.getFileById(sheetId);
+          tripFolder.addFile(file);
+          DriveApp.getRootFolder().removeFile(file);
+        }
+      } catch (driveErr) {
+        return ContentService.createTextOutput(JSON.stringify({
+          status: "error",
+          message: "自動在雲端硬碟建立資料夾或試算表失敗: " + driveErr.message
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
+    }
     
     const tripSheet = masterSpreadsheet.getSheetByName("Trips");
     tripSheet.appendRow([uuid, name, sheetId, folderId, allowedUsers]);
@@ -227,11 +274,17 @@ function doPost(e) {
     // 初始化關聯試算表的結構與分頁
     try {
       initializeSubSheet(sheetId, name, startDate, endDate, duration);
-      return ContentService.createTextOutput(JSON.stringify({ status: "success", message: "Trip created & initialized" }))
-                           .setMimeType(ContentService.MimeType.JSON);
+      return ContentService.createTextOutput(JSON.stringify({ 
+        status: "success", 
+        sheetId: sheetId,
+        folderId: folderId,
+        message: "行程建立成功！已自動在雲端硬碟「" + ROOT_TRAVEL_FOLDER_NAME + "/" + name + "」建立專屬資料夾與試算表手冊。" 
+      })).setMimeType(ContentService.MimeType.JSON);
     } catch(err) {
-      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Sheet initialized failed: " + err.message }))
-                           .setMimeType(ContentService.MimeType.JSON);
+      return ContentService.createTextOutput(JSON.stringify({ 
+        status: "error", 
+        message: "試算表初始化失敗: " + err.message 
+      })).setMimeType(ContentService.MimeType.JSON);
     }
   }
   

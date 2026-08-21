@@ -2267,12 +2267,12 @@ function openCreateTripModal() {
       <input type="text" id="newDuration" class="ef-input" placeholder="例如: 8天7夜">
     </div>
     <div class="ef-wrap">
-      <div class="ef-label">關聯 Google 試算表 ID <span style="color:var(--red);">*</span></div>
-      <input type="text" id="newSheetId" class="ef-input" placeholder="請貼上該行程專用試算表的 ID">
+      <div class="ef-label">Google 試算表 ID <span style="font-weight:normal;color:#888;">(選填，留空將自動在雲端建立)</span></div>
+      <input type="text" id="newSheetId" class="ef-input" placeholder="留空將自動在 my-travels/行程名稱/ 下建立">
     </div>
     <div class="ef-wrap">
-      <div class="ef-label">雲端硬碟資料夾 ID (上傳照片處) <span style="color:var(--red);">*</span></div>
-      <input type="text" id="newFolderId" class="ef-input" placeholder="請貼上雲端硬碟資料夾的 ID">
+      <div class="ef-label">雲端硬碟資料夾 ID <span style="font-weight:normal;color:#888;">(選填，留空將自動在雲端建立)</span></div>
+      <input type="text" id="newFolderId" class="ef-input" placeholder="留空將自動建立景點照片專屬資料夾">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">授權人員 Email (以英文逗號分隔，留空則僅管理員可見)</div>
@@ -2283,7 +2283,7 @@ function openCreateTripModal() {
   openFormModal({
     title: "➕ 建立新旅遊行程",
     bodyHtml: formHtml,
-    confirmText: "建立行程並初始化試算表",
+    confirmText: "🚀 一鍵建立行程與雲端手冊",
     onConfirm: async () => {
       const uuid = document.getElementById("newTripUuid").value.trim();
       const name = document.getElementById("newTripName").value.trim();
@@ -2296,10 +2296,8 @@ function openCreateTripModal() {
         .getElementById("newAllowedUsers")
         .value.trim();
 
-      if (!uuid || !name || !sheetId || !folderId || !startDate || !endDate) {
-        alert(
-          "請完整填寫行程識別碼、名稱、出發/結束日期、試算表 ID 與資料夾 ID！",
-        );
+      if (!uuid || !name || !startDate || !endDate) {
+        alert("請填寫行程識別碼、行程名稱、出發日期與結束日期！");
         return false;
       }
 
@@ -2310,7 +2308,7 @@ function openCreateTripModal() {
       }
 
       allowedUsers = allowedUsers.replace(/，/g, ",");
-      showLoading("正在雲端建立行程並自動初始化試算表結構...");
+      showLoading("正在雲端自動建立行程資料夾、初始化試算表結構...");
 
       try {
         const res = await fetch(GAS_API_URL, {
@@ -2331,7 +2329,7 @@ function openCreateTripModal() {
         });
         const result = await res.json();
         if (result.status === "success") {
-          showToast("新行程建立成功且初始化完畢！ ✓");
+          showToast(result.message || "新行程建立成功且初始化完畢！ ✓");
           await fetchTrips();
           renderAdmin();
         } else {
