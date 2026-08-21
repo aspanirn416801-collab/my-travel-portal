@@ -4,21 +4,44 @@
 const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
 
-// 前端全局狀態管理
+// 前端全局狀態管理 (啟動時立即從 LocalStorage 快取中還原，實現 0.001 秒瞬間秒開！)
 let idToken = localStorage.getItem("google_id_token") || null;
-let userRole = "guest"; // 'admin' | 'user' | 'guest'
+let userRole = localStorage.getItem("cache_userRole") || "guest"; // 'admin' | 'user' | 'guest'
 let tripsList = []; // 可存取的行程列表
 let currentTripUuid = "";
 let tripData = null; // 當前行程詳細手冊資料
 let currentTab = "checklist";
 let selectedDay = 0;
 
-// 初始化流程
-window.onload = function () {
-  initGoogleAuth();
+// 預先同步載入本地快取
+try {
+  const cachedTrips = localStorage.getItem("cache_tripsList");
+  if (cachedTrips) tripsList = JSON.parse(cachedTrips);
+} catch (e) {}
+
+// 初始化流程：DOMContentLoaded 立即觸發，不等網路！
+document.addEventListener("DOMContentLoaded", function () {
   initRouter();
+  initGoogleAuth();
+
+  // 若當前在手冊頁，立即從快取渲染，0 秒等待！
+  if (currentTripUuid) {
+    try {
+      const cachedTrip = localStorage.getItem("cache_trip_" + currentTripUuid);
+      if (cachedTrip) {
+        tripData = JSON.parse(cachedTrip);
+        initCountdown();
+        render();
+      }
+    } catch (e) {}
+  } else {
+    // 若在大廳頁，立即渲染大廳卡片！
+    renderHubTripsGrid();
+  }
+
+  // 在背景靜默連線 Google Apps Script 同步最新數據
   fetchTrips();
-};
+});
 
 // 監聽瀏覽器上一頁/下一頁
 window.onpopstate = function () {
@@ -27,6 +50,7 @@ window.onpopstate = function () {
     fetchTripData();
   } else {
     showHubView();
+    renderHubTripsGrid();
   }
 };
 
@@ -202,12 +226,6 @@ function formatDriveImageUrl(url) {
   if (!url) return "";
   const trimmed = String(url).trim();
 
-  // 檢查是否為 Google Drive 相關連結並擷取 File ID
-  // 1. https://drive.google.com/uc?export=view&id=FILE_ID 或 uc?id=FILE_ID
-  // 2. https://drive.google.com/file/d/FILE_ID/view...
-  // 3. https://drive.google.com/open?id=FILE_ID
-  // 4. https://drive.google.com/thumbnail?id=FILE_ID
-  // 5. https://lh3.googleusercontent.com/d/FILE_ID
   const match =
     trimmed.match(/drive\.google\.com\/uc\?(?:[^"'\s]*&)?id=([a-zA-Z0-9_-]+)/i) ||
     trimmed.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/i) ||
@@ -225,14 +243,12 @@ function formatDriveImageUrl(url) {
 function handleImgError(img) {
   if (!img) return;
   const currentSrc = img.src || "";
-  // 若使用 lh3 載入失敗，嘗試降級切換至 Google Drive thumbnail 格式
   const match = currentSrc.match(/lh3\.googleusercontent\.com\/d\/([a-zA-Z0-9_-]+)/i);
   if (match && match[1] && !img.dataset.hasRetried) {
     img.dataset.hasRetried = "true";
     img.src = `https://drive.google.com/thumbnail?id=${match[1]}&sz=w1000`;
     return;
   }
-  // 若仍無法載入，隱藏圖片以維持版面整齊
   img.style.display = "none";
 }
 
@@ -246,9 +262,121 @@ function sanitizeUrl(url) {
   return "#";
 }
 
-// 取得行程清單 (支援已登入管理員、團員或未登入訪客)
+// 智能目的地地名與國家封面圖庫 (支援全球中英文關鍵字自動匹配)
+const DESTINATION_COVERS = [
+  {
+    keywords: ["okayama", "岡山", "kurashiki", "倉敷", "後樂園"],
+    url: "https://images.unsplash.com/photo-1503899036084-c55cdd92da26?auto=format&fit=crop&w=1200&q=85", // 岡山城與名園
+    cityTag: "🇯🇵 日本 · 岡山",
+  },
+  {
+    keywords: ["tokyo", "東京", "shinjuku", "shibuya", "新宿", "澀谷", "銀座"],
+    url: "https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?auto=format&fit=crop&w=1200&q=85", // 東京鐵塔夜景
+    cityTag: "🇯🇵 日本 · 東京",
+  },
+  {
+    keywords: ["osaka", "大阪", "dotonbori", "道頓堀", "心齋橋", "環球影城", "usj"],
+    url: "https://images.unsplash.com/photo-1590559899731-a382839e5549?auto=format&fit=crop&w=1200&q=85", // 大阪城與街景
+    cityTag: "🇯🇵 日本 · 大阪",
+  },
+  {
+    keywords: ["kyoto", "京都", "gion", "祇園", "清水寺", "金閣寺", "嵐山", "arashiyama"],
+    url: "https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=1200&q=85", // 京都古都名寺
+    cityTag: "🇯🇵 日本 · 京都",
+  },
+  {
+    keywords: ["hokkaido", "北海道", "sapporo", "札幌", "otaru", "小樽", "furano", "富良野", "hakodate", "函館"],
+    url: "https://images.unsplash.com/photo-1578637387939-43c525550085?auto=format&fit=crop&w=1200&q=85", // 北海道雪景
+    cityTag: "🇯🇵 日本 · 北海道",
+  },
+  {
+    keywords: ["fukuoka", "福岡", "kyushu", "九州", "kumamoto", "熊本", "oita", "由布院", "別府"],
+    url: "https://images.unsplash.com/photo-1583084360699-236b28203f56?auto=format&fit=crop&w=1200&q=85", // 九州海濱
+    cityTag: "🇯🇵 日本 · 九州",
+  },
+  {
+    keywords: ["okinawa", "沖繩", "naha", "那霸", "石垣", "宮古"],
+    url: "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=85", // 沖繩蔚藍玻璃海
+    cityTag: "🇯🇵 日本 · 沖繩",
+  },
+  {
+    keywords: ["korea", "韓國", "seoul", "首爾", "busan", "釜山", "jeju", "濟州"],
+    url: "https://images.unsplash.com/photo-1538485399081-7191377e8241?auto=format&fit=crop&w=1200&q=85", // 韓國首爾
+    cityTag: "🇰🇷 韓國 · 首爾",
+  },
+  {
+    keywords: ["europe", "歐洲", "paris", "巴黎", "france", "法國"],
+    url: "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?auto=format&fit=crop&w=1200&q=85", // 巴黎鐵塔
+    cityTag: "🇫🇷 法國 · 巴黎",
+  },
+  {
+    keywords: ["swiss", "瑞士", "alps", "阿爾卑斯", "zermatt", "策馬特", "interlaken"],
+    url: "https://images.unsplash.com/photo-1530122037265-a5f1f91d3b99?auto=format&fit=crop&w=1200&q=85", // 瑞士雪山與湖泊
+    cityTag: "🇨🇭 瑞士 · 阿爾卑斯",
+  },
+  {
+    keywords: ["london", "倫敦", "uk", "英國", "england"],
+    url: "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?auto=format&fit=crop&w=1200&q=85", // 倫敦大笨鐘
+    cityTag: "🇬🇧 英國 · 倫敦",
+  },
+  {
+    keywords: ["thailand", "泰國", "bangkok", "曼谷", "chiangmai", "清邁", "phuket", "普吉"],
+    url: "https://images.unsplash.com/photo-1508009603885-50cf7c579365?auto=format&fit=crop&w=1200&q=85", // 泰國渡假
+    cityTag: "🇹🇭 泰國 · 曼谷",
+  },
+  {
+    keywords: ["usa", "美國", "america", "nyc", "紐約", "la", "洛杉磯", "sf", "舊金山"],
+    url: "https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?auto=format&fit=crop&w=1200&q=85", // 紐約天際線
+    cityTag: "🇺🇸 美國 · 紐約",
+  },
+  {
+    keywords: ["taiwan", "台灣", "taipei", "台北", "tainan", "台南", "hualien", "花蓮", "kenting", "墾丁"],
+    url: "https://images.unsplash.com/photo-1508248467877-aec1b08de376?auto=format&fit=crop&w=1200&q=85", // 台灣山城
+    cityTag: "🇹🇼 台灣 · 漫遊",
+  },
+];
+
+// 根據行程名稱與 UUID 智能匹配專屬城市封面照片與標籤
+function getAutoCoverInfo(name = "", uuid = "", customUrl = "") {
+  if (customUrl) {
+    return {
+      url: sanitizeUrl(customUrl),
+      tag: "✈️ 行程手冊",
+    };
+  }
+
+  const combined = (name + " " + uuid).toLowerCase();
+  for (const item of DESTINATION_COVERS) {
+    if (item.keywords.some((k) => combined.includes(k.toLowerCase()))) {
+      return {
+        url: item.url,
+        tag: item.cityTag,
+      };
+    }
+  }
+
+  // 若無特定關鍵字，使用大氣的全球高空航旅封面
+  return {
+    url: "https://images.unsplash.com/photo-1436491865332-7a61a109cc05?auto=format&fit=crop&w=1200&q=85",
+    tag: "🌍 世界漫遊",
+  };
+}
+
+// 取得行程清單 (SWR 0 秒瞬間秒開快取機制)
 async function fetchTrips() {
-  showLoading("載入行程清單中...");
+  // 1. 優先從本地快取瞬間秒開大廳，0 等待！
+  try {
+    const cached = localStorage.getItem("cache_tripsList");
+    const cachedRole = localStorage.getItem("cache_userRole");
+    if (cached) {
+      tripsList = JSON.parse(cached);
+      if (cachedRole) userRole = cachedRole;
+      updateAuthUI();
+      renderHubTripsGrid();
+    }
+  } catch (e) {}
+
+  // 2. 背景向 Google 試算表靜默同步最新清單
   try {
     const tokenParam = idToken ? `&token=${encodeURIComponent(idToken)}` : "";
     const res = await fetch(`${GAS_API_URL}?action=getTrips${tokenParam}`);
@@ -257,6 +385,12 @@ async function fetchTrips() {
     if (result.status === "success") {
       userRole = result.role || "guest";
       tripsList = result.trips || [];
+
+      // 儲存至本地快取
+      try {
+        localStorage.setItem("cache_tripsList", JSON.stringify(tripsList));
+        localStorage.setItem("cache_userRole", userRole);
+      } catch (e) {}
 
       updateAuthUI();
 
@@ -273,29 +407,24 @@ async function fetchTrips() {
       if (currentTripUuid) {
         fetchTripData();
       }
-    } else {
-      showToast(result.message || "取得行程清單失敗");
     }
   } catch (e) {
-    console.error("連線後端錯誤:", e);
-    showToast("連線後端 API 失敗，請檢查網路");
-  } finally {
-    hideLoading();
+    console.warn("連線後端狀態:", e);
   }
 }
 
-// 渲染首頁行程大廳卡片網格
+// 渲染首頁行程大廳卡片網格 (根據目的地自動智能適配城市封面)
 function renderHubTripsGrid() {
   const container = document.getElementById("hubTripsGrid");
   if (!container) return;
 
   if (tripsList.length === 0) {
     container.innerHTML = `
-      <div style="text-align:center;padding:40px 10px;color:#888;grid-column:1/-1;background:#FAF8F5;border-radius:16px;border:1px dashed var(--gold);">
-        <p style="font-size:14px;margin-bottom:10px;">目前尚無任何公開行程</p>
+      <div style="text-align:center;padding:40px 10px;color:#888;grid-column:1/-1;background:var(--glass-bg);border-radius:20px;border:1.5px dashed rgba(197, 160, 89, 0.4);backdrop-filter:blur(16px);">
+        <p style="font-size:14px;margin-bottom:10px;font-weight:700;color:var(--moss);">目前尚無任何公開行程</p>
         ${userRole === "admin"
-        ? '<button class="glass-btn" style="background:var(--moss);color:#fff;display:inline-flex;" onclick="openCreateTripModal()">＋ 建立第一筆旅遊行程</button>'
-        : '<p style="font-size:12px;color:#999;">請聯絡管理員建立行程或登入管理員帳號。</p>'
+        ? '<button class="glass-btn" style="background:var(--moss-gradient);color:#fff;display:inline-flex;" onclick="openCreateTripModal()">＋ 建立第一筆旅遊行程</button>'
+        : '<p style="font-size:12px;color:#888;">請聯絡管理員建立行程或登入管理員帳號。</p>'
       }
       </div>
     `;
@@ -306,17 +435,24 @@ function renderHubTripsGrid() {
     .map((t) => {
       const safeName = escapeHtml(t.name);
       const safeUuid = escapeHtml(t.uuid);
+      const coverInfo = getAutoCoverInfo(t.name, t.uuid, t.coverUrl);
+
       return `
         <div class="trip-hub-card" onclick="navigateTo('${safeUuid}')">
-          <div>
-            <div class="hub-card-title">🍑 ${safeName}</div>
-            <div class="hub-card-uuid">識別碼: ${safeUuid}</div>
-            <div class="hub-card-meta">
-              <div>✈️ 點擊開啟專屬旅遊手冊</div>
-              <div>📖 包含每日行程、航班住宿、美食口袋、代購與備忘清單</div>
-            </div>
+          <div class="hub-card-cover-wrap">
+            <img class="hub-card-cover" src="${coverInfo.url}" loading="lazy" referrerpolicy="no-referrer" onerror="handleImgError(this)">
+            <div class="hub-card-tag">${coverInfo.tag}</div>
           </div>
-          <div class="hub-card-btn">開啟手冊 ➔</div>
+          <div class="hub-card-body">
+            <div>
+              <div class="hub-card-title">${safeName}</div>
+              <div class="hub-card-uuid">ID: ${safeUuid}</div>
+              <div class="hub-card-meta">
+                <div>📖 包含每日行程、航班住宿、美食口袋、代購清單</div>
+              </div>
+            </div>
+            <div class="hub-card-btn">開啟手冊 ➔</div>
+          </div>
         </div>
       `;
     })
@@ -325,10 +461,33 @@ function renderHubTripsGrid() {
   container.innerHTML = cardsHtml;
 }
 
-// 取得特定行程的詳細旅遊資料
+// 取得特定行程的詳細旅遊資料 (SWR 0 秒瞬間秒開快取機制)
 async function fetchTripData() {
   if (!currentTripUuid) return;
-  showLoading("正在更新行程手冊資料，請稍候...");
+
+  // 1. 優先從本地快取秒開（0.01 秒瞬間出現手冊內容，完全不用乾等轉圈圈！）
+  let hasCache = false;
+  try {
+    const cached = localStorage.getItem("cache_trip_" + currentTripUuid);
+    if (cached) {
+      tripData = JSON.parse(cached);
+      hasCache = true;
+      const indicator = document.getElementById("currentTripIndicator");
+      if (indicator) {
+        indicator.style.display = "inline-block";
+        indicator.innerText = `📍 ${tripData.name || currentTripUuid}`;
+      }
+      initCountdown();
+      render();
+    }
+  } catch (e) {}
+
+  // 若完全無快取（首次造訪該行程），才顯示載入提示
+  if (!hasCache) {
+    showLoading("正在載入手冊資料，請稍候...");
+  }
+
+  // 2. 在背景向 Google 試算表靜默同步最新修改
   try {
     const tokenParam = idToken ? `&token=${encodeURIComponent(idToken)}` : "";
     const res = await fetch(
@@ -340,9 +499,14 @@ async function fetchTripData() {
     if (result.status === "success") {
       tripData = result.data;
       if (result.role) userRole = result.role;
+
+      // 儲存至本地快取
+      try {
+        localStorage.setItem("cache_trip_" + currentTripUuid, JSON.stringify(tripData));
+      } catch (e) {}
+
       updateAuthUI();
 
-      // 更新指示標籤
       const indicator = document.getElementById("currentTripIndicator");
       if (indicator) {
         indicator.style.display = "inline-block";
@@ -351,18 +515,18 @@ async function fetchTripData() {
 
       initCountdown();
       render();
-      showToast("手冊資料已更新 ✓");
-    } else {
-      showToast(result.message || "載入行程資料失敗");
+      if (hasCache) {
+        showToast("手冊資料已同步最新 ✓");
+      }
     }
   } catch (e) {
-    showToast("更新失敗，請檢查網路連線");
+    console.warn("背景同步失敗:", e);
   } finally {
     hideLoading();
   }
 }
 
-// 計算出發倒數並更新 Hero 封面資訊
+// 計算出發倒數並更新 Hero 封面資訊與背景照片 (智能適配目的地封面)
 function initCountdown() {
   if (!tripData || !tripData.startDate) {
     document.getElementById("tripCountdown").innerText = "尚未設定日期";
@@ -384,10 +548,17 @@ function initCountdown() {
 
   // 更新 Hero 區域文字
   document.getElementById("portalTitle").innerText =
-    `🍑 ${tripData.name || "旅遊手冊"}`;
+    `✈️ ${tripData.name || "旅遊行程手冊"}`;
   document.getElementById("portalSubtitle").innerText =
     `${tripData.startDate || ""} — ${tripData.endDate || ""}・${tripData.duration || ""
     }`;
+
+  // 智能匹配或使用自訂封面更換 Hero 背景
+  const heroEl = document.querySelector("#view-trip .hero");
+  if (heroEl) {
+    const coverInfo = getAutoCoverInfo(tripData.name, currentTripUuid, tripData.coverUrl);
+    heroEl.style.backgroundImage = `linear-gradient(180deg, rgba(15, 28, 18, 0.3) 0%, rgba(15, 28, 18, 0.85) 80%, rgba(15, 28, 18, 0.95) 100%), url('${coverInfo.url}')`;
+  }
 }
 
 function showToast(text) {
@@ -410,15 +581,22 @@ function hideLoading() {
   if (loader) loader.style.display = "none";
 }
 
-// 即時單筆同步儲存至 Google 試算表（管理員寫入雲端，一般團員寫入本機緩存）
+// 即時單筆同步儲存至 Google 試算表（並立即更新本地快取確保 0 秒秒開）
 async function save() {
+  // 立即寫入本地快取，保證下次開啟瞬間秒開
+  try {
+    if (currentTripUuid && tripData) {
+      localStorage.setItem("cache_trip_" + currentTripUuid, JSON.stringify(tripData));
+    }
+  } catch (e) {}
+
   if (userRole === "admin") {
-    showLoading("正在同步至雲端試算表...");
+    showToast("正在同步至雲端試算表...");
     try {
       const res = await fetch(`${GAS_API_URL}`, {
         method: "POST",
         headers: {
-          "Content-Type": "text/plain;charset=utf-8", // 使用 text/plain 避免觸發 CORS Preflight
+          "Content-Type": "text/plain;charset=utf-8",
         },
         body: JSON.stringify({
           action: "updateTripData",
@@ -436,15 +614,11 @@ async function save() {
         return false;
       }
     } catch (e) {
-      showToast("網路異常，同步失敗");
+      showToast("已暫存於本機（離線保護）");
       return false;
-    } finally {
-      hideLoading();
     }
   } else {
-    // 一般團員儲存個人打勾狀態至本機 localStorage
-    localStorage.setItem(`trip_${currentTripUuid}`, JSON.stringify(tripData));
-    showToast("已儲存至個人手機/本機紀錄 ✓");
+    showToast("訪客模式：已暫存於本機");
     return true;
   }
 }
@@ -534,12 +708,15 @@ function closeModal() {
 }
 
 // =========================================================================
-// 1. 必備清單 (Checklist) - 就地微編輯與單筆即時同步
+// 1. 必備清單 (Checklist) - 現代輕奢進度儀表板與即時同步
 // =========================================================================
 function renderChecklist() {
   if (!tripData) return;
   const list = tripData.checklist || [];
   const isAdmin = userRole === "admin";
+
+  const doneCount = list.filter((i) => i.done).length;
+  const percent = list.length ? Math.round((doneCount / list.length) * 100) : 0;
 
   const rows = list
     .map((item, i) => {
@@ -556,24 +733,24 @@ function renderChecklist() {
       const safeLink = sanitizeUrl(item.link);
 
       return `
-        <div style="display:flex;align-items:flex-start;gap:12px;padding:14px 0;border-bottom:1px solid var(--mist);">
-          <input type="checkbox" style="width:19px;height:19px;accent-color:var(--moss);margin-top:2px;cursor:pointer;" ${item.done ? "checked" : ""
+        <div style="display:flex;align-items:flex-start;gap:14px;padding:14px 0;border-bottom:1px solid rgba(220, 226, 222, 0.45);transition:all 0.2s;">
+          <input type="checkbox" style="width:20px;height:20px;accent-color:var(--moss);margin-top:2px;cursor:pointer;border-radius:6px;" ${item.done ? "checked" : ""
         } onclick="toggleChecklistItem(${i})">
-          <div style="flex:1;${item.done ? "text-decoration:line-through;opacity:0.4;" : ""
+          <div style="flex:1;${item.done ? "text-decoration:line-through;opacity:0.45;" : ""
         }">
             <div style="display:flex;justify-content:space-between;align-items:center;">
-              <span style="font-size:10px;font-weight:800;color:var(--gold);background:var(--gold-soft);padding:2px 8px;border-radius:6px;letter-spacing:0.5px;">${safeCat
+              <span style="font-size:10px;font-weight:800;color:#6B5A2A;background:var(--gold-soft);padding:3px 9px;border-radius:8px;letter-spacing:0.5px;border:1px solid rgba(197, 160, 89, 0.3);">${safeCat
         }</span>
               ${adminActions}
             </div>
-            <div style="font-size:15px;font-weight:700;margin-top:4px;">${safeTitle
+            <div style="font-size:15px;font-weight:800;color:var(--moss);margin-top:5px;">${safeTitle
         }</div>
             ${safeNote
-          ? `<div style="font-size:12px;color:#666;margin-top:2px;">${safeNote}</div>`
+          ? `<div style="font-size:12px;color:#666;margin-top:3px;line-height:1.5;">${safeNote}</div>`
           : ""
         }
             ${safeLink && safeLink !== "#"
-          ? `<a href="${safeLink}" target="_blank" rel="noopener noreferrer" style="display:inline-block;margin-top:5px;font-size:11px;color:var(--moss);font-weight:bold;text-decoration:none;">🔗 點擊預約/查看</a>`
+          ? `<a class="ext-link" href="${safeLink}" target="_blank" rel="noopener noreferrer">🔗 點擊查看/預約</a>`
           : ""
         }
           </div>
@@ -583,13 +760,30 @@ function renderChecklist() {
     .join("");
 
   const addBtn = isAdmin
-    ? `<button class="glass-btn" style="background:var(--moss);color:#fff;width:100%;margin-top:16px;justify-content:center;" onclick="openAddChecklistModal()">＋ 新增必備項目</button>`
+    ? `<button class="glass-btn" style="background:var(--moss-gradient);color:#fff;width:100%;margin-top:16px;justify-content:center;" onclick="openAddChecklistModal()">＋ 新增必備項目</button>`
     : "";
 
   document.getElementById("page-checklist").innerHTML = `
+    <!-- 輕奢進度儀表板 -->
+    <div class="card" style="background:var(--moss-gradient);color:#FFF;border:none;box-shadow:0 14px 36px rgba(31,54,36,0.25);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <div>
+          <div style="font-size:11px;color:rgba(255,255,255,0.8);letter-spacing:1.5px;font-weight:800;">PREPARATION PROGRESS</div>
+          <div style="font-family:'Noto Serif TC',serif;font-size:22px;font-weight:900;margin-top:2px;">行前準備進度 · ${percent}%</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.18);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.35);border-radius:14px;padding:6px 14px;font-size:13px;font-weight:800;">
+          ${doneCount} / ${list.length} 完成
+        </div>
+      </div>
+      <div style="width:100%;height:8px;background:rgba(255,255,255,0.22);border-radius:10px;overflow:hidden;">
+        <div style="width:${percent}%;height:100%;background:linear-gradient(90deg, #DFC17B, #FFF);border-radius:10px;transition:width 0.4s ease;"></div>
+      </div>
+    </div>
+
+    <!-- 清單內容卡片 -->
     <div class="card">
       <div class="card-header">
-        <span class="card-title">✓ 行前準備清單</span>
+        <span class="card-title">✓ 行前準備清單項目</span>
       </div>
       ${rows || '<p style="color:#888;">尚無清單項目</p>'}
       ${addBtn}
@@ -728,33 +922,67 @@ function renderFlights() {
   function fc(title, f, type) {
     if (!f) f = {};
     const editBtn = isAdmin
-      ? `<button class="card-header-btn" onclick="openEditFlightModal('${type}')">✏️ 編輯${title}</button>`
+      ? `<button class="card-header-btn" onclick="openEditFlightModal('${type}')">✏️ 編輯</button>`
       : "";
 
+    const airline = escapeHtml(f.airline || "航空公司");
+    const flightNo = escapeHtml(f.no || "航班待定");
+    const fromCity = escapeHtml(f.from || "出發地");
+    const toCity = escapeHtml(f.to || "目的地");
+    const depTime = escapeHtml(f.dep || "--:--");
+    const arrTime = escapeHtml(f.arr || "--:--");
+    const flightDate = escapeHtml(f.date || "未設定日期");
+    const flightNote = escapeHtml(f.note || "");
+
     return `
-      <div class="flight-box" style="margin-bottom:14px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <div style="font-size:11px;font-weight:800;color:var(--gold);letter-spacing:1px;">${title} · ${f.date || "未設定日期"
-      }</div>
-          ${editBtn}
-        </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
-          <div>
-            <div style="font-size:20px;font-weight:900;color:var(--moss);">${f.no || "尚未填寫航班號"
-      }</div>
-            <div style="font-size:12px;color:#666;font-weight:500;">${f.airline || "航空公司"
-      } | ${f.from || "出發地"} ➔ ${f.to || "目的地"}</div>
+      <div class="boarding-pass">
+        <!-- 登機證頂部標頭 -->
+        <div class="bp-header">
+          <div class="bp-airline-tag">
+            <span>✈️</span>
+            <span>${airline}</span>
+            <span style="font-size:11px;color:#888;margin-left:4px;">· ${title}</span>
           </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="bp-flight-no">${flightNo}</span>
+            ${editBtn}
+          </div>
+        </div>
+
+        <!-- 登機證核心起降資訊 -->
+        <div class="bp-body">
+          <div style="text-align:left;">
+            <div class="bp-airport-code">${fromCity}</div>
+            <div class="bp-city">DEPARTURE</div>
+            <div class="bp-time">${depTime}</div>
+          </div>
+
+          <div class="bp-route-line">
+            <div class="bp-route-plane">✈️</div>
+            <div class="bp-route-bar"></div>
+            <div class="bp-date-pill">📅 ${flightDate}</div>
+          </div>
+
           <div style="text-align:right;">
-            <div style="font-size:16px;font-weight:800;">${f.dep || "--:--"
-      }</div>
-            <div style="font-size:11px;color:#888;">➔ ${f.arr || "--:--"}</div>
+            <div class="bp-airport-code">${toCity}</div>
+            <div class="bp-city">ARRIVAL</div>
+            <div class="bp-time">${arrTime}</div>
           </div>
         </div>
-        ${f.note
-        ? `<div style="font-size:11px;color:var(--red);background:#FFF0EE;padding:5px 10px;border-radius:8px;margin-top:8px;">⚠️ ${f.note}</div>`
-        : ""
-      }
+
+        <!-- 實體登機證撕裂線與缺口 -->
+        <div class="bp-divider">
+          <div class="bp-notch-left"></div>
+          <div class="bp-notch-right"></div>
+        </div>
+
+        <!-- 登機證底部條碼與備註 -->
+        <div class="bp-footer">
+          <div class="bp-barcode">||| | |||| || ||||| | |||</div>
+          <div style="font-size:11px;color:${flightNote ? 'var(--red)' : '#888'};font-weight:700;">
+            ${flightNote ? `⚠️ ${flightNote}` : "BOARDING PASS · TRAVEL PORTAL"}
+          </div>
+        </div>
       </div>
     `;
   }
@@ -781,7 +1009,7 @@ function renderFlights() {
     (tripData.hotel && tripData.hotel.name ? [tripData.hotel] : []);
 
   const addHotelBtn = isAdmin
-    ? `<button class="glass-btn" style="background:var(--moss);color:#fff;width:100%;margin-top:14px;justify-content:center;" onclick="openAddHotelModal()">＋ 新增飯店住宿</button>`
+    ? `<button class="glass-btn" style="background:var(--moss-gradient);color:#fff;width:100%;margin-top:14px;justify-content:center;" onclick="openAddHotelModal()">＋ 新增飯店住宿</button>`
     : "";
 
   const hotelCards =
@@ -817,7 +1045,7 @@ function renderFlights() {
           const safeDateLine = escapeHtml(dateLine);
 
           return `
-              <div class="hotel-card" style="margin-bottom:12px;">
+              <div class="hotel-card">
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;">
                   <div class="hotel-name">🏨 ${safeName}</div>
                   ${adminActions}
@@ -825,11 +1053,11 @@ function renderFlights() {
                 <div class="hotel-meta">📍 ${safeAddr}</div>
                 <div class="hotel-meta">${safeDateLine}</div>
                 ${safeNote
-              ? `<div style="font-size:12px;color:#6B5A2A;background:var(--gold-soft);padding:8px 12px;border-radius:8px;margin:10px 0;">💡 ${safeNote}</div>`
+              ? `<div style="font-size:12px;color:#6B5A2A;background:var(--gold-soft);padding:8px 12px;border-radius:10px;margin:10px 0;border:1px dashed rgba(197, 160, 89, 0.4);">💡 ${safeNote}</div>`
               : ""
             }
                 ${hotelMapUrl
-              ? `<a class="map-link" href="${hotelMapUrl}" target="_blank" rel="noopener noreferrer">🗺 Google 地圖導航</a>`
+              ? `<a class="map-link" style="margin-top:10px;" href="${hotelMapUrl}" target="_blank" rel="noopener noreferrer">🗺 Google 地圖導航</a>`
               : ""
             }
               </div>
@@ -839,9 +1067,9 @@ function renderFlights() {
       : '<p style="color:#888;">尚未設定飯店住宿資訊</p>';
 
   document.getElementById("page-flights").innerHTML = `
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">✈️ 航班行程</span>
+    <div style="margin-bottom: 24px;">
+      <div style="font-family:'Noto Serif TC',serif;font-size:17px;font-weight:900;color:var(--moss);margin-bottom:14px;display:flex;align-items:center;gap:6px;">
+        <span>✈️ 機票行程（登機證）</span>
       </div>
       ${fc("去程航班", tripData.flights ? tripData.flights.out : {}, "out")}
       ${fc("回程航班", tripData.flights ? tripData.flights.in : {}, "in")}
@@ -1157,10 +1385,10 @@ function cleanTimeDisplay(t) {
 function renderItinerary() {
   if (!tripData || !tripData.days || tripData.days.length === 0) {
     const emptyHtml = `
-      <div class="card" style="text-align:center;padding:30px 10px;">
-        <p style="color:#888;margin-bottom:12px;">目前尚未建立任何行程天數</p>
+      <div class="card" style="text-align:center;padding:36px 16px;">
+        <p style="color:#888;margin-bottom:14px;font-size:14px;font-weight:700;">目前尚未建立任何行程天數</p>
         ${userRole === "admin"
-        ? `<button class="glass-btn" style="background:var(--moss);color:#fff;display:inline-flex;" onclick="openAddDayModal()">＋ 建立 Day 1 行程</button>`
+        ? `<button class="glass-btn" style="background:var(--moss-gradient);color:#fff;display:inline-flex;" onclick="openAddDayModal()">＋ 建立 Day 1 行程</button>`
         : ""
       }
       </div>
@@ -1239,7 +1467,7 @@ function renderItinerary() {
             </div>
             ${safeDesc ? `<div class="tl-desc">${safeDesc}</div>` : ""}
             ${safeImgUrl && safeImgUrl !== "#"
-          ? `<div style="margin-top:10px;"><img src="${safeImgUrl}" referrerpolicy="no-referrer" loading="lazy" style="max-width:100%;max-height:220px;border-radius:12px;box-shadow:var(--shadow-sm);display:block;object-fit:cover;" onerror="handleImgError(this)"></div>`
+          ? `<div style="margin-top:10px;"><img src="${safeImgUrl}" referrerpolicy="no-referrer" loading="lazy" style="max-width:100%;max-height:220px;border-radius:14px;box-shadow:0 4px 14px rgba(0,0,0,0.08);display:block;object-fit:cover;border:1px solid rgba(255,255,255,0.8);" onerror="handleImgError(this)"></div>`
           : ""
         }
             ${autoMapUrl
@@ -1253,7 +1481,7 @@ function renderItinerary() {
     .join("");
 
   const addBtn = isAdmin
-    ? `<button class="glass-btn" style="background:var(--moss);color:#fff;width:100%;margin-top:16px;justify-content:center;" onclick="openAddItineraryModal(${selectedDay})">＋ 新增景點</button>`
+    ? `<button class="glass-btn" style="background:var(--moss-gradient);color:#fff;width:100%;margin-top:16px;justify-content:center;" onclick="openAddItineraryModal(${selectedDay})">＋ 新增景點</button>`
     : "";
 
   document.getElementById("page-itinerary").innerHTML = `
