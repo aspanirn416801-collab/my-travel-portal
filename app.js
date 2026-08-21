@@ -1827,9 +1827,10 @@ function renderShopping() {
 
   const items = list
     .map((item, i) => {
-      const mapQuery = encodeURIComponent(item.location || item.name || "");
-      const autoMapUrl = item.location
-        ? "https://www.google.com/maps/search/?api=1&query=" + mapQuery
+      // 只要有填寫地點或店名，或以商品名稱為備用，自動生成 Google 地圖導航搜尋網址
+      const queryTarget = (item.location || "").trim() || (item.name || "").trim();
+      const autoMapUrl = queryTarget
+        ? "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(queryTarget)
         : "";
 
       const safeLink = sanitizeUrl(item.link);
@@ -1865,14 +1866,19 @@ function renderShopping() {
               <div style="font-size:16px;font-weight:900;color:var(--ink);">${safeName}</div>
               
               ${safeLocation
-          ? `<div style="font-size:12px;color:var(--moss);font-weight:700;margin-top:4px;">
-                     📍 ${safeLocation}
+          ? `<div style="font-size:13px;color:var(--moss);font-weight:800;margin-top:6px;display:flex;align-items:center;flex-wrap:wrap;gap:6px;">
+                     <span>📍 ${safeLocation}</span>
+                     ${autoMapUrl ? `<a class="map-link" style="margin-top:0;" href="${autoMapUrl}" target="_blank" rel="noopener noreferrer">🗺 地圖導航</a>` : ""}
                    </div>`
-          : ""
+          : (autoMapUrl
+            ? `<div style="margin-top:6px;">
+                     <a class="map-link" style="margin-top:0;" href="${autoMapUrl}" target="_blank" rel="noopener noreferrer">🗺 搜尋「${safeName}」地圖導航</a>
+                   </div>`
+            : "")
         }
               
               ${safeNote
-          ? `<div style="font-size:12px;color:#555;margin-top:4px;background:#FAF8F5;padding:6px 10px;border-radius:8px;border:1px dashed var(--mist);">
+          ? `<div style="font-size:12px;color:#555;margin-top:6px;background:#FAF8F5;padding:6px 10px;border-radius:8px;border:1px dashed var(--mist);">
                      📝 ${safeNote}
                    </div>`
           : ""
@@ -1885,16 +1891,12 @@ function renderShopping() {
           : ""
         }
 
-              <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;">
-                ${autoMapUrl
-          ? `<a class="map-link" href="${autoMapUrl}" target="_blank" rel="noopener noreferrer">🗺️ 地圖導航</a>`
+              ${safeLink && safeLink !== "#"
+          ? `<div style="margin-top:8px;">
+                     <a class="ext-link" style="margin-top:0;" href="${safeLink}" target="_blank" rel="noopener noreferrer">🔗 商品介紹/網址</a>
+                   </div>`
           : ""
         }
-                ${safeLink && safeLink !== "#"
-          ? `<a class="ext-link" href="${safeLink}" target="_blank" rel="noopener noreferrer">🔗 商品網址</a>`
-          : ""
-        }
-              </div>
             </div>
             
             <button onclick="toggleShoppingDone(${i})" style="flex-shrink:0;border:none;border-radius:14px;padding:6px 12px;font-size:11px;font-weight:bold;cursor:pointer;background:${item.done ? "var(--moss)" : "var(--mist)"
@@ -1953,8 +1955,8 @@ function openAddShoppingModal() {
       <input type="text" id="addShoppingName" class="ef-input" placeholder="例如: 合利他命 EX Plus 270錠、獺祭二割三分">
     </div>
     <div class="ef-wrap">
-      <div class="ef-label">購買地點 (支援 Google 地圖自動導航)</div>
-      <input type="text" id="addShoppingLocation" class="ef-input" placeholder="例如: BicCamera 岡山站前店、唐吉訶德">
+      <div class="ef-label">購買地點 / 店名 (輸入後自動產生 Google 地圖導航按鈕)</div>
+      <input type="text" id="addShoppingLocation" class="ef-input" placeholder="例如: BicCamera 岡山站前店、驚安殿堂唐吉訶德、大國藥妝">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">預估價格 / 預算 (選填)</div>
@@ -2034,8 +2036,8 @@ function openEditShoppingModal(index) {
       <input type="text" id="editShoppingName" class="ef-input" value="${item.name || ""}">
     </div>
     <div class="ef-wrap">
-      <div class="ef-label">購買地點 (支援 Google 地圖自動導航)</div>
-      <input type="text" id="editShoppingLocation" class="ef-input" value="${item.location || ""}">
+      <div class="ef-label">購買地點 / 店名 (輸入後自動產生 Google 地圖導航按鈕)</div>
+      <input type="text" id="editShoppingLocation" class="ef-input" placeholder="例如: BicCamera 岡山站前店、驚安殿堂唐吉訶德、大國藥妝" value="${item.location || ""}">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">預估價格 / 預算</div>
