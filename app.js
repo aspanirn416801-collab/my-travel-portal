@@ -1617,7 +1617,7 @@ function openAddItineraryModal(dayIdx) {
 }
 
 // =========================================================================
-// 4. 美食清單 (Food) - 美食單筆微編輯與即時同步
+// 4. 美食清單 (Food) - 美食單筆微編輯、地圖導航、照片上傳與即時同步
 // =========================================================================
 function renderFood() {
   if (!tripData) return;
@@ -1635,32 +1635,53 @@ function renderFood() {
 
       const safeEmoji = escapeHtml(item.emoji || "🍴");
       const safeName = escapeHtml(item.name || "");
-      const safeArea = escapeHtml(item.area || "周邊地區");
       const safeDesc = escapeHtml(item.desc || "");
+      const safeImgUrl = sanitizeUrl(item.imgUrl);
+
+      // 自動依美食/店家名稱產生 Google 地圖導航搜尋連結
+      const autoMapUrl = item.name
+        ? "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(item.name)
+        : "";
+
+      const hasImg = safeImgUrl && safeImgUrl !== "#";
 
       return `
-        <div style="display:flex;align-items:center;gap:14px;padding:14px 0;border-bottom:1px solid var(--mist);">
-          <span style="font-size:28px;flex-shrink:0;opacity:${item.done ? 0.35 : 1
-        };">${safeEmoji}</span>
-          <div style="flex:1;${item.done ? "text-decoration:line-through;opacity:0.4;" : ""
-        }">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-              <div style="font-size:15px;font-weight:800;color:var(--ink);">${safeName
-        } ${item.must
-          ? '<span style="font-size:10px;background:var(--red);color:#fff;padding:2px 6px;border-radius:4px;vertical-align:middle;font-weight:normal;">必吃</span>'
+        <div style="padding:16px 0;border-bottom:1px solid var(--mist);">
+          <div style="display:flex;align-items:flex-start;gap:14px;">
+            <!-- 美食圖示或上傳的美食照片 -->
+            ${hasImg
+          ? `<img src="${safeImgUrl}" referrerpolicy="no-referrer" loading="lazy" class="shopping-thumb" onerror="handleImgError(this)">`
+          : `<span style="font-size:32px;flex-shrink:0;opacity:${item.done ? 0.35 : 1};line-height:1;">${safeEmoji}</span>`
+        }
+
+            <div style="flex:1;min-width:0;${item.done ? "text-decoration:line-through;opacity:0.45;" : ""}">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+                <div style="font-size:16px;font-weight:800;color:var(--ink);">
+                  ${safeName}
+                  ${item.must
+          ? '<span style="font-size:10px;background:var(--red);color:#fff;padding:2px 6px;border-radius:4px;vertical-align:middle;font-weight:normal;margin-left:4px;">必吃</span>'
           : ""
-        }</div>
-              ${adminActions}
+        }
+                </div>
+                ${adminActions}
+              </div>
+
+              <!-- 地圖導航按鈕 -->
+              <div style="margin-top:6px;">
+                ${autoMapUrl ? `<a class="map-link" style="margin-top:0;" href="${autoMapUrl}" target="_blank" rel="noopener noreferrer">🗺 地圖導航</a>` : ""}
+              </div>
+
+              ${safeDesc
+          ? `<div style="font-size:12px;color:#666;margin-top:6px;background:#FAF8F5;padding:6px 10px;border-radius:8px;border:1px dashed var(--mist);line-height:1.5;">${safeDesc}</div>`
+          : ""
+        }
             </div>
-            <div style="font-size:11px;color:var(--gold);font-weight:700;margin-top:2px;">📍 ${safeArea
-        }</div>
-            <div style="font-size:12px;color:#666;margin-top:3px;">${safeDesc
-        }</div>
+
+            <button onclick="toggleFoodDone(${i})" style="flex-shrink:0;border:none;border-radius:14px;padding:6px 14px;font-size:11px;font-weight:bold;cursor:pointer;background:${item.done ? "var(--moss)" : "var(--mist)"
+        };color:${item.done ? "#fff" : "#666"};transition:all 0.2s;margin-top:2px;">
+              ${item.done ? "已品嚐 ✓" : "想吃"}
+            </button>
           </div>
-          <button onclick="toggleFoodDone(${i})" style="flex-shrink:0;border:none;border-radius:14px;padding:6px 14px;font-size:11px;font-weight:bold;cursor:pointer;background:${item.done ? "var(--moss)" : "var(--mist)"
-        };color:${item.done ? "#fff" : "#666"};">
-            ${item.done ? "已品嚐 ✓" : "想吃"}
-          </button>
         </div>
       `;
     })
@@ -1695,12 +1716,8 @@ function openEditFoodModal(index) {
       <input type="text" id="editFoodEmoji" class="ef-input" value="${item.emoji || "🍴"}" style="width:60px;text-align:center;">
     </div>
     <div class="ef-wrap">
-      <div class="ef-label">美食或店家名稱 <span style="color:var(--red);">*</span></div>
+      <div class="ef-label">美食或店家名稱 <span style="color:var(--red);">*</span> (輸入後自動產生地圖導航)</div>
       <input type="text" id="editFoodName" class="ef-input" value="${item.name || ""}">
-    </div>
-    <div class="ef-wrap">
-      <div class="ef-label">所在地區</div>
-      <input type="text" id="editFoodArea" class="ef-input" value="${item.area || ""}">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">特色說明或推薦菜色</div>
@@ -1709,6 +1726,18 @@ function openEditFoodModal(index) {
     <label style="font-size:13px;color:var(--moss);font-weight:bold;display:flex;align-items:center;gap:6px;margin-top:10px;cursor:pointer;">
       <input type="checkbox" id="editFoodMust" ${item.must ? "checked" : ""}> 標記為必吃名店 🔥
     </label>
+    <div class="ef-wrap" style="margin-top:12px;">
+      <div class="ef-label">上傳/更換美食照片 (5MB內，選填)</div>
+      <input type="file" accept="image/*" id="editFoodFile" onchange="uploadImageInModal(this, 'editFoodImgUrl', 'editFoodModalImgPreview')">
+      <input type="hidden" id="editFoodImgUrl" value="${item.imgUrl || ""}">
+    </div>
+    <div id="editFoodModalImgPreview" style="margin-top:6px;">
+      ${item.imgUrl
+        ? `<img src="${formatDriveImageUrl(item.imgUrl)}" referrerpolicy="no-referrer" style="max-height:140px;border-radius:8px;display:block;object-fit:cover;" onerror="handleImgError(this)">
+           <button type="button" class="btn-mini btn-mini-danger" style="margin-top:6px;" onclick="removeModalImage('editFoodImgUrl', 'editFoodModalImgPreview')">🗑️ 移除此照片</button>`
+        : ""
+      }
+    </div>
   `;
 
   openFormModal({
@@ -1725,14 +1754,15 @@ function openEditFoodModal(index) {
       tripData.food[index].emoji =
         document.getElementById("editFoodEmoji").value.trim() || "🍴";
       tripData.food[index].name = name;
-      tripData.food[index].area = document
-        .getElementById("editFoodArea")
-        .value.trim();
+      tripData.food[index].area = "";
       tripData.food[index].desc = document
         .getElementById("editFoodDesc")
         .value.trim();
       tripData.food[index].must =
         document.getElementById("editFoodMust").checked;
+      tripData.food[index].imgUrl = formatDriveImageUrl(
+        document.getElementById("editFoodImgUrl").value.trim()
+      );
 
       renderFood();
       save();
@@ -1763,20 +1793,22 @@ function openAddFoodModal() {
       <input type="text" id="addFoodEmoji" class="ef-input" value="🍴" style="width:60px;text-align:center;">
     </div>
     <div class="ef-wrap">
-      <div class="ef-label">美食或店家名稱 <span style="color:var(--red);">*</span></div>
-      <input type="text" id="addFoodName" class="ef-input" placeholder="例如: 一蘭拉麵、築地玉壽司">
-    </div>
-    <div class="ef-wrap">
-      <div class="ef-label">所在地區</div>
-      <input type="text" id="addFoodArea" class="ef-input" placeholder="例如: 新宿、銀座、道頓堀">
+      <div class="ef-label">美食或店家名稱 <span style="color:var(--red);">*</span> (輸入後自動產生地圖導航)</div>
+      <input type="text" id="addFoodName" class="ef-input" placeholder="例如: 一蘭拉麵 岡山站前店、日生町牡蠣燒">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">特色說明或推薦菜色</div>
-      <input type="text" id="addFoodDesc" class="ef-input" placeholder="例如: 招牌豚骨拉麵、必點煎餃">
+      <input type="text" id="addFoodDesc" class="ef-input" placeholder="例如: 招牌豚骨拉麵、岡山限定冬季美味">
     </div>
     <label style="font-size:13px;color:var(--moss);font-weight:bold;display:flex;align-items:center;gap:6px;margin-top:10px;cursor:pointer;">
       <input type="checkbox" id="addFoodMust"> 標記為必吃名店 🔥
     </label>
+    <div class="ef-wrap" style="margin-top:12px;">
+      <div class="ef-label">上傳美食照片 (5MB內，選填)</div>
+      <input type="file" accept="image/*" id="addFoodFile" onchange="uploadImageInModal(this, 'addFoodImgUrl', 'addFoodModalImgPreview')">
+      <input type="hidden" id="addFoodImgUrl" value="">
+    </div>
+    <div id="addFoodModalImgPreview" style="margin-top:6px;"></div>
   `;
 
   openFormModal({
@@ -1787,9 +1819,11 @@ function openAddFoodModal() {
       const emoji =
         document.getElementById("addFoodEmoji").value.trim() || "🍴";
       const name = document.getElementById("addFoodName").value.trim();
-      const area = document.getElementById("addFoodArea").value.trim();
       const desc = document.getElementById("addFoodDesc").value.trim();
       const must = document.getElementById("addFoodMust").checked;
+      const imgUrl = formatDriveImageUrl(
+        document.getElementById("addFoodImgUrl").value.trim()
+      );
 
       if (!name) {
         alert("請輸入美食或店家名稱！");
@@ -1801,10 +1835,11 @@ function openAddFoodModal() {
         id: uid(),
         emoji: emoji,
         name: name,
-        area: area,
+        area: "",
         desc: desc,
         must: must,
         done: false,
+        imgUrl: imgUrl || "",
       });
 
       renderFood();
@@ -1816,6 +1851,28 @@ function openAddFoodModal() {
 
 // =========================================================================
 // 5. 代購商品 (Shopping) - 代購者、商品、地點(Google Maps)、價格、網址、照片與採買狀態
+// =========================================================================
+// 預設代購委託人常用名單（亦會自動智能合併歷史已新增過的代購者）
+const DEFAULT_BUYERS = ["自己", "鴨", "媽媽", "包果", "小豬", "哲源", "朋友", "同事"];
+
+function getBuyerTagsHtml(inputElId) {
+  const customBuyers = (tripData?.shopping || [])
+    .map((s) => (s.buyer || "").trim())
+    .filter((b) => b && !DEFAULT_BUYERS.includes(b));
+  const allBuyers = [...DEFAULT_BUYERS, ...Array.from(new Set(customBuyers))];
+
+  return allBuyers
+    .map(
+      (b) =>
+        `<button type="button" class="time-tag" onclick="document.getElementById('${inputElId}').value='${escapeHtml(
+          b
+        )}'">${escapeHtml(b)}</button>`
+    )
+    .join("");
+}
+
+// =========================================================================
+// 5. 代購商品 (Shopping) - 代購者、數量、商品、地點(Google Maps)、價格、網址、照片與採買狀態
 // =========================================================================
 function renderShopping() {
   if (!tripData) return;
@@ -1839,6 +1896,7 @@ function renderShopping() {
       const safeName = escapeHtml(item.name || "未命名商品");
       const safeLocation = escapeHtml(item.location || "");
       const safePrice = escapeHtml(item.price || "");
+      const safeQty = escapeHtml(item.qty || "1");
       const safeNote = escapeHtml(item.note || "");
 
       const adminActions = isAdmin
@@ -1848,55 +1906,61 @@ function renderShopping() {
            </div>`
         : "";
 
+      const hasImg = safeImgUrl && safeImgUrl !== "#";
+
       return `
         <div class="shopping-card ${item.done ? "done" : ""}">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-            <div style="display:flex;align-items:center;gap:6px;">
+          <!-- 卡片頂部資訊膠囊列 -->
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px;">
+            <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;">
               <span class="buyer-badge">👤 ${safeBuyer}</span>
+              <span class="qty-badge">🔢 數量: ${safeQty}</span>
               ${safePrice ? `<span class="price-badge">💰 ${safePrice}</span>` : ""}
             </div>
             ${adminActions}
           </div>
 
+          <!-- 卡片主體內容（支援左圖右文結構） -->
           <div style="display:flex;align-items:flex-start;gap:12px;">
-            <input type="checkbox" style="width:19px;height:19px;accent-color:var(--moss);margin-top:4px;cursor:pointer;" ${item.done ? "checked" : ""
+            <input type="checkbox" style="width:20px;height:20px;accent-color:var(--moss);margin-top:2px;cursor:pointer;flex-shrink:0;" ${item.done ? "checked" : ""
         } onclick="toggleShoppingDone(${i})">
             
-            <div style="flex:1;${item.done ? "text-decoration:line-through;opacity:0.45;" : ""}">
-              <div style="font-size:16px;font-weight:900;color:var(--ink);">${safeName}</div>
-              
-              ${safeLocation
-          ? `<div style="font-size:13px;color:var(--moss);font-weight:800;margin-top:6px;display:flex;align-items:center;flex-wrap:wrap;gap:6px;">
-                     <span>📍 ${safeLocation}</span>
-                     ${autoMapUrl ? `<a class="map-link" style="margin-top:0;" href="${autoMapUrl}" target="_blank" rel="noopener noreferrer">🗺 地圖導航</a>` : ""}
-                   </div>`
+            <div style="flex:1;min-width:0;${item.done ? "text-decoration:line-through;opacity:0.45;" : ""}">
+              <div style="display:flex;gap:14px;align-items:flex-start;">
+                ${hasImg
+          ? `<img src="${safeImgUrl}" referrerpolicy="no-referrer" loading="lazy" class="shopping-thumb" onerror="handleImgError(this)">`
+          : ""
+        }
+                <div style="flex:1;min-width:0;">
+                  <div style="font-size:16px;font-weight:900;color:var(--ink);line-height:1.35;">${safeName}</div>
+                  
+                  ${safeLocation
+          ? `<div style="font-size:12px;color:var(--moss);font-weight:800;margin-top:6px;display:flex;align-items:center;flex-wrap:wrap;gap:6px;">
+                         <span>📍 ${safeLocation}</span>
+                         ${autoMapUrl ? `<a class="map-link" style="margin-top:0;" href="${autoMapUrl}" target="_blank" rel="noopener noreferrer">🗺 地圖導航</a>` : ""}
+                       </div>`
           : (autoMapUrl
             ? `<div style="margin-top:6px;">
-                     <a class="map-link" style="margin-top:0;" href="${autoMapUrl}" target="_blank" rel="noopener noreferrer">🗺 搜尋「${safeName}」地圖導航</a>
-                   </div>`
+                         <a class="map-link" style="margin-top:0;" href="${autoMapUrl}" target="_blank" rel="noopener noreferrer">🗺 地圖導航</a>
+                       </div>`
             : "")
         }
-              
-              ${safeNote
-          ? `<div style="font-size:12px;color:#555;margin-top:6px;background:#FAF8F5;padding:6px 10px;border-radius:8px;border:1px dashed var(--mist);">
-                     📝 ${safeNote}
-                   </div>`
+                  
+                  ${safeNote
+          ? `<div style="font-size:12px;color:#555;margin-top:6px;background:#FAF8F5;padding:6px 10px;border-radius:8px;border:1px dashed var(--mist);line-height:1.5;">
+                         📝 ${safeNote}
+                       </div>`
           : ""
         }
 
-              ${safeImgUrl && safeImgUrl !== "#"
-          ? `<div style="margin-top:10px;">
-                     <img src="${safeImgUrl}" referrerpolicy="no-referrer" loading="lazy" style="max-width:100%;max-height:200px;border-radius:12px;box-shadow:var(--shadow-sm);display:block;object-fit:cover;" onerror="handleImgError(this)">
-                   </div>`
-          : ""
-        }
-
-              ${safeLink && safeLink !== "#"
+                  ${safeLink && safeLink !== "#"
           ? `<div style="margin-top:8px;">
-                     <a class="ext-link" style="margin-top:0;" href="${safeLink}" target="_blank" rel="noopener noreferrer">🔗 商品介紹/網址</a>
-                   </div>`
+                         <a class="ext-link" style="margin-top:0;" href="${safeLink}" target="_blank" rel="noopener noreferrer">🔗 商品介紹/網址</a>
+                       </div>`
           : ""
         }
+                </div>
+              </div>
             </div>
             
             <button onclick="toggleShoppingDone(${i})" style="flex-shrink:0;border:none;border-radius:14px;padding:6px 12px;font-size:11px;font-weight:bold;cursor:pointer;background:${item.done ? "var(--moss)" : "var(--mist)"
@@ -1937,37 +2001,39 @@ function toggleShoppingDone(index) {
 }
 
 function openAddShoppingModal() {
+  const buyerTags = getBuyerTagsHtml("addShoppingBuyer");
   const formHtml = `
     <div class="ef-wrap">
-      <div class="ef-label">代購者 / 委託人 (點選標籤或直接輸入)</div>
+      <div class="ef-label">代購者 / 委託人 (點選常用標籤或直接輸入)</div>
       <div class="time-tags">
-        <button type="button" class="time-tag" onclick="document.getElementById('addShoppingBuyer').value='自己'">🙋 自己</button>
-        <button type="button" class="time-tag" onclick="document.getElementById('addShoppingBuyer').value='媽媽'">👩 媽媽</button>
-        <button type="button" class="time-tag" onclick="document.getElementById('addShoppingBuyer').value='爸爸'">👨 爸爸</button>
-        <button type="button" class="time-tag" onclick="document.getElementById('addShoppingBuyer').value='家人'">🏠 家人</button>
-        <button type="button" class="time-tag" onclick="document.getElementById('addShoppingBuyer').value='朋友'">🤝 朋友</button>
-        <button type="button" class="time-tag" onclick="document.getElementById('addShoppingBuyer').value='同事'">💼 同事</button>
+        ${buyerTags}
       </div>
-      <input type="text" id="addShoppingBuyer" class="ef-input" placeholder="例如: 媽媽、小明、自己" value="自己">
+      <input type="text" id="addShoppingBuyer" class="ef-input" placeholder="例如: 自己、媽媽、小明" value="自己">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">商品名稱 <span style="color:var(--red);">*</span></div>
       <input type="text" id="addShoppingName" class="ef-input" placeholder="例如: 合利他命 EX Plus 270錠、獺祭二割三分">
+    </div>
+    <div style="display:flex;gap:10px;">
+      <div class="ef-wrap" style="flex:1;">
+        <div class="ef-label">數量 (例如: 1、2盒、3瓶)</div>
+        <input type="text" id="addShoppingQty" class="ef-input" placeholder="例如: 1 或 2瓶" value="1">
+      </div>
+      <div class="ef-wrap" style="flex:1;">
+        <div class="ef-label">預估價格 / 預算 (選填)</div>
+        <input type="text" id="addShoppingPrice" class="ef-input" placeholder="例如: ¥5,800 或 NT$ 1,200">
+      </div>
     </div>
     <div class="ef-wrap">
       <div class="ef-label">購買地點 / 店名 (輸入後自動產生 Google 地圖導航按鈕)</div>
       <input type="text" id="addShoppingLocation" class="ef-input" placeholder="例如: BicCamera 岡山站前店、驚安殿堂唐吉訶德、大國藥妝">
     </div>
     <div class="ef-wrap">
-      <div class="ef-label">預估價格 / 預算 (選填)</div>
-      <input type="text" id="addShoppingPrice" class="ef-input" placeholder="例如: ¥5,800 或 NT$ 1,200">
-    </div>
-    <div class="ef-wrap">
       <div class="ef-label">參考網址 (商品介紹或線上商城連結，選填)</div>
       <input type="text" id="addShoppingLink" class="ef-input" placeholder="https://...">
     </div>
     <div class="ef-wrap">
-      <div class="ef-label">備註說明 (數量、規格、色號等)</div>
+      <div class="ef-label">備註說明 (規格、色號、退稅注意事項等)</div>
       <textarea id="addShoppingNote" class="ef-textarea" placeholder="例如: 買2盒、需退稅、請認明藍色包裝"></textarea>
     </div>
     <div class="ef-wrap">
@@ -1985,6 +2051,7 @@ function openAddShoppingModal() {
     onConfirm: () => {
       const buyer = document.getElementById("addShoppingBuyer").value.trim() || "自己";
       const name = document.getElementById("addShoppingName").value.trim();
+      const qty = document.getElementById("addShoppingQty").value.trim() || "1";
       const location = document.getElementById("addShoppingLocation").value.trim();
       const price = document.getElementById("addShoppingPrice").value.trim();
       const link = document.getElementById("addShoppingLink").value.trim();
@@ -2001,6 +2068,7 @@ function openAddShoppingModal() {
         id: uid(),
         buyer: buyer,
         name: name,
+        qty: qty,
         location: location,
         price: price,
         link: link,
@@ -2018,16 +2086,12 @@ function openAddShoppingModal() {
 
 function openEditShoppingModal(index) {
   const item = tripData.shopping[index];
+  const buyerTags = getBuyerTagsHtml("editShoppingBuyer");
   const formHtml = `
     <div class="ef-wrap">
-      <div class="ef-label">代購者 / 委託人</div>
+      <div class="ef-label">代購者 / 委託人 (點選常用標籤或直接輸入)</div>
       <div class="time-tags">
-        <button type="button" class="time-tag" onclick="document.getElementById('editShoppingBuyer').value='自己'">🙋 自己</button>
-        <button type="button" class="time-tag" onclick="document.getElementById('editShoppingBuyer').value='媽媽'">👩 媽媽</button>
-        <button type="button" class="time-tag" onclick="document.getElementById('editShoppingBuyer').value='爸爸'">👨 爸爸</button>
-        <button type="button" class="time-tag" onclick="document.getElementById('editShoppingBuyer').value='家人'">🏠 家人</button>
-        <button type="button" class="time-tag" onclick="document.getElementById('editShoppingBuyer').value='朋友'">🤝 朋友</button>
-        <button type="button" class="time-tag" onclick="document.getElementById('editShoppingBuyer').value='同事'">💼 同事</button>
+        ${buyerTags}
       </div>
       <input type="text" id="editShoppingBuyer" class="ef-input" value="${item.buyer || "自己"}">
     </div>
@@ -2035,20 +2099,26 @@ function openEditShoppingModal(index) {
       <div class="ef-label">商品名稱 <span style="color:var(--red);">*</span></div>
       <input type="text" id="editShoppingName" class="ef-input" value="${item.name || ""}">
     </div>
+    <div style="display:flex;gap:10px;">
+      <div class="ef-wrap" style="flex:1;">
+        <div class="ef-label">數量 (例如: 1、2盒、3瓶)</div>
+        <input type="text" id="editShoppingQty" class="ef-input" value="${item.qty || "1"}">
+      </div>
+      <div class="ef-wrap" style="flex:1;">
+        <div class="ef-label">預估價格 / 預算</div>
+        <input type="text" id="editShoppingPrice" class="ef-input" value="${item.price || ""}">
+      </div>
+    </div>
     <div class="ef-wrap">
       <div class="ef-label">購買地點 / 店名 (輸入後自動產生 Google 地圖導航按鈕)</div>
       <input type="text" id="editShoppingLocation" class="ef-input" placeholder="例如: BicCamera 岡山站前店、驚安殿堂唐吉訶德、大國藥妝" value="${item.location || ""}">
-    </div>
-    <div class="ef-wrap">
-      <div class="ef-label">預估價格 / 預算</div>
-      <input type="text" id="editShoppingPrice" class="ef-input" value="${item.price || ""}">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">參考網址</div>
       <input type="text" id="editShoppingLink" class="ef-input" value="${item.link || ""}">
     </div>
     <div class="ef-wrap">
-      <div class="ef-label">備註說明 (數量、規格、色號等)</div>
+      <div class="ef-label">備註說明 (規格、色號、退稅注意事項等)</div>
       <textarea id="editShoppingNote" class="ef-textarea">${item.note || ""}</textarea>
     </div>
     <div class="ef-wrap">
@@ -2078,6 +2148,7 @@ function openEditShoppingModal(index) {
 
       tripData.shopping[index].buyer = document.getElementById("editShoppingBuyer").value.trim() || "自己";
       tripData.shopping[index].name = name;
+      tripData.shopping[index].qty = document.getElementById("editShoppingQty").value.trim() || "1";
       tripData.shopping[index].location = document.getElementById("editShoppingLocation").value.trim();
       tripData.shopping[index].price = document.getElementById("editShoppingPrice").value.trim();
       tripData.shopping[index].link = document.getElementById("editShoppingLink").value.trim();

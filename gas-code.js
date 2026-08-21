@@ -397,15 +397,15 @@ function initializeSubSheet(sheetId, tripName, startDate, endDate, duration) {
   let foodSheet = ss.getSheetByName("Food");
   if (!foodSheet) foodSheet = ss.insertSheet("Food");
   foodSheet.clear();
-  foodSheet.appendRow(["id", "emoji", "name", "area", "desc", "must", "done"]);
-  foodSheet.appendRow(["f1", "🦪", "日生 牡蠣燒 (お好み焼き)", "日生町", "岡山限定冬季美味", "TRUE", "FALSE"]);
+  foodSheet.appendRow(["id", "emoji", "name", "area", "desc", "must", "done", "imgUrl"]);
+  foodSheet.appendRow(["f1", "🦪", "日生 牡蠣燒 (お好み焼き)", "日生町", "岡山限定冬季美味", "TRUE", "FALSE", ""]);
   
   // 7. 代購清單 (Shopping)
   let shoppingSheet = ss.getSheetByName("Shopping");
   if (!shoppingSheet) shoppingSheet = ss.insertSheet("Shopping");
   shoppingSheet.clear();
-  shoppingSheet.appendRow(["id", "buyer", "name", "location", "price", "link", "imgUrl", "note", "done"]);
-  shoppingSheet.appendRow(["s1", "媽媽", "合利他命 EX Plus 270錠", "BicCamera 岡山站前店", "¥5,800", "https://www.biccamera.com/", "", "買2瓶，注意效期", "FALSE"]);
+  shoppingSheet.appendRow(["id", "buyer", "name", "location", "price", "qty", "link", "imgUrl", "note", "done"]);
+  shoppingSheet.appendRow(["s1", "媽媽", "合利他命 EX Plus 270錠", "BicCamera 岡山站前店", "¥5,800", "2瓶", "https://www.biccamera.com/", "", "買2瓶，注意效期", "FALSE"]);
 }
 
 // 輔助函式：將試算表可能自動轉為 Date 物件的時間格式過濾回乾淨字串 (例如 "14:00")
@@ -525,20 +525,22 @@ function loadTripDetails(sheetId) {
     }
   }
   
-  // 6. Food
+  // 6. Food (美食口袋清單，支援圖片與地圖)
   result.food = [];
   const fdSheet = ss.getSheetByName("Food");
   if (fdSheet) {
     const fdRows = fdSheet.getDataRange().getValues();
     for (let i = 1; i < fdRows.length; i++) {
+      if (!fdRows[i][0] && !fdRows[i][2]) continue;
       result.food.push({
         id: fdRows[i][0],
-        emoji: fdRows[i][1],
-        name: fdRows[i][2],
-        area: fdRows[i][3],
-        desc: fdRows[i][4],
-        must: fdRows[i][5].toString().toUpperCase() === "TRUE",
-        done: fdRows[i][6].toString().toUpperCase() === "TRUE"
+        emoji: fdRows[i][1] || "🍴",
+        name: fdRows[i][2] || "",
+        area: fdRows[i][3] || "",
+        desc: fdRows[i][4] || "",
+        must: (fdRows[i][5] || "").toString().toUpperCase() === "TRUE",
+        done: (fdRows[i][6] || "").toString().toUpperCase() === "TRUE",
+        imgUrl: fdRows[i][7] || ""
       });
     }
   }
@@ -548,19 +550,42 @@ function loadTripDetails(sheetId) {
   const shSheet = ss.getSheetByName("Shopping");
   if (shSheet) {
     const shRows = shSheet.getDataRange().getDisplayValues();
-    for (let i = 1; i < shRows.length; i++) {
-      if (!shRows[i][0] && !shRows[i][2]) continue;
-      result.shopping.push({
-        id: shRows[i][0] || ("s" + i),
-        buyer: shRows[i][1] || "自己",
-        name: shRows[i][2] || "",
-        location: shRows[i][3] || "",
-        price: shRows[i][4] || "",
-        link: shRows[i][5] || "",
-        imgUrl: shRows[i][6] || "",
-        note: shRows[i][7] || "",
-        done: (shRows[i][8] || "").toString().toUpperCase() === "TRUE"
-      });
+    if (shRows.length > 0) {
+      const headers = shRows[0].map(h => h.toString().trim().toLowerCase());
+      const qtyIdx = headers.indexOf("qty");
+      const hasQtyCol = qtyIdx !== -1;
+      
+      for (let i = 1; i < shRows.length; i++) {
+        if (!shRows[i][0] && !shRows[i][2]) continue;
+        if (hasQtyCol) {
+          result.shopping.push({
+            id: shRows[i][0] || ("s" + i),
+            buyer: shRows[i][1] || "自己",
+            name: shRows[i][2] || "",
+            location: shRows[i][3] || "",
+            price: shRows[i][4] || "",
+            qty: shRows[i][5] || "1",
+            link: shRows[i][6] || "",
+            imgUrl: shRows[i][7] || "",
+            note: shRows[i][8] || "",
+            done: (shRows[i][9] || "").toString().toUpperCase() === "TRUE"
+          });
+        } else {
+          // 向下相容舊版無 qty 結構
+          result.shopping.push({
+            id: shRows[i][0] || ("s" + i),
+            buyer: shRows[i][1] || "自己",
+            name: shRows[i][2] || "",
+            location: shRows[i][3] || "",
+            price: shRows[i][4] || "",
+            qty: "1",
+            link: shRows[i][5] || "",
+            imgUrl: shRows[i][6] || "",
+            note: shRows[i][7] || "",
+            done: (shRows[i][8] || "").toString().toUpperCase() === "TRUE"
+          });
+        }
+      }
     }
   }
   
@@ -624,20 +649,29 @@ function saveTripDetails(sheetId, data) {
     }
   });
   
-  // 6. Food
+  // 6. Food (美食口袋清單，支援圖片與地圖)
   let foodSheet = ss.getSheetByName("Food");
   if (!foodSheet) foodSheet = ss.insertSheet("Food");
   foodSheet.clearContents();
-  foodSheet.appendRow(["id", "emoji", "name", "area", "desc", "must", "done"]);
+  foodSheet.appendRow(["id", "emoji", "name", "area", "desc", "must", "done", "imgUrl"]);
   (data.food || []).forEach(item => {
-    foodSheet.appendRow([item.id, item.emoji, item.name, item.area, item.desc, item.must ? "TRUE" : "FALSE", item.done ? "TRUE" : "FALSE"]);
+    foodSheet.appendRow([
+      item.id || "",
+      item.emoji || "🍴",
+      item.name || "",
+      item.area || "",
+      item.desc || "",
+      item.must ? "TRUE" : "FALSE",
+      item.done ? "TRUE" : "FALSE",
+      item.imgUrl || ""
+    ]);
   });
 
   // 7. Shopping (代購清單)
   let shoppingSheet = ss.getSheetByName("Shopping");
   if (!shoppingSheet) shoppingSheet = ss.insertSheet("Shopping");
   shoppingSheet.clearContents();
-  shoppingSheet.appendRow(["id", "buyer", "name", "location", "price", "link", "imgUrl", "note", "done"]);
+  shoppingSheet.appendRow(["id", "buyer", "name", "location", "price", "qty", "link", "imgUrl", "note", "done"]);
   (data.shopping || []).forEach(item => {
     shoppingSheet.appendRow([
       item.id || "",
@@ -645,6 +679,7 @@ function saveTripDetails(sheetId, data) {
       item.name || "",
       item.location || "",
       item.price || "",
+      item.qty || "1",
       item.link || "",
       item.imgUrl || "",
       item.note || "",
