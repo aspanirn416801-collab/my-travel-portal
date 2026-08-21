@@ -197,9 +197,49 @@ function escapeHtml(str) {
     .replace(/'/g, "&#039;");
 }
 
-function sanitizeUrl(url) {
+// 將各類型的 Google Drive 網址轉換為相容性最高、支援直連外嵌的格式 (lh3.googleusercontent.com)
+function formatDriveImageUrl(url) {
   if (!url) return "";
   const trimmed = String(url).trim();
+
+  // 檢查是否為 Google Drive 相關連結並擷取 File ID
+  // 1. https://drive.google.com/uc?export=view&id=FILE_ID 或 uc?id=FILE_ID
+  // 2. https://drive.google.com/file/d/FILE_ID/view...
+  // 3. https://drive.google.com/open?id=FILE_ID
+  // 4. https://drive.google.com/thumbnail?id=FILE_ID
+  // 5. https://lh3.googleusercontent.com/d/FILE_ID
+  const match =
+    trimmed.match(/drive\.google\.com\/uc\?(?:[^"'\s]*&)?id=([a-zA-Z0-9_-]+)/i) ||
+    trimmed.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/i) ||
+    trimmed.match(/drive\.google\.com\/open\?(?:[^"'\s]*&)?id=([a-zA-Z0-9_-]+)/i) ||
+    trimmed.match(/drive\.google\.com\/thumbnail\?(?:[^"'\s]*&)?id=([a-zA-Z0-9_-]+)/i) ||
+    trimmed.match(/lh3\.googleusercontent\.com\/d\/([a-zA-Z0-9_-]+)/i);
+
+  if (match && match[1]) {
+    return `https://lh3.googleusercontent.com/d/${match[1]}`;
+  }
+  return trimmed;
+}
+
+// 圖片載入失敗時的降級容錯處理
+function handleImgError(img) {
+  if (!img) return;
+  const currentSrc = img.src || "";
+  // 若使用 lh3 載入失敗，嘗試降級切換至 Google Drive thumbnail 格式
+  const match = currentSrc.match(/lh3\.googleusercontent\.com\/d\/([a-zA-Z0-9_-]+)/i);
+  if (match && match[1] && !img.dataset.hasRetried) {
+    img.dataset.hasRetried = "true";
+    img.src = `https://drive.google.com/thumbnail?id=${match[1]}&sz=w1000`;
+    return;
+  }
+  // 若仍無法載入，隱藏圖片以維持版面整齊
+  img.style.display = "none";
+}
+
+function sanitizeUrl(url) {
+  if (!url) return "";
+  const formatted = formatDriveImageUrl(url);
+  const trimmed = String(formatted).trim();
   if (/^(https?:\/\/|data:image\/|blob:|\/|mailto:)/i.test(trimmed)) {
     return trimmed;
   }
@@ -273,7 +313,7 @@ function renderHubTripsGrid() {
             <div class="hub-card-uuid">識別碼: ${safeUuid}</div>
             <div class="hub-card-meta">
               <div>✈️ 點擊開啟專屬旅遊手冊</div>
-              <div>📖 包含每日行程、航班住宿、美食口袋與備忘清單</div>
+              <div>📖 包含每日行程、航班住宿、美食口袋、代購與備忘清單</div>
             </div>
           </div>
           <div class="hub-card-btn">開啟手冊 ➔</div>
@@ -1199,7 +1239,7 @@ function renderItinerary() {
             </div>
             ${safeDesc ? `<div class="tl-desc">${safeDesc}</div>` : ""}
             ${safeImgUrl && safeImgUrl !== "#"
-          ? `<div style="margin-top:10px;"><img src="${safeImgUrl}" style="max-width:100%;max-height:220px;border-radius:12px;box-shadow:var(--shadow-sm);display:block;" onerror="this.style.display='none'"></div>`
+          ? `<div style="margin-top:10px;"><img src="${safeImgUrl}" referrerpolicy="no-referrer" loading="lazy" style="max-width:100%;max-height:220px;border-radius:12px;box-shadow:var(--shadow-sm);display:block;object-fit:cover;" onerror="handleImgError(this)"></div>`
           : ""
         }
             ${autoMapUrl
@@ -1398,7 +1438,7 @@ function openEditItineraryModal(dayIdx, itemIdx) {
     </div>
     <div id="modalImgPreview" style="margin-top:6px;">
       ${item.imgUrl
-      ? `<img src="${item.imgUrl}" style="max-height:140px;border-radius:8px;display:block;">
+      ? `<img src="${formatDriveImageUrl(item.imgUrl)}" referrerpolicy="no-referrer" style="max-height:140px;border-radius:8px;display:block;object-fit:cover;" onerror="handleImgError(this)">
              <button type="button" class="btn-mini btn-mini-danger" style="margin-top:6px;" onclick="removeModalImage('editItImgUrl', 'modalImgPreview')">🗑️ 移除此照片</button>`
       : ""
     }
@@ -1423,9 +1463,9 @@ function openEditItineraryModal(dayIdx, itemIdx) {
       tripData.days[dayIdx].items[itemIdx].desc = document
         .getElementById("editItDesc")
         .value.trim();
-      tripData.days[dayIdx].items[itemIdx].imgUrl = document
-        .getElementById("editItImgUrl")
-        .value.trim();
+      tripData.days[dayIdx].items[itemIdx].imgUrl = formatDriveImageUrl(
+        document.getElementById("editItImgUrl").value.trim()
+      );
 
       renderItinerary();
       save();
@@ -1473,9 +1513,10 @@ async function uploadImageInModal(input, imgUrlInputId, previewDivId) {
       });
       const result = await res.json();
       if (result.status === "success") {
-        document.getElementById(imgUrlInputId).value = result.url;
+        const formattedUrl = formatDriveImageUrl(result.url);
+        document.getElementById(imgUrlInputId).value = formattedUrl;
         previewDiv.innerHTML = `
-          <img src="${result.url}" style="max-height:140px;border-radius:8px;display:block;">
+          <img src="${formattedUrl}" referrerpolicy="no-referrer" style="max-height:140px;border-radius:8px;display:block;object-fit:cover;" onerror="handleImgError(this)">
           <button type="button" class="btn-mini btn-mini-danger" style="margin-top:6px;" onclick="removeModalImage('${imgUrlInputId}', '${previewDivId}')">🗑️ 移除此照片</button>
         `;
         showToast("照片上傳成功 ✓");
@@ -1552,7 +1593,7 @@ function openAddItineraryModal(dayIdx) {
       const time = document.getElementById("addItineraryTime").value.trim();
       const place = document.getElementById("addItineraryPlace").value.trim();
       const desc = document.getElementById("addItineraryDesc").value.trim();
-      const imgUrl = document.getElementById("addItImgUrl").value.trim();
+      const imgUrl = formatDriveImageUrl(document.getElementById("addItImgUrl").value.trim());
 
       if (!place) {
         alert("請輸入景點名稱！");
@@ -1774,7 +1815,297 @@ function openAddFoodModal() {
 }
 
 // =========================================================================
-// 5. 後台管理頁面 (Admin) - 行程建立、日期維護與授權清單管理
+// 5. 代購商品 (Shopping) - 代購者、商品、地點(Google Maps)、價格、網址、照片與採買狀態
+// =========================================================================
+function renderShopping() {
+  if (!tripData) return;
+  const list = tripData.shopping || [];
+  const isAdmin = userRole === "admin";
+
+  const totalCount = list.length;
+  const doneCount = list.filter((it) => it.done).length;
+
+  const items = list
+    .map((item, i) => {
+      const mapQuery = encodeURIComponent(item.location || item.name || "");
+      const autoMapUrl = item.location
+        ? "https://www.google.com/maps/search/?api=1&query=" + mapQuery
+        : "";
+
+      const safeLink = sanitizeUrl(item.link);
+      const safeImgUrl = sanitizeUrl(item.imgUrl);
+      const safeBuyer = escapeHtml(item.buyer || "委託人");
+      const safeName = escapeHtml(item.name || "未命名商品");
+      const safeLocation = escapeHtml(item.location || "");
+      const safePrice = escapeHtml(item.price || "");
+      const safeNote = escapeHtml(item.note || "");
+
+      const adminActions = isAdmin
+        ? `<div class="item-actions">
+             <button class="btn-mini" onclick="openEditShoppingModal(${i})">✏️ 修改</button>
+             <button class="btn-mini btn-mini-danger" onclick="deleteShoppingItem(${i})">🗑️ 刪除</button>
+           </div>`
+        : "";
+
+      return `
+        <div class="shopping-card ${item.done ? "done" : ""}">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span class="buyer-badge">👤 ${safeBuyer}</span>
+              ${safePrice ? `<span class="price-badge">💰 ${safePrice}</span>` : ""}
+            </div>
+            ${adminActions}
+          </div>
+
+          <div style="display:flex;align-items:flex-start;gap:12px;">
+            <input type="checkbox" style="width:19px;height:19px;accent-color:var(--moss);margin-top:4px;cursor:pointer;" ${item.done ? "checked" : ""
+        } onclick="toggleShoppingDone(${i})">
+            
+            <div style="flex:1;${item.done ? "text-decoration:line-through;opacity:0.45;" : ""}">
+              <div style="font-size:16px;font-weight:900;color:var(--ink);">${safeName}</div>
+              
+              ${safeLocation
+          ? `<div style="font-size:12px;color:var(--moss);font-weight:700;margin-top:4px;">
+                     📍 ${safeLocation}
+                   </div>`
+          : ""
+        }
+              
+              ${safeNote
+          ? `<div style="font-size:12px;color:#555;margin-top:4px;background:#FAF8F5;padding:6px 10px;border-radius:8px;border:1px dashed var(--mist);">
+                     📝 ${safeNote}
+                   </div>`
+          : ""
+        }
+
+              ${safeImgUrl && safeImgUrl !== "#"
+          ? `<div style="margin-top:10px;">
+                     <img src="${safeImgUrl}" referrerpolicy="no-referrer" loading="lazy" style="max-width:100%;max-height:200px;border-radius:12px;box-shadow:var(--shadow-sm);display:block;object-fit:cover;" onerror="handleImgError(this)">
+                   </div>`
+          : ""
+        }
+
+              <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;">
+                ${autoMapUrl
+          ? `<a class="map-link" href="${autoMapUrl}" target="_blank" rel="noopener noreferrer">🗺️ 地圖導航</a>`
+          : ""
+        }
+                ${safeLink && safeLink !== "#"
+          ? `<a class="ext-link" href="${safeLink}" target="_blank" rel="noopener noreferrer">🔗 商品網址</a>`
+          : ""
+        }
+              </div>
+            </div>
+            
+            <button onclick="toggleShoppingDone(${i})" style="flex-shrink:0;border:none;border-radius:14px;padding:6px 12px;font-size:11px;font-weight:bold;cursor:pointer;background:${item.done ? "var(--moss)" : "var(--mist)"
+        };color:${item.done ? "#fff" : "#666"};transition:all 0.2s;">
+              ${item.done ? "已購買 ✓" : "想買"}
+            </button>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  const addBtn = isAdmin
+    ? `<button class="glass-btn" style="background:var(--moss);color:#fff;width:100%;margin-top:16px;justify-content:center;" onclick="openAddShoppingModal()">＋ 新增代購商品</button>`
+    : "";
+
+  document.getElementById("page-shopping").innerHTML = `
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <span class="card-title">🛍️ 伴手禮與代購清單</span>
+          <div style="font-size:11px;color:var(--gold);font-weight:700;margin-top:2px;">
+            共 ${totalCount} 件商品 ｜ 已採買 ${doneCount} 件
+          </div>
+        </div>
+      </div>
+      ${items || '<p style="color:#888;font-size:13px;padding:10px 0;">目前尚未新增任何代購商品，請點擊下方按鈕新增！</p>'}
+      ${addBtn}
+    </div>
+  `;
+}
+
+function toggleShoppingDone(index) {
+  if (!tripData.shopping || !tripData.shopping[index]) return;
+  tripData.shopping[index].done = !tripData.shopping[index].done;
+  save();
+  renderShopping();
+}
+
+function openAddShoppingModal() {
+  const formHtml = `
+    <div class="ef-wrap">
+      <div class="ef-label">代購者 / 委託人 (點選標籤或直接輸入)</div>
+      <div class="time-tags">
+        <button type="button" class="time-tag" onclick="document.getElementById('addShoppingBuyer').value='自己'">🙋 自己</button>
+        <button type="button" class="time-tag" onclick="document.getElementById('addShoppingBuyer').value='媽媽'">👩 媽媽</button>
+        <button type="button" class="time-tag" onclick="document.getElementById('addShoppingBuyer').value='爸爸'">👨 爸爸</button>
+        <button type="button" class="time-tag" onclick="document.getElementById('addShoppingBuyer').value='家人'">🏠 家人</button>
+        <button type="button" class="time-tag" onclick="document.getElementById('addShoppingBuyer').value='朋友'">🤝 朋友</button>
+        <button type="button" class="time-tag" onclick="document.getElementById('addShoppingBuyer').value='同事'">💼 同事</button>
+      </div>
+      <input type="text" id="addShoppingBuyer" class="ef-input" placeholder="例如: 媽媽、小明、自己" value="自己">
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">商品名稱 <span style="color:var(--red);">*</span></div>
+      <input type="text" id="addShoppingName" class="ef-input" placeholder="例如: 合利他命 EX Plus 270錠、獺祭二割三分">
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">購買地點 (支援 Google 地圖自動導航)</div>
+      <input type="text" id="addShoppingLocation" class="ef-input" placeholder="例如: BicCamera 岡山站前店、唐吉訶德">
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">預估價格 / 預算 (選填)</div>
+      <input type="text" id="addShoppingPrice" class="ef-input" placeholder="例如: ¥5,800 或 NT$ 1,200">
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">參考網址 (商品介紹或線上商城連結，選填)</div>
+      <input type="text" id="addShoppingLink" class="ef-input" placeholder="https://...">
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">備註說明 (數量、規格、色號等)</div>
+      <textarea id="addShoppingNote" class="ef-textarea" placeholder="例如: 買2盒、需退稅、請認明藍色包裝"></textarea>
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">上傳商品照片 (5MB內，選填)</div>
+      <input type="file" accept="image/*" id="addShoppingFile" onchange="uploadImageInModal(this, 'addShoppingImgUrl', 'addShoppingModalImgPreview')">
+      <input type="hidden" id="addShoppingImgUrl" value="">
+    </div>
+    <div id="addShoppingModalImgPreview" style="margin-top:6px;"></div>
+  `;
+
+  openFormModal({
+    title: "➕ 新增代購商品",
+    bodyHtml: formHtml,
+    confirmText: "確認新增並同步",
+    onConfirm: () => {
+      const buyer = document.getElementById("addShoppingBuyer").value.trim() || "自己";
+      const name = document.getElementById("addShoppingName").value.trim();
+      const location = document.getElementById("addShoppingLocation").value.trim();
+      const price = document.getElementById("addShoppingPrice").value.trim();
+      const link = document.getElementById("addShoppingLink").value.trim();
+      const note = document.getElementById("addShoppingNote").value.trim();
+      const imgUrl = formatDriveImageUrl(document.getElementById("addShoppingImgUrl").value.trim());
+
+      if (!name) {
+        alert("請輸入商品名稱！");
+        return false;
+      }
+
+      if (!tripData.shopping) tripData.shopping = [];
+      tripData.shopping.push({
+        id: uid(),
+        buyer: buyer,
+        name: name,
+        location: location,
+        price: price,
+        link: link,
+        imgUrl: imgUrl || "",
+        note: note,
+        done: false,
+      });
+
+      renderShopping();
+      save();
+      return true;
+    },
+  });
+}
+
+function openEditShoppingModal(index) {
+  const item = tripData.shopping[index];
+  const formHtml = `
+    <div class="ef-wrap">
+      <div class="ef-label">代購者 / 委託人</div>
+      <div class="time-tags">
+        <button type="button" class="time-tag" onclick="document.getElementById('editShoppingBuyer').value='自己'">🙋 自己</button>
+        <button type="button" class="time-tag" onclick="document.getElementById('editShoppingBuyer').value='媽媽'">👩 媽媽</button>
+        <button type="button" class="time-tag" onclick="document.getElementById('editShoppingBuyer').value='爸爸'">👨 爸爸</button>
+        <button type="button" class="time-tag" onclick="document.getElementById('editShoppingBuyer').value='家人'">🏠 家人</button>
+        <button type="button" class="time-tag" onclick="document.getElementById('editShoppingBuyer').value='朋友'">🤝 朋友</button>
+        <button type="button" class="time-tag" onclick="document.getElementById('editShoppingBuyer').value='同事'">💼 同事</button>
+      </div>
+      <input type="text" id="editShoppingBuyer" class="ef-input" value="${item.buyer || "自己"}">
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">商品名稱 <span style="color:var(--red);">*</span></div>
+      <input type="text" id="editShoppingName" class="ef-input" value="${item.name || ""}">
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">購買地點 (支援 Google 地圖自動導航)</div>
+      <input type="text" id="editShoppingLocation" class="ef-input" value="${item.location || ""}">
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">預估價格 / 預算</div>
+      <input type="text" id="editShoppingPrice" class="ef-input" value="${item.price || ""}">
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">參考網址</div>
+      <input type="text" id="editShoppingLink" class="ef-input" value="${item.link || ""}">
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">備註說明 (數量、規格、色號等)</div>
+      <textarea id="editShoppingNote" class="ef-textarea">${item.note || ""}</textarea>
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">上傳/更換商品照片 (5MB內，選填)</div>
+      <input type="file" accept="image/*" id="editShoppingFile" onchange="uploadImageInModal(this, 'editShoppingImgUrl', 'editShoppingModalImgPreview')">
+      <input type="hidden" id="editShoppingImgUrl" value="${item.imgUrl || ""}">
+    </div>
+    <div id="editShoppingModalImgPreview" style="margin-top:6px;">
+      ${item.imgUrl
+        ? `<img src="${formatDriveImageUrl(item.imgUrl)}" referrerpolicy="no-referrer" style="max-height:140px;border-radius:8px;display:block;object-fit:cover;" onerror="handleImgError(this)">
+           <button type="button" class="btn-mini btn-mini-danger" style="margin-top:6px;" onclick="removeModalImage('editShoppingImgUrl', 'editShoppingModalImgPreview')">🗑️ 移除此照片</button>`
+        : ""
+      }
+    </div>
+  `;
+
+  openFormModal({
+    title: "✏️ 編輯代購商品",
+    bodyHtml: formHtml,
+    confirmText: "儲存修改並同步",
+    onConfirm: () => {
+      const name = document.getElementById("editShoppingName").value.trim();
+      if (!name) {
+        alert("商品名稱不得為空！");
+        return false;
+      }
+
+      tripData.shopping[index].buyer = document.getElementById("editShoppingBuyer").value.trim() || "自己";
+      tripData.shopping[index].name = name;
+      tripData.shopping[index].location = document.getElementById("editShoppingLocation").value.trim();
+      tripData.shopping[index].price = document.getElementById("editShoppingPrice").value.trim();
+      tripData.shopping[index].link = document.getElementById("editShoppingLink").value.trim();
+      tripData.shopping[index].note = document.getElementById("editShoppingNote").value.trim();
+      tripData.shopping[index].imgUrl = formatDriveImageUrl(document.getElementById("editShoppingImgUrl").value.trim());
+
+      renderShopping();
+      save();
+      return true;
+    },
+  });
+}
+
+function deleteShoppingItem(index) {
+  const item = tripData.shopping[index];
+  openConfirmModal({
+    title: "刪除代購商品確認",
+    message: `確定要刪除代購商品「${item.name || "此項目"}」嗎？`,
+    danger: true,
+    confirmText: "確定刪除",
+    onConfirm: () => {
+      tripData.shopping.splice(index, 1);
+      renderShopping();
+      save();
+    },
+  });
+}
+
+// =========================================================================
+// 6. 後台管理頁面 (Admin) - 行程建立、日期維護與授權清單管理
 // =========================================================================
 function renderAdmin() {
   if (userRole !== "admin") return;
@@ -2072,5 +2403,6 @@ function render() {
   else if (currentTab === "flights") renderFlights();
   else if (currentTab === "itinerary") renderItinerary();
   else if (currentTab === "food") renderFood();
+  else if (currentTab === "shopping") renderShopping();
   else if (currentTab === "admin") renderAdmin();
 }

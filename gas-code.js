@@ -334,8 +334,8 @@ function doPost(e) {
         // 設定共用權限為「任何知道連結的人皆可檢視」，以供網頁直接渲染
         file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
         const fileId = file.getId();
-        // 轉換為直連預覽網址
-        const previewUrl = "https://drive.google.com/uc?export=view&id=" + fileId;
+        // 轉換為直連預覽網址（使用 lh3.googleusercontent.com 避免 uc?export=view 被 Google 阻擋 403）
+        const previewUrl = "https://lh3.googleusercontent.com/d/" + fileId;
         
         return ContentService.createTextOutput(JSON.stringify({ status: "success", url: previewUrl }))
                              .setMimeType(ContentService.MimeType.JSON);
@@ -399,6 +399,13 @@ function initializeSubSheet(sheetId, tripName, startDate, endDate, duration) {
   foodSheet.clear();
   foodSheet.appendRow(["id", "emoji", "name", "area", "desc", "must", "done"]);
   foodSheet.appendRow(["f1", "🦪", "日生 牡蠣燒 (お好み焼き)", "日生町", "岡山限定冬季美味", "TRUE", "FALSE"]);
+  
+  // 7. 代購清單 (Shopping)
+  let shoppingSheet = ss.getSheetByName("Shopping");
+  if (!shoppingSheet) shoppingSheet = ss.insertSheet("Shopping");
+  shoppingSheet.clear();
+  shoppingSheet.appendRow(["id", "buyer", "name", "location", "price", "link", "imgUrl", "note", "done"]);
+  shoppingSheet.appendRow(["s1", "媽媽", "合利他命 EX Plus 270錠", "BicCamera 岡山站前店", "¥5,800", "https://www.biccamera.com/", "", "買2瓶，注意效期", "FALSE"]);
 }
 
 // 輔助函式：將試算表可能自動轉為 Date 物件的時間格式過濾回乾淨字串 (例如 "14:00")
@@ -520,17 +527,41 @@ function loadTripDetails(sheetId) {
   
   // 6. Food
   result.food = [];
-  const fdRows = ss.getSheetByName("Food").getDataRange().getValues();
-  for (let i = 1; i < fdRows.length; i++) {
-    result.food.push({
-      id: fdRows[i][0],
-      emoji: fdRows[i][1],
-      name: fdRows[i][2],
-      area: fdRows[i][3],
-      desc: fdRows[i][4],
-      must: fdRows[i][5].toString().toUpperCase() === "TRUE",
-      done: fdRows[i][6].toString().toUpperCase() === "TRUE"
-    });
+  const fdSheet = ss.getSheetByName("Food");
+  if (fdSheet) {
+    const fdRows = fdSheet.getDataRange().getValues();
+    for (let i = 1; i < fdRows.length; i++) {
+      result.food.push({
+        id: fdRows[i][0],
+        emoji: fdRows[i][1],
+        name: fdRows[i][2],
+        area: fdRows[i][3],
+        desc: fdRows[i][4],
+        must: fdRows[i][5].toString().toUpperCase() === "TRUE",
+        done: fdRows[i][6].toString().toUpperCase() === "TRUE"
+      });
+    }
+  }
+  
+  // 7. Shopping (代購清單)
+  result.shopping = [];
+  const shSheet = ss.getSheetByName("Shopping");
+  if (shSheet) {
+    const shRows = shSheet.getDataRange().getDisplayValues();
+    for (let i = 1; i < shRows.length; i++) {
+      if (!shRows[i][0] && !shRows[i][2]) continue;
+      result.shopping.push({
+        id: shRows[i][0] || ("s" + i),
+        buyer: shRows[i][1] || "自己",
+        name: shRows[i][2] || "",
+        location: shRows[i][3] || "",
+        price: shRows[i][4] || "",
+        link: shRows[i][5] || "",
+        imgUrl: shRows[i][6] || "",
+        note: shRows[i][7] || "",
+        done: (shRows[i][8] || "").toString().toUpperCase() === "TRUE"
+      });
+    }
   }
   
   return result;
@@ -594,10 +625,30 @@ function saveTripDetails(sheetId, data) {
   });
   
   // 6. Food
-  const foodSheet = ss.getSheetByName("Food");
+  let foodSheet = ss.getSheetByName("Food");
+  if (!foodSheet) foodSheet = ss.insertSheet("Food");
   foodSheet.clearContents();
   foodSheet.appendRow(["id", "emoji", "name", "area", "desc", "must", "done"]);
   (data.food || []).forEach(item => {
     foodSheet.appendRow([item.id, item.emoji, item.name, item.area, item.desc, item.must ? "TRUE" : "FALSE", item.done ? "TRUE" : "FALSE"]);
+  });
+
+  // 7. Shopping (代購清單)
+  let shoppingSheet = ss.getSheetByName("Shopping");
+  if (!shoppingSheet) shoppingSheet = ss.insertSheet("Shopping");
+  shoppingSheet.clearContents();
+  shoppingSheet.appendRow(["id", "buyer", "name", "location", "price", "link", "imgUrl", "note", "done"]);
+  (data.shopping || []).forEach(item => {
+    shoppingSheet.appendRow([
+      item.id || "",
+      item.buyer || "",
+      item.name || "",
+      item.location || "",
+      item.price || "",
+      item.link || "",
+      item.imgUrl || "",
+      item.note || "",
+      item.done ? "TRUE" : "FALSE"
+    ]);
   });
 }
