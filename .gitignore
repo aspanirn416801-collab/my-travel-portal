@@ -1,0 +1,13 @@
+# 本機開發臨時檔案與日誌
+*.log
+.DS_Store
+
+# IDE 與編輯器設定檔
+.vscode/
+.idea/
+.project
+.settings/
+
+# Node 依賴（若未來有擴充）
+node_modules/
+.npm/

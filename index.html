@@ -1,0 +1,1009 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>✈️ 雲端旅遊手冊 · 多行程漫遊手帳</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Noto+Serif+TC:wght@500;700;900&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --washi: #F9F7F2;
+  --ink: #1B241D;
+  --moss: #1F3624;
+  --moss-light: #3D5A42;
+  --gold: #C5A059;
+  --gold-glow: #DFC17B;
+  --gold-soft: #F5EEDB;
+  --mist: #E6E0D4;
+  --red: #C83B2B;
+  --card-bg: #FFFFFF;
+  --shadow-lg: 0 16px 40px -10px rgba(31, 54, 36, 0.12);
+  --shadow-sm: 0 4px 16px rgba(0, 0, 0, 0.04);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--washi);
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang TC", "Noto Sans TC", sans-serif;
+  color: var(--ink);
+  min-height: 100vh;
+  padding-bottom: 100px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+body.large { font-size: 16px; }
+
+/* 容器寬度限制 */
+.app-container {
+  max-width: 860px;
+  margin: 0 auto;
+  min-height: 100vh;
+  position: relative;
+}
+
+/* 登入阻擋層 */
+.login-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(31, 54, 36, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  color: #FFF;
+  padding: 20px;
+  text-align: center;
+}
+.login-card {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 24px;
+  padding: 40px 30px;
+  max-width: 400px;
+  width: 100%;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+}
+.login-title {
+  font-family: 'Noto Serif TC', serif;
+  font-size: 26px;
+  font-weight: 900;
+  margin-bottom: 10px;
+}
+.login-desc {
+  font-size: 13px;
+  color: rgba(255,255,255,0.8);
+  margin-bottom: 30px;
+  line-height: 1.5;
+}
+
+/* 雜誌感 Hero 封面區 */
+.hero {
+  position: relative;
+  min-height: 280px;
+  background: 
+    linear-gradient(180deg, rgba(20, 32, 23, 0.3) 0%, rgba(20, 32, 23, 0.85) 75%, var(--washi) 100%),
+    url('https://images.unsplash.com/photo-1503899036084-c55cdd92da26?auto=format&fit=crop&w=1600&q=80') center 40%/cover no-repeat;
+  padding: 30px 24px 36px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.hero-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  z-index: 10;
+}
+.hero-badge-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.hero-tag {
+  font-family: 'Cinzel', serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: var(--gold-glow);
+  text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+}
+.hero-countdown {
+  background: rgba(197, 160, 89, 0.25);
+  border: 1px solid rgba(223, 193, 123, 0.5);
+  backdrop-filter: blur(8px);
+  color: #FFF;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: 12px;
+}
+
+.hero-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.glass-btn {
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: #FFF;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 20px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+.glass-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: translateY(-1px);
+}
+.glass-btn.active {
+  background: var(--gold);
+  border-color: var(--gold);
+  color: #FFF;
+}
+
+.hero-content {
+  margin-top: 40px;
+  color: #FFF;
+}
+.hero-title {
+  font-family: 'Noto Serif TC', serif;
+  font-size: 32px;
+  font-weight: 900;
+  letter-spacing: 2px;
+  line-height: 1.2;
+  text-shadow: 0 2px 10px rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.hero-subtitle {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+  letter-spacing: 1.5px;
+  margin-top: 6px;
+  font-weight: 500;
+}
+.hero-chips {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.hero-chip {
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 3px 9px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+/* 行程下拉選單區域 */
+.trip-selector-wrap {
+  padding: 0 20px;
+  margin-top: 16px;
+}
+.trip-select {
+  width: 100%;
+  background: var(--card-bg);
+  border: 1px solid var(--mist);
+  border-radius: 14px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-family: inherit;
+  font-weight: 700;
+  color: var(--moss);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  outline: none;
+}
+
+/* 頂部分頁切換列 */
+.tabs-outer {
+  padding: 0 20px;
+  margin-top: 12px;
+  z-index: 20;
+  position: relative;
+}
+.tabs-card {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 20px;
+  padding: 6px;
+  box-shadow: var(--shadow-lg);
+}
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+.tab-btn {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  color: var(--moss-light);
+  border: none;
+  border-radius: 14px;
+  padding: 10px 4px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  text-align: center;
+  white-space: nowrap;
+}
+.tab-btn.active {
+  background: var(--moss);
+  color: #FFF;
+  box-shadow: 0 4px 14px rgba(31, 54, 36, 0.3);
+}
+
+/* 主內容區 */
+.main {
+  padding: 20px;
+}
+.page { display: none; }
+.page.active {
+  display: block;
+  animation: pageFadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes pageFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 行程天數橫向選單 (Day Selector) */
+.day-selector {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 4px 2px 14px 2px;
+  margin-bottom: 14px;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+  align-items: center;
+}
+.day-selector::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+.day-btn {
+  flex: 0 0 auto;
+  min-width: 80px;
+  padding: 10px 14px;
+  border-radius: 16px;
+  background: #FFF;
+  border: 1px solid rgba(223, 193, 123, 0.45);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+.day-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 14px rgba(31, 54, 36, 0.12);
+  border-color: var(--moss);
+}
+.day-btn.active {
+  background: var(--moss);
+  border-color: var(--moss);
+  box-shadow: 0 6px 18px rgba(31, 54, 36, 0.3);
+}
+.day-btn-date {
+  font-size: 11px;
+  font-weight: 700;
+  color: #777;
+  transition: color 0.2s;
+  letter-spacing: 0.3px;
+}
+.day-btn.active .day-btn-date {
+  color: var(--gold-soft);
+}
+.day-btn-id {
+  font-size: 15px;
+  font-weight: 900;
+  color: var(--moss);
+  font-family: 'Noto Serif TC', serif;
+  letter-spacing: 0.5px;
+}
+.day-btn.active .day-btn-id {
+  color: #FFF;
+}
+.day-add-btn {
+  flex: 0 0 auto;
+  padding: 10px 16px;
+  border-radius: 16px;
+  background: #FAF8F5;
+  border: 1.5px dashed var(--gold);
+  color: #6B5A2A;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.2s;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.02);
+}
+.day-add-btn:hover {
+  background: var(--gold);
+  color: #FFF;
+  transform: translateY(-2px);
+}
+
+/* 時間軸樣式 (Timeline) */
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  position: relative;
+  padding-left: 6px;
+}
+.tl {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  position: relative;
+}
+.tl-time-badge {
+  flex-shrink: 0;
+  background: var(--gold-soft);
+  color: #6B5A2A;
+  font-weight: 800;
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 10px;
+  letter-spacing: 0.5px;
+  margin-top: 2px;
+}
+.tl-content {
+  flex: 1;
+  background: #FFF;
+  border-radius: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--mist);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+}
+.tl-place {
+  font-size: 16px;
+  font-weight: 900;
+  color: var(--moss);
+  letter-spacing: 0.5px;
+}
+.tl-desc {
+  font-size: 13px;
+  color: #555;
+  line-height: 1.6;
+  margin-top: 6px;
+}
+
+/* 卡片樣式 */
+.card {
+  background: var(--card-bg);
+  border-radius: 22px;
+  padding: 22px;
+  margin-bottom: 18px;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid rgba(230, 224, 212, 0.8);
+}
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px dashed var(--mist);
+}
+.card-title {
+  font-family: 'Noto Serif TC', serif;
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  color: var(--moss);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 輸入欄位樣式 */
+.ef-wrap { margin-bottom: 12px; }
+.ef-label { font-size: 10px; color: var(--gold); font-weight: 800; margin-bottom: 3px; letter-spacing: 1px; }
+.ef-input, .ef-textarea, .ef-select {
+  width: 100%;
+  background: #FFF;
+  border: 1px solid var(--gold);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--ink);
+  outline: none;
+}
+.btn-del {
+  background: #FFEBEA;
+  color: var(--red);
+  border: 1px solid rgba(200, 59, 43, 0.3);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.status-toast {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(27, 36, 29, 0.95);
+  backdrop-filter: blur(10px);
+  color: #FFF;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 18px;
+  border-radius: 20px;
+  display: none;
+  z-index: 2000;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+}
+.status-toast.show { display: block; animation: pageFadeIn 0.25s; }
+
+/* 底部操作浮條 */
+.bottom-bar {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-radius: 30px;
+  padding: 6px 14px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  z-index: 100;
+}
+.font-toggle {
+  display: flex;
+  background: var(--washi);
+  border-radius: 20px;
+  padding: 2px;
+}
+.font-btn {
+  border: none;
+  background: transparent;
+  padding: 4px 12px;
+  font-size: 12px;
+  border-radius: 16px;
+  cursor: pointer;
+  color: #666;
+}
+.font-btn.active { background: var(--moss); color: #FFF; font-weight: bold; }
+
+/* 通用互動對話框 (Modal) 樣式 */
+.modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(20, 32, 23, 0.65);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 3000;
+  padding: 20px;
+  animation: modalFadeIn 0.25s ease-out;
+}
+@keyframes modalFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.modal-card {
+  background: #FFF;
+  border-radius: 24px;
+  max-width: 480px;
+  width: 100%;
+  padding: 24px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(223, 193, 123, 0.4);
+  animation: modalSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+@keyframes modalSlideUp {
+  from { transform: translateY(20px) scale(0.97); }
+  to { transform: translateY(0) scale(1); }
+}
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px dashed var(--mist);
+}
+.modal-title {
+  font-family: 'Noto Serif TC', serif;
+  font-size: 17px;
+  font-weight: 900;
+  color: var(--moss);
+}
+.modal-close {
+  background: transparent;
+  border: none;
+  font-size: 18px;
+  color: #999;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 50%;
+  transition: all 0.2s;
+}
+.modal-close:hover {
+  background: var(--mist);
+  color: var(--ink);
+}
+.modal-body {
+  font-size: 14px;
+  color: var(--ink);
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.modal-btn {
+  padding: 8px 18px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+}
+.modal-btn-cancel {
+  background: #EFEFEF;
+  color: #555;
+}
+.modal-btn-cancel:hover {
+  background: #E2E2E2;
+}
+.modal-btn-confirm {
+  background: var(--moss);
+  color: #FFF;
+  box-shadow: 0 4px 12px rgba(31, 54, 36, 0.2);
+}
+.modal-btn-confirm:hover {
+  background: var(--moss-light);
+  transform: translateY(-1px);
+}
+.modal-btn-danger {
+  background: var(--red) !important;
+  color: #FFF !important;
+  box-shadow: 0 4px 12px rgba(200, 59, 43, 0.2) !important;
+}
+.modal-btn-danger:hover {
+  background: #B03020 !important;
+}
+
+/* 微操作按鈕樣式 (In-place action buttons) */
+.item-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.btn-mini {
+  background: rgba(31, 54, 36, 0.06);
+  border: 1px solid rgba(31, 54, 36, 0.12);
+  border-radius: 8px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--moss);
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  transition: all 0.2s ease;
+}
+.btn-mini:hover {
+  background: var(--moss);
+  color: #FFF;
+  transform: translateY(-1px);
+}
+.btn-mini-danger {
+  background: #FFF0EE;
+  border-color: rgba(200, 59, 43, 0.2);
+  color: var(--red);
+}
+.btn-mini-danger:hover {
+  background: var(--red);
+  color: #FFF;
+}
+.card-header-btn {
+  background: var(--gold-soft);
+  border: 1px solid var(--gold);
+  color: #6B5A2A;
+  border-radius: 10px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.2s ease;
+}
+.card-header-btn:hover {
+  background: var(--gold);
+  color: #FFF;
+}
+
+/* 快捷時段膠囊標籤樣式 */
+.time-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.time-tag {
+  background: #FAF8F5;
+  border: 1px solid rgba(223, 193, 123, 0.5);
+  border-radius: 20px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--moss);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+.time-tag:hover {
+  background: var(--gold-soft);
+  border-color: var(--gold);
+  color: #6B5A2A;
+  transform: translateY(-1px);
+}
+.time-tag:active {
+  background: var(--moss);
+  color: #FFF;
+}
+
+/* 全域 Loading 轉圈遮罩樣式 */
+.global-loading-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(20, 32, 23, 0.45);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+  animation: modalFadeIn 0.2s ease-out;
+}
+.loading-spinner-box {
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 24px;
+  padding: 26px 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(223, 193, 123, 0.6);
+  animation: modalSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.loading-spinner {
+  width: 44px;
+  height: 44px;
+  border: 4px solid var(--gold-soft);
+  border-top: 4px solid var(--moss);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+/* 全域頂部導覽列 (App Header) */
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid rgba(223, 193, 123, 0.35);
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+}
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.hub-nav-btn {
+  background: var(--washi);
+  border: 1px solid var(--gold);
+  border-radius: 12px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--moss);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+.hub-nav-btn:hover {
+  background: var(--moss);
+  color: #FFF;
+}
+.user-badge {
+  font-size: 11px;
+  font-weight: 800;
+  padding: 4px 10px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.badge-admin {
+  background: #FFF0EE;
+  color: var(--red);
+  border: 1px solid rgba(200, 59, 43, 0.3);
+}
+.badge-user {
+  background: var(--gold-soft);
+  color: #6B5A2A;
+  border: 1px solid var(--gold);
+}
+.badge-guest {
+  background: #EFEFEF;
+  color: #777;
+  border: 1px solid #DDD;
+}
+
+/* 首頁行程大廳 (Hub Grid) */
+.hub-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 18px;
+}
+.trip-hub-card {
+  background: #FFF;
+  border-radius: 20px;
+  padding: 20px;
+  border: 1.5px solid rgba(223, 193, 123, 0.4);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
+  cursor: pointer;
+  transition: all 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  position: relative;
+  overflow: hidden;
+}
+.trip-hub-card::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 4px;
+  background: linear-gradient(90deg, var(--gold), var(--moss));
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.trip-hub-card:hover {
+  transform: translateY(-4px);
+  border-color: var(--moss);
+  box-shadow: 0 10px 28px rgba(31, 54, 36, 0.12);
+}
+.trip-hub-card:hover::before {
+  opacity: 1;
+}
+.hub-card-title {
+  font-family: 'Noto Serif TC', serif;
+  font-size: 18px;
+  font-weight: 900;
+  color: var(--moss);
+  margin-bottom: 6px;
+}
+.hub-card-uuid {
+  font-size: 11px;
+  color: #888;
+  background: #F4F1EA;
+  padding: 2px 8px;
+  border-radius: 8px;
+  display: inline-block;
+  margin-bottom: 12px;
+  font-family: monospace;
+}
+.hub-card-meta {
+  font-size: 12px;
+  color: #666;
+  line-height: 1.6;
+}
+.hub-card-btn {
+  margin-top: 14px;
+  background: var(--gold-soft);
+  color: #6B5A2A;
+  font-weight: 800;
+  font-size: 12px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  text-align: center;
+  border: 1px solid var(--gold);
+  transition: all 0.2s;
+}
+.trip-hub-card:hover .hub-card-btn {
+  background: var(--moss);
+  color: #FFF;
+}
+</style>
+</head>
+<body>
+
+  <!-- 全域頂部導覽列 -->
+  <header class="app-header">
+    <div class="header-left">
+      <button class="hub-nav-btn" onclick="navigateTo('')">🏠 行程大廳</button>
+      <span id="currentTripIndicator" style="font-size:12px;font-weight:700;color:var(--moss);display:none;"></span>
+    </div>
+    <div class="header-right">
+      <div id="userRoleBadge" class="user-badge badge-guest">訪客模式</div>
+      
+      <!-- 自訂日系登入膠囊按鈕 (避免 Google iframe 預載入 403) -->
+      <button id="customLoginBtn" class="hub-nav-btn" style="background:var(--moss);color:#fff;border-color:var(--moss);" onclick="triggerGoogleLogin()">🔑 登入</button>
+      <button id="logoutBtn" class="hub-nav-btn" style="display:none;" onclick="logout()">🚪 登出</button>
+    </div>
+  </header>
+
+  <div class="app-container" id="appContent">
+    <div id="toast" class="status-toast">資料已同步 ✓</div>
+
+    <!-- ================================================================= -->
+    <!-- 視圖 1: 首頁行程大廳 (Portal Hub) -->
+    <!-- ================================================================= -->
+    <div id="view-hub" style="display: block;">
+      <div class="hero" style="padding-bottom: 24px;">
+        <div class="hero-badge-wrap">
+          <span class="hero-tag">TRAVEL HUB</span>
+          <span class="hero-countdown">雲端旅遊手冊</span>
+        </div>
+        <div class="hero-content">
+          <h1 class="hero-title">🍑 行程入口大廳</h1>
+          <p class="hero-subtitle">請點選下方行程卡片開啟專屬旅遊手冊，或點擊右上角登入進行編輯管理。</p>
+        </div>
+      </div>
+
+      <div class="main">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <h2 style="font-size:16px;font-weight:900;color:var(--moss);margin:0;">📋 所有旅遊行程</h2>
+          <div id="adminHubActions" style="display:none;">
+            <button class="card-header-btn" onclick="openCreateTripModal()" style="background:var(--moss);color:#fff;">➕ 建立新行程</button>
+          </div>
+        </div>
+        <div class="hub-grid" id="hubTripsGrid">
+          <div style="text-align:center;padding:40px 10px;color:#888;grid-column:1/-1;">正在載入行程列表中...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================================================================= -->
+    <!-- 視圖 2: 特定行程手冊內容 (Trip Manual) -->
+    <!-- ================================================================= -->
+    <div id="view-trip" style="display: none;">
+      <!-- 沉浸式 Hero 封面區 -->
+      <div class="hero">
+        <div class="hero-nav">
+          <div class="hero-badge-wrap">
+            <span class="hero-tag">TRAVEL PORTAL</span>
+            <span class="hero-countdown" id="tripCountdown">即將出發</span>
+          </div>
+          <div class="hero-actions">
+            <button class="glass-btn" onclick="fetchTripData()">🔄 整理</button>
+          </div>
+        </div>
+        
+        <div class="hero-content">
+          <h1 class="hero-title" id="portalTitle">🍑 行程手冊</h1>
+          <p class="hero-subtitle" id="portalSubtitle">載入中...</p>
+        </div>
+      </div>
+
+      <!-- 頂部膠囊分頁列 -->
+      <div class="tabs-outer">
+        <div class="tabs-card">
+          <div class="tabs">
+            <button class="tab-btn active" id="btn-tab-checklist" onclick="switchTab('checklist',this)">✓ 必備</button>
+            <button class="tab-btn" id="btn-tab-flights" onclick="switchTab('flights',this)">✈️ 航班</button>
+            <button class="tab-btn" id="btn-tab-itinerary" onclick="switchTab('itinerary',this)">📅 行程</button>
+            <button class="tab-btn" id="btn-tab-food" onclick="switchTab('food',this)">🍴 美食</button>
+            <button class="tab-btn" id="btn-tab-admin" onclick="switchTab('admin',this)" style="display: none; color: var(--red);">⚙️ 後台</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 主分頁內容 -->
+      <div class="main">
+        <div class="page active" id="page-checklist"></div>
+        <div class="page" id="page-flights"></div>
+        <div class="page" id="page-itinerary"></div>
+        <div class="page" id="page-food"></div>
+        <div class="page" id="page-admin"></div>
+      </div>
+    </div>
+
+    <!-- 底部字體控制列 -->
+    <div class="bottom-bar">
+      <span style="font-size: 11px; font-weight: 700; color: var(--moss);">版面字體</span>
+      <div class="font-toggle">
+        <button class="font-btn active" onclick="setFont('normal',this)">標準</button>
+        <button class="font-btn" onclick="setFont('large',this)">放大</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 通用互動對話框 (確認 / 新增表單 Modal) -->
+  <div id="commonModal" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modalTitle">對話框標題</h3>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body" id="modalBody">
+        <!-- 動態內容或表單欄位 -->
+      </div>
+      <div class="modal-actions" id="modalActions">
+        <button class="modal-btn modal-btn-cancel" onclick="closeModal()">取消</button>
+        <button class="modal-btn modal-btn-confirm" id="modalConfirmBtn">確定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 全域 Loading 轉圈遮罩 -->
+  <div id="globalLoading" class="global-loading-overlay" style="display: none;">
+    <div class="loading-spinner-box">
+      <div class="loading-spinner"></div>
+      <div class="loading-text" id="loadingText">資料同步中，請稍候...</div>
+    </div>
+  </div>
+
+  <!-- Google Identity Services SDK -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <!-- 前端核心邏輯 -->
+  <script src="app.js"></script>
+</body>
+</html>
