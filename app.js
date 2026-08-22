@@ -1534,6 +1534,7 @@ function renderItinerary() {
       const safePlace = escapeHtml(item.place || "未命名景點");
       const safeDesc = escapeHtml(item.desc || "");
       const safeImgUrl = sanitizeUrl(item.imgUrl);
+      const safeLink = sanitizeUrl(item.link);
 
       return `
         <div class="tl">
@@ -1548,10 +1549,16 @@ function renderItinerary() {
           ? `<div style="margin-top:10px;"><img src="${safeImgUrl}" referrerpolicy="no-referrer" loading="lazy" style="max-width:100%;max-height:220px;border-radius:14px;box-shadow:0 4px 14px rgba(0,0,0,0.08);display:block;object-fit:cover;border:1px solid rgba(255,255,255,0.8);" onerror="handleImgError(this)"></div>`
           : ""
         }
-            ${autoMapUrl
-          ? `<a class="map-link" href="${autoMapUrl}" target="_blank" rel="noopener noreferrer">🗺 地圖導航</a>`
+            <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:10px;">
+              ${autoMapUrl
+          ? `<a class="map-link" style="margin-top:0;" href="${autoMapUrl}" target="_blank" rel="noopener noreferrer">🗺 地圖導航</a>`
           : ""
         }
+              ${safeLink && safeLink !== "#"
+          ? `<a class="ext-link" style="margin-top:0;" href="${safeLink}" target="_blank" rel="noopener noreferrer">🔗 補充資料</a>`
+          : ""
+        }
+            </div>
           </div>
         </div>
       `;
@@ -1741,6 +1748,10 @@ function openEditItineraryModal(dayIdx, itemIdx) {
       <input type="text" id="editItPlace" class="ef-input" value="${item.place || ""}">
     </div>
     <div class="ef-wrap">
+      <div class="ef-label">參考網址 / 補充資料 (景點官網、門票預約、介紹等，選填)</div>
+      <input type="text" id="editItLink" class="ef-input" placeholder="https://..." value="${item.link || ""}">
+    </div>
+    <div class="ef-wrap">
       <div class="ef-label">說明備忘事項</div>
       <textarea id="editItDesc" class="ef-textarea" placeholder="例如: 門票預約、參拜動線、推薦拍照點">${item.desc || ""}</textarea>
     </div>
@@ -1773,6 +1784,9 @@ function openEditItineraryModal(dayIdx, itemIdx) {
         .getElementById("editItTime")
         .value.trim();
       tripData.days[dayIdx].items[itemIdx].place = place;
+      tripData.days[dayIdx].items[itemIdx].link = document
+        .getElementById("editItLink")
+        .value.trim();
       tripData.days[dayIdx].items[itemIdx].desc = document
         .getElementById("editItDesc")
         .value.trim();
@@ -1954,6 +1968,10 @@ function openAddItineraryModal(dayIdx) {
       <input type="text" id="addItineraryPlace" class="ef-input" placeholder="例如: 淺草寺 雷門">
     </div>
     <div class="ef-wrap">
+      <div class="ef-label">參考網址 / 補充資料 (景點官網、門票預約、介紹等，選填)</div>
+      <input type="text" id="addItineraryLink" class="ef-input" placeholder="https://...">
+    </div>
+    <div class="ef-wrap">
       <div class="ef-label">說明備忘事項</div>
       <textarea id="addItineraryDesc" class="ef-textarea" placeholder="例如: 參拜、拍照、購買御守"></textarea>
     </div>
@@ -1972,6 +1990,7 @@ function openAddItineraryModal(dayIdx) {
     onConfirm: () => {
       const time = document.getElementById("addItineraryTime").value.trim();
       const place = document.getElementById("addItineraryPlace").value.trim();
+      const link = document.getElementById("addItineraryLink").value.trim();
       const desc = document.getElementById("addItineraryDesc").value.trim();
       const imgUrl = formatDriveImageUrl(document.getElementById("addItImgUrl").value.trim());
 
@@ -1985,6 +2004,7 @@ function openAddItineraryModal(dayIdx) {
         id: uid(),
         time: time || "上午",
         place: place,
+        link: link || "",
         desc: desc,
         imgUrl: imgUrl || "",
       });
