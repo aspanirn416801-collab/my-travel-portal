@@ -499,6 +499,39 @@ function renderHubTripsGrid() {
   container.innerHTML = cardsHtml;
 }
 
+// 智能依照 Day 序號 (Day 1 < Day 2 < Day 8) 或日期升冪排序
+function sortTripDays(days) {
+  if (!Array.isArray(days) || days.length <= 1) return days || [];
+
+  return days.sort((a, b) => {
+    // 1. 優先比對 Day 數字序號 (例如 "Day 1" vs "Day 8" vs "Day 2")
+    const matchA = (a.id || "").match(/Day\s*(\d+)/i);
+    const matchB = (b.id || "").match(/Day\s*(\d+)/i);
+    if (matchA && matchB) {
+      const numA = parseInt(matchA[1], 10);
+      const numB = parseInt(matchB[1], 10);
+      if (numA !== numB) return numA - numB;
+    }
+
+    // 2. 若無法從 id 取得數字，比對日期 (例如 "2月12日" vs "2月19日" vs "2/13")
+    const parseDateScore = (dateStr) => {
+      if (!dateStr) return 999999;
+      const m = String(dateStr).match(/(\d+)\s*[月\/]\s*(\d+)/);
+      if (m) {
+        return parseInt(m[1], 10) * 100 + parseInt(m[2], 10);
+      }
+      return 999999;
+    };
+
+    const scoreA = parseDateScore(a.date);
+    const scoreB = parseDateScore(b.date);
+    if (scoreA !== scoreB) return scoreA - scoreB;
+
+    // 3. 原生字串自然排序兜底
+    return (a.id || "").localeCompare(b.id || "", undefined, { numeric: true, sensitivity: "base" });
+  });
+}
+
 // 取得特定行程的詳細旅遊資料 (SWR 0 秒瞬間秒開快取機制)
 async function fetchTripData() {
   if (!currentTripUuid) return;
@@ -509,6 +542,9 @@ async function fetchTripData() {
     const cached = localStorage.getItem("cache_trip_" + currentTripUuid);
     if (cached) {
       tripData = JSON.parse(cached);
+      if (tripData && tripData.days) {
+        sortTripDays(tripData.days);
+      }
       hasCache = true;
       const indicator = document.getElementById("currentTripIndicator");
       if (indicator) {
@@ -537,6 +573,10 @@ async function fetchTripData() {
     if (result.status === "success") {
       tripData = result.data;
       if (result.role) userRole = result.role;
+
+      if (tripData && tripData.days) {
+        sortTripDays(tripData.days);
+      }
 
       // 儲存至本地快取
       try {
@@ -1598,7 +1638,9 @@ function openAddDayModal() {
         items: [],
       });
 
-      selectedDay = tripData.days.length - 1;
+      sortTripDays(tripData.days);
+      const newIdx = tripData.days.findIndex((d) => d.id === dayId);
+      selectedDay = newIdx !== -1 ? newIdx : tripData.days.length - 1;
       renderItinerary();
       save();
       return true;
@@ -1618,6 +1660,7 @@ function deleteCurrentDay(dayIdx) {
     confirmText: "確定刪除本日",
     onConfirm: () => {
       tripData.days.splice(dayIdx, 1);
+      sortTripDays(tripData.days);
       if (selectedDay >= tripData.days.length) {
         selectedDay = Math.max(0, tripData.days.length - 1);
       }
@@ -1661,6 +1704,10 @@ function openEditDayTitleModal(dayIdx) {
       tripData.days[dayIdx].id = id;
       tripData.days[dayIdx].title = title;
       tripData.days[dayIdx].date = date;
+
+      sortTripDays(tripData.days);
+      const editedIdx = tripData.days.findIndex((d) => d.id === id);
+      selectedDay = editedIdx !== -1 ? editedIdx : 0;
 
       renderItinerary();
       save();
@@ -2240,7 +2287,7 @@ function renderShopping() {
     .join("");
 
   const addBtn = isAdmin
-    ? `<button class="glass-btn" style="background:var(--moss);color:#fff;width:100%;margin-top:16px;justify-content:center;" onclick="openAddShoppingModal()">＋ 新增代購商品</button>`
+    ? `<button class="glass-btn" style="background:var(--moss-gradient);color:#fff;width:100%;margin-top:16px;justify-content:center;" onclick="openAddShoppingModal()">＋ 新增代購商品</button>`
     : "";
 
   document.getElementById("page-shopping").innerHTML = `

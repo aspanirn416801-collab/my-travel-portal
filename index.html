@@ -1180,6 +1180,112 @@ body.large { font-size: 16px; }
   color: #FFF;
   box-shadow: 0 4px 12px rgba(31, 54, 36, 0.25);
 }
+
+/* =========================================================================
+   手機端 RWD 響應式深度適配 (Mobile First Responsive Design)
+   ========================================================================= */
+@media (max-width: 640px) {
+  body {
+    padding-bottom: 24px;
+  }
+  .app-header {
+    padding: 10px 14px;
+  }
+  .hub-nav-btn {
+    padding: 6px 12px;
+    font-size: 11px;
+  }
+  .user-badge {
+    padding: 4px 10px;
+    font-size: 10px;
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .hero {
+    min-height: 220px;
+    padding: 20px 16px 26px;
+    border-radius: 0 0 24px 24px;
+  }
+  .hero-title {
+    font-size: 22px;
+    letter-spacing: 0.5px;
+  }
+  .hero-subtitle {
+    font-size: 12px;
+    margin-top: 4px;
+  }
+  .tabs-outer {
+    padding: 0 12px;
+    margin-top: -18px;
+    top: 54px;
+  }
+  .tabs-card {
+    padding: 4px;
+    border-radius: 20px;
+  }
+  .tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    gap: 2px;
+  }
+  .tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .tab-btn {
+    flex: 0 0 auto;
+    padding: 8px 12px;
+    font-size: 12px;
+    border-radius: 14px;
+  }
+  .main {
+    padding: 16px 12px;
+  }
+  .day-selector {
+    gap: 8px;
+    padding: 4px 0 10px;
+  }
+  .day-btn {
+    min-width: 68px;
+    padding: 8px 10px;
+    border-radius: 14px;
+  }
+  .day-btn-date {
+    font-size: 10px;
+  }
+  .day-btn-id {
+    font-size: 13px;
+  }
+  .day-add-btn {
+    height: 48px;
+    padding: 8px 12px;
+    font-size: 11px;
+    border-radius: 14px;
+  }
+  .hub-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .food-grid, .shopping-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .bp-airports {
+    font-size: 22px;
+  }
+  .bp-city {
+    font-size: 12px;
+  }
+  .modal-card {
+    width: 92%;
+    max-width: 360px;
+    padding: 20px 16px;
+    border-radius: 22px;
+  }
+}
 </style>
 </head>
 <body>
