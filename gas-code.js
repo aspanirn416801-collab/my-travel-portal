@@ -14,13 +14,14 @@ const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID_HERE";
 // 雲端硬碟總資料夾名稱（當建立新行程且未指定 ID 時，所有行程資料夾與手冊將自動歸檔於此路徑下）
 const ROOT_TRAVEL_FOLDER_NAME = "my-travels";
 
-// 輔助函式：取得或建立雲端硬碟根目錄下的指定資料夾
+// 輔助函式：取得或建立雲端硬碟根目錄下的指定資料夾 (加入防呆預設值)
 function getOrCreateRootFolder(folderName) {
-  const folders = DriveApp.getFoldersByName(folderName);
+  const name = folderName || ROOT_TRAVEL_FOLDER_NAME || "my-travels";
+  const folders = DriveApp.getFoldersByName(name);
   if (folders.hasNext()) {
     return folders.next();
   }
-  return DriveApp.createFolder(folderName);
+  return DriveApp.createFolder(name);
 }
 
 // 驗證前端傳過來的 Google ID Token (JWT)
@@ -443,8 +444,8 @@ function initializeSubSheet(sheetId, tripName, startDate, endDate, duration) {
   let daysSheet = ss.getSheetByName("Days");
   if (!daysSheet) daysSheet = ss.insertSheet("Days");
   daysSheet.clear();
-  daysSheet.appendRow(["dayId", "date", "title", "time", "place", "desc", "imgUrl"]);
-  daysSheet.appendRow(["Day 1", "2月12日（五）", "岡山空港 ➔ 岡山車站", "15:30", "岡山桃太郎空港", "搭乘接駁巴士前往市區", ""]);
+  daysSheet.appendRow(["dayId", "date", "title", "time", "place", "desc", "imgUrl", "link"]);
+  daysSheet.appendRow(["Day 1", "2月12日（五）", "岡山空港 ➔ 岡山車站", "15:30", "岡山桃太郎空港", "搭乘接駁巴士前往市區", "", ""]);
   
   // 6. 美食清單 (Food)
   let foodSheet = ss.getSheetByName("Food");
@@ -459,6 +460,15 @@ function initializeSubSheet(sheetId, tripName, startDate, endDate, duration) {
   shoppingSheet.clear();
   shoppingSheet.appendRow(["id", "buyer", "name", "location", "price", "qty", "link", "imgUrl", "note", "done"]);
   shoppingSheet.appendRow(["s1", "媽媽", "合利他命 EX Plus 270錠", "BicCamera 岡山站前店", "¥5,800", "2瓶", "https://www.biccamera.com/", "", "買2瓶，注意效期", "FALSE"]);
+
+  // 8. 交通規劃 (交通 / Transport)
+  let transSheet = ss.getSheetByName("交通");
+  if (!transSheet) transSheet = ss.insertSheet("交通");
+  transSheet.clear();
+  transSheet.appendRow(["日期", "行程", "起訖點/內容", "時間", "預估費用/人", "幣別", "車種資訊", "備註"]);
+  transSheet.appendRow(["", "黑部立山周遊券", "", "", "24000", "日円", "", ""]);
+  transSheet.appendRow(["D1-8/5", "中部機場到名古屋", "", "14:30", "980", "日円", "指定席450円", "第1月台"]);
+  transSheet.appendRow(["D1-8/5", "名古屋到高山", "下午 4:03:00 Hida 15", "16:03", "", "", "使用周遊券(劃位)", ""]);
 }
 
 // 輔助函式：將試算表可能自動轉為 Date 物件的時間格式過濾回乾淨字串 (例如 "14:00")
@@ -545,7 +555,7 @@ function loadTripDetails(sheetId) {
   // 向下相容單筆物件
   result.hotel = result.hotels.length > 0 ? result.hotels[0] : {};
   
-  // 5. Days (使用 getDisplayValues 直接讀取試算表畫面上看到的純文字)
+  // 5. Days (使用 getDisplayValues 直接讀取純文字，包含 link 欄位)
   result.days = [];
   const dyRows = ss.getSheetByName("Days").getDataRange().getDisplayValues();
   const dayMap = {};
@@ -557,6 +567,7 @@ function loadTripDetails(sheetId) {
     const place = dyRows[i][4];
     const desc = dyRows[i][5];
     const imgUrl = dyRows[i][6];
+    const link = dyRows[i][7] || "";
     
     if (!dayMap[dayId]) {
       dayMap[dayId] = {
@@ -573,7 +584,8 @@ function loadTripDetails(sheetId) {
         time: time,
         place: place,
         desc: desc,
-        imgUrl: imgUrl
+        imgUrl: imgUrl,
+        link: link
       });
     }
   }
@@ -624,7 +636,6 @@ function loadTripDetails(sheetId) {
             done: (shRows[i][9] || "").toString().toUpperCase() === "TRUE"
           });
         } else {
-          // 向下相容舊版無 qty 結構
           result.shopping.push({
             id: shRows[i][0] || ("s" + i),
             buyer: shRows[i][1] || "自己",
@@ -641,6 +652,59 @@ function loadTripDetails(sheetId) {
       }
     }
   }
+
+  // 8. 交通 (Transport) - 路線地圖、周遊券與乘車行程
+  result.transport = { mapImgUrl: "", mapNote: "", passes: [], routes: [] };
+  const transSheet = ss.getSheetByName("交通") || ss.getSheetByName("Transport");
+  if (transSheet) {
+    const trRows = transSheet.getDataRange().getDisplayValues();
+    if (trRows.length > 0) {
+      for (let i = 1; i < trRows.length; i++) {
+        const colA = (trRows[i][0] || "").toString().trim();
+        const colB = (trRows[i][1] || "").toString().trim();
+        const colC = (trRows[i][2] || "").toString().trim();
+        const colD = formatTimeString(trRows[i][3]);
+        const colE = (trRows[i][4] || "").toString().trim();
+        const colF = (trRows[i][5] || "日円").toString().trim();
+        const colG = (trRows[i][6] || "").toString().trim();
+        const colH = (trRows[i][7] || "").toString().trim();
+
+        if (!colA && !colB) continue;
+
+        // 若 A 欄為「地圖」或「MAP」，則讀取為路線地圖
+        if (colA === "地圖" || colA === "MAP" || colA.toLowerCase() === "map") {
+          result.transport.mapImgUrl = colB;
+          result.transport.mapNote = colC || "主要交通路線圖";
+          continue;
+        }
+
+        // 若 B 欄包含「周遊券」或「PASS」且 A 欄為空或標籤，讀為周遊券
+        if (colB.includes("周遊券") || colB.includes("PASS") || colB.includes("Pass") || colA === "周遊券") {
+          result.transport.passes.push({
+            id: "p" + i,
+            name: colB,
+            cost: colE,
+            currency: colF,
+            note: colH || colC
+          });
+          continue;
+        }
+
+        // 一般乘車行程
+        result.transport.routes.push({
+          id: "t" + i,
+          dayTag: colA || "主要交通",
+          fromTo: colB,
+          time: colD || colC,
+          cost: colE,
+          currency: colF,
+          trainInfo: colG || colC,
+          seatInfo: colG,
+          note: colH
+        });
+      }
+    }
+  }
   
   return result;
 }
@@ -651,56 +715,66 @@ function saveTripDetails(sheetId, data) {
   
   // 1. Info
   const infoSheet = ss.getSheetByName("Info");
-  infoSheet.getRange(2, 2).setValue(data.name);
-  infoSheet.getRange(3, 2).setValue(data.startDate);
-  infoSheet.getRange(4, 2).setValue(data.endDate);
-  infoSheet.getRange(5, 2).setValue(data.duration);
+  if (infoSheet) {
+    infoSheet.getRange(2, 2).setValue(data.name);
+    infoSheet.getRange(3, 2).setValue(data.startDate);
+    infoSheet.getRange(4, 2).setValue(data.endDate);
+    infoSheet.getRange(5, 2).setValue(data.duration);
+  }
   
   // 2. Checklist
   const checklistSheet = ss.getSheetByName("Checklist");
-  checklistSheet.clearContents();
-  checklistSheet.appendRow(["id", "cat", "title", "note", "link", "done"]);
-  (data.checklist || []).forEach(item => {
-    checklistSheet.appendRow([item.id, item.cat, item.title, item.note, item.link, item.done ? "TRUE" : "FALSE"]);
-  });
+  if (checklistSheet) {
+    checklistSheet.clearContents();
+    checklistSheet.appendRow(["id", "cat", "title", "note", "link", "done"]);
+    (data.checklist || []).forEach(item => {
+      checklistSheet.appendRow([item.id, item.cat, item.title, item.note, item.link, item.done ? "TRUE" : "FALSE"]);
+    });
+  }
   
   // 3. Flights
   const flightsSheet = ss.getSheetByName("Flights");
-  flightsSheet.clearContents();
-  flightsSheet.appendRow(["Type", "airline", "no", "from", "to", "date", "dep", "arr", "note"]);
-  if (data.flights.out) {
-    const f = data.flights.out;
-    flightsSheet.appendRow(["out", f.airline, f.no, f.from, f.to, f.date, f.dep, f.arr, f.note]);
-  }
-  if (data.flights.in) {
-    const f = data.flights.in;
-    flightsSheet.appendRow(["in", f.airline, f.no, f.from, f.to, f.date, f.dep, f.arr, f.note]);
+  if (flightsSheet) {
+    flightsSheet.clearContents();
+    flightsSheet.appendRow(["Type", "airline", "no", "from", "to", "date", "dep", "arr", "note"]);
+    if (data.flights && data.flights.out) {
+      const f = data.flights.out;
+      flightsSheet.appendRow(["out", f.airline, f.no, f.from, f.to, f.date, f.dep, f.arr, f.note]);
+    }
+    if (data.flights && data.flights.in) {
+      const f = data.flights.in;
+      flightsSheet.appendRow(["in", f.airline, f.no, f.from, f.to, f.date, f.dep, f.arr, f.note]);
+    }
   }
   
   // 4. Hotel (支援多筆飯店住宿)
   const hotelSheet = ss.getSheetByName("Hotel");
-  hotelSheet.clearContents();
-  hotelSheet.appendRow(["name", "addr", "checkin", "checkout", "nights", "note"]);
-  const hotelList = data.hotels || (data.hotel ? [data.hotel] : []);
-  hotelList.forEach(h => {
-    if (h.name || h.addr) {
-      hotelSheet.appendRow([h.name || "", h.addr || "", h.checkin || "", h.checkout || "", h.nights || "", h.note || ""]);
-    }
-  });
+  if (hotelSheet) {
+    hotelSheet.clearContents();
+    hotelSheet.appendRow(["name", "addr", "checkin", "checkout", "nights", "note"]);
+    const hotelList = data.hotels || (data.hotel ? [data.hotel] : []);
+    hotelList.forEach(h => {
+      if (h.name || h.addr) {
+        hotelSheet.appendRow([h.name || "", h.addr || "", h.checkin || "", h.checkout || "", h.nights || "", h.note || ""]);
+      }
+    });
+  }
   
   // 5. Days
   const daysSheet = ss.getSheetByName("Days");
-  daysSheet.clearContents();
-  daysSheet.appendRow(["dayId", "date", "title", "time", "place", "desc", "imgUrl"]);
-  (data.days || []).forEach(d => {
-    if (d.items && d.items.length > 0) {
-      d.items.forEach(item => {
-        daysSheet.appendRow([d.id, d.date, d.title, item.time, item.place, item.desc, item.imgUrl || ""]);
-      });
-    } else {
-      daysSheet.appendRow([d.id, d.date, d.title, "", "", "", ""]);
-    }
-  });
+  if (daysSheet) {
+    daysSheet.clearContents();
+    daysSheet.appendRow(["dayId", "date", "title", "time", "place", "desc", "imgUrl", "link"]);
+    (data.days || []).forEach(d => {
+      if (d.items && d.items.length > 0) {
+        d.items.forEach(item => {
+          daysSheet.appendRow([d.id, d.date, d.title, item.time, item.place, item.desc, item.imgUrl || "", item.link || ""]);
+        });
+      } else {
+        daysSheet.appendRow([d.id, d.date, d.title, "", "", "", "", ""]);
+      }
+    });
+  }
   
   // 6. Food (美食口袋清單，支援圖片與地圖)
   let foodSheet = ss.getSheetByName("Food");
@@ -739,4 +813,37 @@ function saveTripDetails(sheetId, data) {
       item.done ? "TRUE" : "FALSE"
     ]);
   });
+
+  // 8. 交通 (Transport)
+  if (data.transport) {
+    let transSheet = ss.getSheetByName("交通") || ss.getSheetByName("Transport");
+    if (!transSheet) transSheet = ss.insertSheet("交通");
+    transSheet.clearContents();
+    transSheet.appendRow(["日期", "行程", "起訖點/內容", "時間", "預估費用/人", "幣別", "車種資訊", "備註"]);
+
+    // 寫入地圖資訊
+    if (data.transport.mapImgUrl) {
+      transSheet.appendRow(["地圖", data.transport.mapImgUrl, data.transport.mapNote || "", "", "", "", "", ""]);
+    }
+
+    // 寫入周遊券
+    (data.transport.passes || []).forEach(p => {
+      transSheet.appendRow(["周遊券", p.name, "", "", p.cost || "", p.currency || "日円", "", p.note || ""]);
+    });
+
+    // 寫入乘車行程
+    (data.transport.routes || []).forEach(r => {
+      transSheet.appendRow([
+        r.dayTag || "",
+        r.fromTo || "",
+        r.trainInfo || "",
+        r.time || "",
+        r.cost || "",
+        r.currency || "日円",
+        r.seatInfo || "",
+        r.note || ""
+      ]);
+    });
+  }
 }
+

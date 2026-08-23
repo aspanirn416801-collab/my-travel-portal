@@ -1182,6 +1182,211 @@ body.large { font-size: 16px; }
 }
 
 /* =========================================================================
+   交通模組 (Transit & Route Map) 樣式
+   ========================================================================= */
+.route-map-card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: var(--glass-border);
+  border-radius: 24px;
+  box-shadow: var(--glass-shadow);
+  padding: 18px 20px;
+  margin-bottom: 20px;
+}
+.route-map-preview-wrap {
+  position: relative;
+  width: 100%;
+  max-height: 320px;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(197, 160, 89, 0.35);
+  cursor: pointer;
+  background: #F4F6F4;
+  margin-top: 12px;
+}
+.route-map-preview {
+  width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+  display: block;
+  transition: transform 0.3s ease;
+}
+.route-map-preview-wrap:hover .route-map-preview {
+  transform: scale(1.02);
+}
+.route-map-zoom-tip {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  background: rgba(20, 35, 24, 0.82);
+  color: #FFF;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 4px 10px;
+  border-radius: 10px;
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,0.25);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 交通卡片與時間軸 */
+.transit-day-group {
+  margin-bottom: 24px;
+}
+.transit-day-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.transit-day-badge {
+  background: var(--moss-gradient);
+  color: #FFF;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 4px 12px;
+  border-radius: 12px;
+  letter-spacing: 0.5px;
+  box-shadow: 0 4px 12px rgba(24, 51, 30, 0.2);
+}
+.transit-item-card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: var(--glass-border);
+  border-radius: 20px;
+  box-shadow: var(--glass-shadow);
+  padding: 16px 18px;
+  margin-bottom: 12px;
+  transition: all 0.25s ease;
+}
+.transit-item-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--glass-shadow-hover);
+  background: var(--glass-bg-hover);
+}
+.transit-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.transit-route-title {
+  font-family: 'Noto Serif TC', serif;
+  font-size: 16px;
+  font-weight: 900;
+  color: var(--moss);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.transit-time-tag {
+  background: rgba(24, 51, 30, 0.08);
+  color: var(--moss);
+  font-weight: 800;
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(24, 51, 30, 0.15);
+}
+.transit-tags-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.transit-badge-train {
+  background: var(--gold-soft);
+  color: #6B5A2A;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 3px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(197, 160, 89, 0.35);
+}
+.transit-badge-seat {
+  background: rgba(200, 59, 43, 0.08);
+  color: var(--red);
+  font-size: 11px;
+  font-weight: 800;
+  padding: 3px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(200, 59, 43, 0.25);
+}
+.transit-badge-cost {
+  background: #EBF3EE;
+  color: var(--moss);
+  font-size: 11px;
+  font-weight: 800;
+  padding: 3px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--mist);
+}
+
+/* 全螢幕燈箱 Lightbox */
+.lightbox-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(10, 20, 14, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: pageFadeIn 0.25s ease;
+}
+.lightbox-content {
+  position: relative;
+  max-width: 95vw;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.lightbox-close {
+  position: absolute;
+  top: -42px;
+  right: 0;
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  color: #FFF;
+  font-size: 18px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+.lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.4);
+  transform: scale(1.1);
+}
+.lightbox-img {
+  max-width: 100%;
+  max-height: 82vh;
+  object-fit: contain;
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+  background: #FFF;
+}
+.lightbox-caption {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  margin-top: 10px;
+  text-align: center;
+}
+
+/* =========================================================================
    手機端 RWD 響應式深度適配 (Mobile First Responsive Design)
    ========================================================================= */
 @media (max-width: 640px) {
@@ -1361,6 +1566,7 @@ body.large { font-size: 16px; }
           <div class="tabs">
             <button class="tab-btn active" id="btn-tab-checklist" onclick="switchTab('checklist',this)">✓ 必備</button>
             <button class="tab-btn" id="btn-tab-flights" onclick="switchTab('flights',this)">✈️ 航班</button>
+            <button class="tab-btn" id="btn-tab-transport" onclick="switchTab('transport',this)">🚇 交通</button>
             <button class="tab-btn" id="btn-tab-itinerary" onclick="switchTab('itinerary',this)">📅 行程</button>
             <button class="tab-btn" id="btn-tab-food" onclick="switchTab('food',this)">🍴 美食</button>
             <button class="tab-btn" id="btn-tab-shopping" onclick="switchTab('shopping',this)">🛍️ 代購</button>
@@ -1373,11 +1579,21 @@ body.large { font-size: 16px; }
       <div class="main">
         <div class="page active" id="page-checklist"></div>
         <div class="page" id="page-flights"></div>
+        <div class="page" id="page-transport"></div>
         <div class="page" id="page-itinerary"></div>
         <div class="page" id="page-food"></div>
         <div class="page" id="page-shopping"></div>
         <div class="page" id="page-admin"></div>
       </div>
+    </div>
+  </div>
+
+  <!-- 路線地圖全螢幕燈箱 Lightbox -->
+  <div id="imageLightbox" class="lightbox-overlay" style="display: none;" onclick="closeMapLightbox()">
+    <div class="lightbox-content" onclick="event.stopPropagation()">
+      <button class="lightbox-close" onclick="closeMapLightbox()">✕</button>
+      <img id="lightboxImg" class="lightbox-img" src="" alt="交通路線圖">
+      <div class="lightbox-caption" id="lightboxCaption">點擊任意處關閉</div>
     </div>
   </div>
 

@@ -2867,11 +2867,508 @@ function openEditTripMetaModal(uuid) {
 }
 
 // =========================================================================
+// 2.5 交通模組 (Transport) - 路線地圖、周遊券與每日乘車時間軸
+// =========================================================================
+function renderTransport() {
+  if (!tripData) return;
+  if (!tripData.transport) {
+    tripData.transport = { mapImgUrl: "", mapNote: "", passes: [], routes: [] };
+  }
+  const transport = tripData.transport;
+  const isAdmin = userRole === "admin";
+  const routes = transport.routes || [];
+  const passes = transport.passes || [];
+
+  // 計算預估每人總交通費用
+  let totalCostYen = 0;
+  let totalCostNtd = 0;
+
+  // 加總周遊券費用
+  passes.forEach((p) => {
+    const costNum = parseFloat(String(p.cost || "").replace(/[^0-9.]/g, "")) || 0;
+    if (p.currency === "NTD" || String(p.cost).includes("NT") || String(p.cost).includes("台幣")) {
+      totalCostNtd += costNum;
+    } else {
+      totalCostYen += costNum;
+    }
+  });
+
+  // 加總各段車資
+  routes.forEach((r) => {
+    const costNum = parseFloat(String(r.cost || "").replace(/[^0-9.]/g, "")) || 0;
+    if (r.currency === "NTD" || String(r.cost).includes("NT") || String(r.cost).includes("台幣")) {
+      totalCostNtd += costNum;
+    } else {
+      totalCostYen += costNum;
+    }
+  });
+
+  // 1. 路線地圖區塊
+  const mapImgUrl = sanitizeUrl(transport.mapImgUrl);
+  const hasMap = mapImgUrl && mapImgUrl !== "#";
+  const mapNote = escapeHtml(transport.mapNote || "主要交通路線圖 (點擊查看高清大圖)");
+
+  const mapHtml = `
+    <div class="route-map-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <span class="card-title">🗺️ 旅程交通路線圖</span>
+          <div style="font-size:12px;color:var(--gold);font-weight:700;margin-top:2px;">${mapNote}</div>
+        </div>
+        ${isAdmin ? `<button class="btn-mini" onclick="openUploadRouteMapModal()">📷 上傳/更換地圖</button>` : ""}
+      </div>
+      ${hasMap
+      ? `
+          <div class="route-map-preview-wrap" onclick="openMapLightbox('${mapImgUrl}', '${mapNote}')">
+            <img src="${mapImgUrl}" class="route-map-preview" referrerpolicy="no-referrer" loading="lazy" onerror="handleImgError(this)">
+            <div class="route-map-zoom-tip">🔍 點擊放大查看高清路線圖</div>
+          </div>
+        `
+      : `
+          <div style="text-align:center;padding:30px 10px;color:#888;border:1.5px dashed var(--mist);border-radius:18px;margin-top:12px;background:rgba(255,255,255,0.4);">
+            <p style="font-size:13px;margin-bottom:8px;">尚未上傳交通路線圖</p>
+            ${isAdmin ? `<button class="glass-btn" style="background:var(--moss-gradient);color:#fff;display:inline-flex;" onclick="openUploadRouteMapModal()">＋ 上傳地鐵/JR路線圖</button>` : ""}
+          </div>
+        `
+    }
+    </div>
+  `;
+
+  // 2. 周遊券與費用總覽儀表板
+  const passesHtml = passes
+    .map((p, idx) => {
+      const safePassName = escapeHtml(p.name);
+      const safeCost = escapeHtml(p.cost);
+      const safeCurr = escapeHtml(p.currency || "日円");
+      const safeNote = escapeHtml(p.note || "");
+      const adminPassActions = isAdmin
+        ? `<button class="btn-mini btn-mini-danger" style="margin-left:6px;padding:1px 6px;" onclick="deleteTransitPass(${idx})">✕</button>`
+        : "";
+
+      return `
+      <div style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);padding:6px 12px;border-radius:12px;display:inline-flex;align-items:center;margin-top:6px;margin-right:6px;">
+        <span style="font-weight:800;font-size:12px;">🎟️ ${safePassName}</span>
+        ${safeCost ? `<span style="font-size:11px;margin-left:6px;opacity:0.9;">(${safeCost} ${safeCurr})</span>` : ""}
+        ${safeNote ? `<span style="font-size:10px;margin-left:4px;opacity:0.8;">· ${safeNote}</span>` : ""}
+        ${adminPassActions}
+      </div>
+    `;
+    })
+    .join("");
+
+  const budgetDashboardHtml = `
+    <div class="card" style="background:var(--moss-gradient);color:#FFF;border:none;box-shadow:0 14px 36px rgba(31,54,36,0.25);margin-bottom:20px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;">
+        <div>
+          <div style="font-size:11px;color:rgba(255,255,255,0.8);letter-spacing:1.5px;font-weight:800;">TRANSIT & PASSES</div>
+          <div style="font-family:'Noto Serif TC',serif;font-size:19px;font-weight:900;margin-top:2px;">
+            💰 預估交通總花費/人：${totalCostYen ? `¥${totalCostYen.toLocaleString()}` : ""}${totalCostYen && totalCostNtd ? " ＋ " : ""}${totalCostNtd ? `NT$${totalCostNtd.toLocaleString()}` : ""}${!totalCostYen && !totalCostNtd ? "¥0" : ""}
+          </div>
+        </div>
+        ${isAdmin ? `<button class="btn-mini" style="background:rgba(255,255,255,0.25);color:#fff;" onclick="openAddTransitPassModal()">＋ 新增周遊券</button>` : ""}
+      </div>
+      ${passes.length ? `<div style="margin-top:8px;display:flex;flex-wrap:wrap;">${passesHtml}</div>` : ""}
+    </div>
+  `;
+
+  // 3. 依天數分組的乘車時間軸
+  const groupedRoutes = {};
+  routes.forEach((r, idx) => {
+    const tag = r.dayTag || "主要交通";
+    if (!groupedRoutes[tag]) groupedRoutes[tag] = [];
+    groupedRoutes[tag].push({ ...r, originalIdx: idx });
+  });
+
+  const groupKeys = Object.keys(groupedRoutes);
+  const transitListHtml = groupKeys.length
+    ? groupKeys
+      .map((tag) => {
+        const itemsHtml = groupedRoutes[tag]
+          .map((item) => {
+            const safeFromTo = escapeHtml(item.fromTo || "未命名路線");
+            const safeTime = escapeHtml(item.time || "");
+            const safeTrain = escapeHtml(item.trainInfo || "");
+            const safeSeat = escapeHtml(item.seatInfo || "");
+            const safeCost = escapeHtml(item.cost || "");
+            const safeCurr = escapeHtml(item.currency || "日円");
+            const safeNote = escapeHtml(item.note || "");
+            const origIdx = item.originalIdx;
+
+            const adminActions = isAdmin
+              ? `
+              <div class="item-actions">
+                <button class="btn-mini" onclick="openEditTransportModal(${origIdx})">✏️ 修改</button>
+                <button class="btn-mini btn-mini-danger" onclick="deleteTransportItem(${origIdx})">🗑️ 刪除</button>
+              </div>
+            `
+              : "";
+
+            return `
+              <div class="transit-item-card">
+                <div class="transit-header-row">
+                  <div class="transit-route-title">
+                    <span>🚆</span>
+                    <span>${safeFromTo}</span>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    ${safeTime ? `<span class="transit-time-tag">🕒 ${safeTime}</span>` : ""}
+                    ${adminActions}
+                  </div>
+                </div>
+                <div class="transit-tags-row">
+                  ${safeTrain ? `<span class="transit-badge-train">🏷️ ${safeTrain}</span>` : ""}
+                  ${safeSeat ? `<span class="transit-badge-seat">💺 ${safeSeat}</span>` : ""}
+                  ${safeCost ? `<span class="transit-badge-cost">💵 ${safeCost} ${safeCurr}</span>` : ""}
+                </div>
+                ${safeNote ? `<div style="font-size:12px;color:#666;margin-top:8px;line-height:1.5;background:#FAF8F5;padding:6px 10px;border-radius:8px;border:1px dashed var(--mist);">📝 ${safeNote}</div>` : ""}
+              </div>
+            `;
+          })
+          .join("");
+
+        return `
+          <div class="transit-day-group">
+            <div class="transit-day-header">
+              <span class="transit-day-badge">${tag}</span>
+            </div>
+            ${itemsHtml}
+          </div>
+        `;
+      })
+      .join("")
+    : `<div class="card" style="text-align:center;padding:36px 16px;"><p style="color:#888;font-size:13px;">目前尚未新增每日乘車行程</p></div>`;
+
+  const addRouteBtn = isAdmin
+    ? `
+    <button class="glass-btn" style="background:var(--moss-gradient);color:#fff;width:100%;margin-top:16px;justify-content:center;" onclick="openAddTransportModal()">＋ 新增乘車行程</button>
+  `
+    : "";
+
+  document.getElementById("page-transport").innerHTML = `
+    ${mapHtml}
+    ${budgetDashboardHtml}
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <h3 style="font-size:16px;font-weight:900;color:var(--moss);margin:0;">🚆 每日乘車行程</h3>
+    </div>
+    ${transitListHtml}
+    ${addRouteBtn}
+  `;
+}
+
+// 路線圖燈箱開啟與關閉
+function openMapLightbox(imgUrl, caption = "") {
+  const overlay = document.getElementById("imageLightbox");
+  const img = document.getElementById("lightboxImg");
+  const cap = document.getElementById("lightboxCaption");
+  if (overlay && img) {
+    img.src = imgUrl;
+    if (cap) cap.innerText = caption || "點擊任意處關閉";
+    overlay.style.display = "flex";
+  }
+}
+
+function closeMapLightbox() {
+  const overlay = document.getElementById("imageLightbox");
+  if (overlay) overlay.style.display = "none";
+}
+
+// 上傳或更換交通路線圖對話框
+function openUploadRouteMapModal() {
+  if (!tripData.transport) {
+    tripData.transport = { mapImgUrl: "", mapNote: "", passes: [], routes: [] };
+  }
+  const currentNote = tripData.transport.mapNote || "";
+  const currentImg = tripData.transport.mapImgUrl || "";
+
+  const formHtml = `
+    <div class="ef-wrap">
+      <div class="ef-label">路線圖名稱 / 備註說明</div>
+      <input type="text" id="routeMapNote" class="ef-input" placeholder="例如: 名古屋地下鐵 ＆ JR 路線圖" value="${currentNote}">
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">上傳高清路線地圖照片 (支援自動壓縮)</div>
+      <input type="file" accept="image/*" id="routeMapFile" onchange="uploadImageInModal(this, 'routeMapImgUrl', 'routeMapPreviewDiv')">
+      <input type="hidden" id="routeMapImgUrl" value="${currentImg}">
+    </div>
+    <div id="routeMapPreviewDiv" style="margin-top:8px;">
+      ${currentImg ? `<img src="${currentImg}" style="max-height:160px;border-radius:8px;" onerror="handleImgError(this)">` : ""}
+    </div>
+  `;
+
+  openFormModal({
+    title: "📷 上傳交通路線圖",
+    bodyHtml: formHtml,
+    confirmText: "儲存並同步",
+    onConfirm: () => {
+      const note = document.getElementById("routeMapNote").value.trim() || "主要交通路線圖";
+      const imgUrl = document.getElementById("routeMapImgUrl").value.trim();
+      tripData.transport.mapNote = note;
+      tripData.transport.mapImgUrl = imgUrl;
+      renderTransport();
+      save();
+      return true;
+    },
+  });
+}
+
+// 新增乘車行程對話框
+function openAddTransportModal() {
+  if (!tripData.transport) {
+    tripData.transport = { mapImgUrl: "", mapNote: "", passes: [], routes: [] };
+  }
+  if (!tripData.transport.routes) tripData.transport.routes = [];
+
+  // 推算天數標籤候選清單 (如 D1-8/5, D2-8/6)
+  const dayOptions = (tripData.days || []).map((d, i) => {
+    const rawDate = (d.date || "").split("（")[0].replace("月", "/").replace("日", "").trim();
+    return `D${i + 1}${rawDate ? `-${rawDate}` : ""}`;
+  });
+  const defaultDayTag = dayOptions[0] || "D1";
+
+  const formHtml = `
+    <div class="ef-wrap">
+      <div class="ef-label">日期代號 (例如: D1-8/5、D2-8/6) <span style="color:var(--red);">*</span></div>
+      <input type="text" id="addTransDay" class="ef-input" placeholder="例如: D1-8/5" value="${defaultDayTag}">
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">乘車區間 / 路線 <span style="color:var(--red);">*</span></div>
+      <input type="text" id="addTransFromTo" class="ef-input" placeholder="例如: 中部機場到名古屋、名古屋到高山">
+    </div>
+    <div style="display:flex;gap:10px;">
+      <div class="ef-wrap" style="flex:1;">
+        <div class="ef-label">發車/抵達時間</div>
+        <input type="text" id="addTransTime" class="ef-input" placeholder="例如: 14:30 或 下午 4:03">
+      </div>
+      <div class="ef-wrap" style="flex:1;">
+        <div class="ef-label">預估費用 / 人</div>
+        <input type="text" id="addTransCost" class="ef-input" placeholder="例如: 980 或 0">
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;">
+      <div class="ef-wrap" style="flex:1;">
+        <div class="ef-label">車種名稱 (例如: 名鐵特急、JR 特急 Hida)</div>
+        <input type="text" id="addTransTrain" class="ef-input" placeholder="例如: JR 特急 Wide View Hida 15">
+      </div>
+      <div class="ef-wrap" style="flex:1;">
+        <div class="ef-label">劃位/座位資訊</div>
+        <input type="text" id="addTransSeat" class="ef-input" placeholder="例如: 使用周遊券(劃位)、指定席450円">
+      </div>
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">備註事項 (月台、轉乘、換券說明)</div>
+      <textarea id="addTransNote" class="ef-textarea" placeholder="例如: 第1月台搭乘、需於高山站轉乘巴士"></textarea>
+    </div>
+  `;
+
+  openFormModal({
+    title: "➕ 新增乘車行程",
+    bodyHtml: formHtml,
+    confirmText: "確認新增並同步",
+    onConfirm: () => {
+      const dayTag = document.getElementById("addTransDay").value.trim();
+      const fromTo = document.getElementById("addTransFromTo").value.trim();
+      const time = document.getElementById("addTransTime").value.trim();
+      const cost = document.getElementById("addTransCost").value.trim();
+      const train = document.getElementById("addTransTrain").value.trim();
+      const seat = document.getElementById("addTransSeat").value.trim();
+      const note = document.getElementById("addTransNote").value.trim();
+
+      if (!fromTo) {
+        alert("請輸入乘車區間！");
+        return false;
+      }
+
+      tripData.transport.routes.push({
+        id: uid(),
+        dayTag: dayTag || "主要交通",
+        fromTo: fromTo,
+        time: time,
+        cost: cost,
+        currency: "日円",
+        trainInfo: train,
+        seatInfo: seat,
+        note: note,
+      });
+
+      renderTransport();
+      save();
+      return true;
+    },
+  });
+}
+
+// 編輯乘車行程對話框
+function openEditTransportModal(idx) {
+  const item = tripData.transport.routes[idx];
+  if (!item) return;
+
+  const formHtml = `
+    <div class="ef-wrap">
+      <div class="ef-label">日期代號 (例如: D1-8/5、D2-8/6) <span style="color:var(--red);">*</span></div>
+      <input type="text" id="editTransDay" class="ef-input" value="${item.dayTag || ""}">
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">乘車區間 / 路線 <span style="color:var(--red);">*</span></div>
+      <input type="text" id="editTransFromTo" class="ef-input" value="${item.fromTo || ""}">
+    </div>
+    <div style="display:flex;gap:10px;">
+      <div class="ef-wrap" style="flex:1;">
+        <div class="ef-label">發車/抵達時間</div>
+        <input type="text" id="editTransTime" class="ef-input" value="${item.time || ""}">
+      </div>
+      <div class="ef-wrap" style="flex:1;">
+        <div class="ef-label">預估費用 / 人</div>
+        <input type="text" id="editTransCost" class="ef-input" value="${item.cost || ""}">
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;">
+      <div class="ef-wrap" style="flex:1;">
+        <div class="ef-label">車種名稱</div>
+        <input type="text" id="editTransTrain" class="ef-input" value="${item.trainInfo || ""}">
+      </div>
+      <div class="ef-wrap" style="flex:1;">
+        <div class="ef-label">劃位/座位資訊</div>
+        <input type="text" id="editTransSeat" class="ef-input" value="${item.seatInfo || ""}">
+      </div>
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">備註事項</div>
+      <textarea id="editTransNote" class="ef-textarea">${item.note || ""}</textarea>
+    </div>
+  `;
+
+  openFormModal({
+    title: "✏️ 編輯乘車行程",
+    bodyHtml: formHtml,
+    confirmText: "儲存修改並同步",
+    onConfirm: () => {
+      const dayTag = document.getElementById("editTransDay").value.trim();
+      const fromTo = document.getElementById("editTransFromTo").value.trim();
+      const time = document.getElementById("editTransTime").value.trim();
+      const cost = document.getElementById("editTransCost").value.trim();
+      const train = document.getElementById("editTransTrain").value.trim();
+      const seat = document.getElementById("editTransSeat").value.trim();
+      const note = document.getElementById("editTransNote").value.trim();
+
+      if (!fromTo) {
+        alert("請輸入乘車區間！");
+        return false;
+      }
+
+      tripData.transport.routes[idx] = {
+        ...item,
+        dayTag: dayTag || "主要交通",
+        fromTo: fromTo,
+        time: time,
+        cost: cost,
+        trainInfo: train,
+        seatInfo: seat,
+        note: note,
+      };
+
+      renderTransport();
+      save();
+      return true;
+    },
+  });
+}
+
+// 刪除乘車行程
+function deleteTransportItem(idx) {
+  const item = tripData.transport.routes[idx];
+  openConfirmModal({
+    title: "刪除乘車行程確認",
+    message: `確定要刪除「${item.fromTo || "此乘車段"}」嗎？`,
+    danger: true,
+    confirmText: "確定刪除",
+    onConfirm: () => {
+      tripData.transport.routes.splice(idx, 1);
+      renderTransport();
+      save();
+    },
+  });
+}
+
+// 新增周遊券對話框
+function openAddTransitPassModal() {
+  if (!tripData.transport) {
+    tripData.transport = { mapImgUrl: "", mapNote: "", passes: [], routes: [] };
+  }
+  if (!tripData.transport.passes) tripData.transport.passes = [];
+
+  const formHtml = `
+    <div class="ef-wrap">
+      <div class="ef-label">周遊券 / 交通票券名稱 <span style="color:var(--red);">*</span></div>
+      <input type="text" id="addPassName" class="ef-input" placeholder="例如: 黑部立山周遊券、JR 全國 Pass">
+    </div>
+    <div style="display:flex;gap:10px;">
+      <div class="ef-wrap" style="flex:1;">
+        <div class="ef-label">票券費用 (純數字)</div>
+        <input type="text" id="addPassCost" class="ef-input" placeholder="例如: 24000">
+      </div>
+      <div class="ef-wrap" style="flex:1;">
+        <div class="ef-label">幣別</div>
+        <input type="text" id="addPassCurr" class="ef-input" value="日円">
+      </div>
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">備註說明 (購買管道、兌換窗口)</div>
+      <textarea id="addPassNote" class="ef-textarea" placeholder="例如: 於中部國際機場名鐵窗口/名古屋站綠色窗口兌換"></textarea>
+    </div>
+  `;
+
+  openFormModal({
+    title: "🎟️ 新增周遊券 / 交通票券",
+    bodyHtml: formHtml,
+    confirmText: "確認新增並同步",
+    onConfirm: () => {
+      const name = document.getElementById("addPassName").value.trim();
+      const cost = document.getElementById("addPassCost").value.trim();
+      const curr = document.getElementById("addPassCurr").value.trim() || "日円";
+      const note = document.getElementById("addPassNote").value.trim();
+
+      if (!name) {
+        alert("請輸入票券名稱！");
+        return false;
+      }
+
+      tripData.transport.passes.push({
+        id: uid(),
+        name: name,
+        cost: cost,
+        currency: curr,
+        note: note,
+      });
+
+      renderTransport();
+      save();
+      return true;
+    },
+  });
+}
+
+function deleteTransitPass(idx) {
+  const pass = tripData.transport.passes[idx];
+  openConfirmModal({
+    title: "刪除周遊券確認",
+    message: `確定要刪除「${pass.name}」嗎？`,
+    danger: true,
+    confirmText: "確定刪除",
+    onConfirm: () => {
+      tripData.transport.passes.splice(idx, 1);
+      renderTransport();
+      save();
+    },
+  });
+}
+
+// =========================================================================
 // 主渲染分流
 // =========================================================================
 function render() {
   if (currentTab === "checklist") renderChecklist();
   else if (currentTab === "flights") renderFlights();
+  else if (currentTab === "transport") renderTransport();
   else if (currentTab === "itinerary") renderItinerary();
   else if (currentTab === "food") renderFood();
   else if (currentTab === "shopping") renderShopping();
