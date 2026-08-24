@@ -3072,6 +3072,15 @@ function closeMapLightbox() {
   if (overlay) overlay.style.display = "none";
 }
 
+// 全域鍵盤監聽 (按 ESC 鍵快速關閉全螢幕燈箱與彈窗)
+window.addEventListener("keydown", function (e) {
+  if (e.key === "Escape" || e.keyCode === 27) {
+    closeMapLightbox();
+    closeModal();
+    closeGoogleLoginModal();
+  }
+});
+
 // 上傳或更換交通路線圖對話框
 function openUploadRouteMapModal() {
   if (!tripData.transport) {
