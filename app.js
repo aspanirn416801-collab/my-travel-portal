@@ -2939,9 +2939,9 @@ function renderTransport() {
     const adminActions = isAdmin
       ? `
         <div class="item-actions">
-          <button class="btn-mini" onclick="openEditRouteMapModal(0)">✏️ 編輯地圖</button>
-          <button class="btn-mini btn-mini-danger" onclick="deleteRouteMap(0)">🗑️ 刪除</button>
-          <button class="btn-mini" style="background:var(--moss);color:#FFF;" onclick="openAddRouteMapModal()">＋ 新增更多地圖</button>
+          <button class="btn-mini" style="background:var(--moss);color:#FFF;padding:5px 12px;" onclick="openAddRouteMapModal()">＋ 新增第 2 張地圖</button>
+          <button class="btn-mini" onclick="openEditRouteMapModal(0)">✏️ 更換此圖</button>
+          <button class="btn-mini btn-mini-danger" onclick="deleteRouteMap(0)">🗑️ 刪除此圖</button>
         </div>
       `
       : "";
@@ -3376,13 +3376,9 @@ function deleteRouteMap(idx) {
   });
 }
 
-// 向下相容舊版按鈕呼叫
+// 向下相容舊版按鈕呼叫 (一律導向新增路線圖，避免不小心覆蓋現有地圖)
 function openUploadRouteMapModal() {
-  if (tripData && tripData.transport && Array.isArray(tripData.transport.maps) && tripData.transport.maps.length > 0) {
-    openEditRouteMapModal(0);
-  } else {
-    openAddRouteMapModal();
-  }
+  openAddRouteMapModal();
 }
 
 // 新增乘車行程對話框
