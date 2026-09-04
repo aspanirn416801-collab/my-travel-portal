@@ -1193,7 +1193,39 @@ body.large { font-size: 16px; }
   box-shadow: var(--glass-shadow);
   padding: 18px 20px;
   margin-bottom: 20px;
+  overflow: hidden;
 }
+.route-map-card img {
+  max-width: 100%;
+}
+/* 單張重點地圖展示容器 (防溢出、居中高清自適應) */
+.route-map-preview-wrap {
+  position: relative;
+  width: 100%;
+  max-height: 380px;
+  min-height: 180px;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(197, 160, 89, 0.35);
+  cursor: pointer;
+  background: #FFFFFF;
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.route-map-preview {
+  width: 100%;
+  max-height: 380px;
+  object-fit: contain;
+  display: block;
+  transition: transform 0.3s ease;
+}
+.route-map-preview-wrap:hover .route-map-preview {
+  transform: scale(1.02);
+}
+
+/* 多張地圖相簿網格 (2 張以上時呈現) */
 .route-maps-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -1201,7 +1233,7 @@ body.large { font-size: 16px; }
   margin-top: 14px;
 }
 .route-map-card-item {
-  background: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.85);
   border: 1px solid rgba(197, 160, 89, 0.35);
   border-radius: 18px;
   overflow: hidden;
@@ -1218,19 +1250,24 @@ body.large { font-size: 16px; }
 .route-map-thumb-wrap {
   position: relative;
   width: 100%;
-  height: 170px;
-  background: #EBF0EC;
+  height: 190px;
+  background: #FFFFFF;
   cursor: pointer;
   overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 1px solid rgba(0,0,0,0.05);
 }
 .route-map-thumb {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+  background: #FFFFFF;
   transition: transform 0.4s ease;
 }
 .route-map-thumb-wrap:hover .route-map-thumb {
-  transform: scale(1.06);
+  transform: scale(1.05);
 }
 .route-map-zoom-tip {
   position: absolute;
@@ -1760,7 +1797,7 @@ body.large { font-size: 16px; }
 
   <!-- Google Identity Services SDK -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <!-- 前端核心邏輯 -->
-  <script src="app.js"></script>
+  <!-- 前端核心邏輯 (加入版本號防快取) -->
+  <script src="app.js?v=20260905_5"></script>
 </body>
 </html>

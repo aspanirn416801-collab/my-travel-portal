@@ -2928,12 +2928,50 @@ function renderTransport() {
     }
   });
 
-  // 1. 多張交通路線地圖相簿區塊
-  const mapsCountText = maps.length ? `已收藏 ${maps.length} 張交通路線圖 (點擊查看高清大圖與切換)` : "尚未上傳交通路線圖";
+  // 1. 交通路線地圖相簿區塊 (智慧切換：單張時高清展示，多張時網格相簿，0張時友善引導)
+  let mapContentHtml = "";
   
-  let mapsGridHtml = "";
-  if (maps.length > 0) {
-    mapsGridHtml = `
+  if (maps.length === 1) {
+    const m = maps[0];
+    const safeTitle = escapeHtml(m.title || "主要交通路線圖");
+    const safeNote = escapeHtml(m.note || "");
+    const safeUrl = sanitizeUrl(m.url);
+    const adminActions = isAdmin
+      ? `
+        <div class="item-actions">
+          <button class="btn-mini" onclick="openEditRouteMapModal(0)">✏️ 編輯地圖</button>
+          <button class="btn-mini btn-mini-danger" onclick="deleteRouteMap(0)">🗑️ 刪除</button>
+          <button class="btn-mini" style="background:var(--moss);color:#FFF;" onclick="openAddRouteMapModal()">＋ 新增更多地圖</button>
+        </div>
+      `
+      : "";
+
+    mapContentHtml = `
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+        <div>
+          <span class="card-title">🗺️ ${safeTitle}</span>
+          ${safeNote ? `<div style="font-size:12px;color:var(--gold);font-weight:700;margin-top:2px;">${safeNote}</div>` : ""}
+        </div>
+        ${adminActions}
+      </div>
+      <div class="route-map-preview-wrap" onclick="openMapLightbox(0)">
+        <img src="${safeUrl}" class="route-map-preview" referrerpolicy="no-referrer" loading="lazy" onerror="handleImgError(this)" alt="${safeTitle}">
+        <div class="route-map-zoom-tip">🔍 點擊放大查看高清全圖</div>
+      </div>
+    `;
+  } else if (maps.length > 1) {
+    const adminHeaderAction = isAdmin
+      ? `<button class="btn-mini" style="background:var(--moss);color:#FFF;padding:5px 12px;" onclick="openAddRouteMapModal()">＋ 新增路線圖</button>`
+      : "";
+
+    mapContentHtml = `
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+        <div>
+          <span class="card-title">🗺️ 旅程交通地圖相簿</span>
+          <div style="font-size:12px;color:var(--gold);font-weight:700;margin-top:2px;">已收藏 ${maps.length} 張交通路線圖 (點擊查看高清大圖與切換)</div>
+        </div>
+        ${adminHeaderAction}
+      </div>
       <div class="route-maps-grid">
         ${maps.map((m, idx) => {
           const safeTitle = escapeHtml(m.title || `路線圖 ${idx + 1}`);
@@ -2967,25 +3005,26 @@ function renderTransport() {
       </div>
     `;
   } else {
-    mapsGridHtml = `
+    // 尚未上傳任何地圖時的引導介面
+    const adminUploadBtn = isAdmin
+      ? `<button class="glass-btn" style="background:var(--moss-gradient);color:#fff;display:inline-flex;" onclick="openAddRouteMapModal()">＋ 上傳第一張地鐵/JR路線圖</button>`
+      : "";
+
+    mapContentHtml = `
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span class="card-title">🗺️ 旅程交通地圖相簿</span>
+      </div>
       <div style="text-align:center;padding:36px 16px;color:#888;border:1.5px dashed var(--mist);border-radius:18px;margin-top:14px;background:rgba(255,255,255,0.4);">
         <p style="font-size:13px;margin-bottom:8px;font-weight:700;color:var(--moss);">目前尚未上傳交通路線圖</p>
         <p style="font-size:12px;color:#888;margin-bottom:12px;">可上傳地下鐵、JR 鐵路、景點觀光巴士等高清路線地圖，方便全體團員離線與隨時放大檢視！</p>
-        ${isAdmin ? `<button class="glass-btn" style="background:var(--moss-gradient);color:#fff;display:inline-flex;" onclick="openAddRouteMapModal()">＋ 上傳第一張地鐵/JR路線圖</button>` : ""}
+        ${adminUploadBtn}
       </div>
     `;
   }
 
   const mapHtml = `
     <div class="route-map-card">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-        <div>
-          <span class="card-title">🗺️ 旅程交通地圖相簿</span>
-          <div style="font-size:12px;color:var(--gold);font-weight:700;margin-top:2px;">${mapsCountText}</div>
-        </div>
-        ${isAdmin ? `<button class="btn-mini" style="background:var(--moss);color:#FFF;padding:5px 12px;" onclick="openAddRouteMapModal()">＋ 新增路線圖</button>` : ""}
-      </div>
-      ${mapsGridHtml}
+      ${mapContentHtml}
     </div>
   `;
 
@@ -3335,6 +3374,15 @@ function deleteRouteMap(idx) {
       save();
     },
   });
+}
+
+// 向下相容舊版按鈕呼叫
+function openUploadRouteMapModal() {
+  if (tripData && tripData.transport && Array.isArray(tripData.transport.maps) && tripData.transport.maps.length > 0) {
+    openEditRouteMapModal(0);
+  } else {
+    openAddRouteMapModal();
+  }
 }
 
 // 新增乘車行程對話框
