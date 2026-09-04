@@ -1182,7 +1182,7 @@ body.large { font-size: 16px; }
 }
 
 /* =========================================================================
-   交通模組 (Transit & Route Map) 樣式
+   交通模組 (Transit & Route Maps Album) 樣式
    ========================================================================= */
 .route-map-card {
   background: var(--glass-bg);
@@ -1194,42 +1194,85 @@ body.large { font-size: 16px; }
   padding: 18px 20px;
   margin-bottom: 20px;
 }
-.route-map-preview-wrap {
-  position: relative;
-  width: 100%;
-  max-height: 320px;
+.route-maps-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+  margin-top: 14px;
+}
+.route-map-card-item {
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(197, 160, 89, 0.35);
   border-radius: 18px;
   overflow: hidden;
-  border: 1px solid rgba(197, 160, 89, 0.35);
-  cursor: pointer;
-  background: #F4F6F4;
-  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.route-map-preview {
+.route-map-card-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 26px rgba(31, 54, 36, 0.12);
+  border-color: var(--moss);
+}
+.route-map-thumb-wrap {
+  position: relative;
   width: 100%;
-  max-height: 320px;
-  object-fit: contain;
-  display: block;
-  transition: transform 0.3s ease;
+  height: 170px;
+  background: #EBF0EC;
+  cursor: pointer;
+  overflow: hidden;
 }
-.route-map-preview-wrap:hover .route-map-preview {
-  transform: scale(1.02);
+.route-map-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.4s ease;
+}
+.route-map-thumb-wrap:hover .route-map-thumb {
+  transform: scale(1.06);
 }
 .route-map-zoom-tip {
   position: absolute;
-  bottom: 10px;
-  right: 10px;
+  bottom: 8px;
+  right: 8px;
   background: rgba(20, 35, 24, 0.82);
   color: #FFF;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
-  padding: 4px 10px;
-  border-radius: 10px;
+  padding: 3px 8px;
+  border-radius: 8px;
   backdrop-filter: blur(8px);
-  border: 1px solid rgba(255,255,255,0.25);
+  border: 1px solid rgba(255, 255, 255, 0.25);
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
+  pointer-events: none;
+}
+.route-map-info-body {
+  padding: 12px 14px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.route-map-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 6px;
+}
+.route-map-item-title {
+  font-family: 'Noto Serif TC', serif;
+  font-weight: 900;
+  font-size: 14px;
+  color: var(--moss);
+}
+.route-map-item-note {
+  font-size: 11px;
+  color: #666;
+  margin-top: 4px;
+  line-height: 1.45;
 }
 
 /* 交通卡片與時間軸 */
@@ -1328,62 +1371,114 @@ body.large { font-size: 16px; }
   border: 1px solid var(--mist);
 }
 
-/* 全螢幕燈箱 Lightbox */
+/* 全螢幕相簿燈箱 Lightbox (支援多張地圖切換) */
 .lightbox-overlay {
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(10, 20, 14, 0.92);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  background: rgba(10, 20, 14, 0.94);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   z-index: 2000;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 16px;
   animation: pageFadeIn 0.25s ease;
+  user-select: none;
 }
 .lightbox-content {
   position: relative;
-  max-width: 95vw;
-  max-height: 92vh;
+  max-width: 92vw;
+  max-height: 90vh;
   display: flex;
   flex-direction: column;
   align-items: center;
 }
 .lightbox-close {
   position: absolute;
-  top: -42px;
+  top: -44px;
   right: 0;
   background: rgba(255, 255, 255, 0.2);
   border: 1px solid rgba(255, 255, 255, 0.4);
   color: #FFF;
   font-size: 18px;
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.2s;
+  z-index: 20;
 }
 .lightbox-close:hover {
   background: rgba(255, 255, 255, 0.4);
   transform: scale(1.1);
 }
+.lightbox-nav-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(20, 35, 24, 0.65);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: #FFF;
+  font-size: 22px;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  z-index: 15;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+.lightbox-nav-btn:hover {
+  background: var(--moss);
+  border-color: #FFF;
+  transform: translateY(-50%) scale(1.1);
+}
+.lightbox-prev-btn { left: -60px; }
+.lightbox-next-btn { right: -60px; }
+.lightbox-img-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-height: 76vh;
+}
 .lightbox-img {
   max-width: 100%;
-  max-height: 82vh;
+  max-height: 76vh;
   object-fit: contain;
-  border-radius: 12px;
-  box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.6);
   background: #FFF;
 }
-.lightbox-caption {
-  color: rgba(255, 255, 255, 0.8);
-  font-size: 12px;
-  margin-top: 10px;
+.lightbox-footer {
+  margin-top: 12px;
   text-align: center;
+  max-width: 600px;
+}
+.lightbox-title {
+  color: #FFF;
+  font-family: 'Noto Serif TC', serif;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+.lightbox-caption {
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 12px;
+  margin-top: 4px;
+  line-height: 1.4;
+}
+@media (max-width: 768px) {
+  .lightbox-prev-btn { left: 8px; width: 40px; height: 40px; font-size: 18px; }
+  .lightbox-next-btn { right: 8px; width: 40px; height: 40px; font-size: 18px; }
 }
 
 /* =========================================================================
@@ -1600,12 +1695,19 @@ body.large { font-size: 16px; }
     </div>
   </div>
 
-  <!-- 路線地圖全螢幕燈箱 Lightbox -->
+  <!-- 路線地圖全螢幕相簿燈箱 Lightbox (支援多張地圖輪播切換) -->
   <div id="imageLightbox" class="lightbox-overlay" style="display: none;" onclick="closeMapLightbox()">
     <div class="lightbox-content" onclick="event.stopPropagation()">
-      <button class="lightbox-close" onclick="closeMapLightbox()">✕</button>
-      <img id="lightboxImg" class="lightbox-img" src="" alt="交通路線圖">
-      <div class="lightbox-caption" id="lightboxCaption">點擊任意處關閉</div>
+      <button class="lightbox-close" onclick="closeMapLightbox()" title="關閉 (ESC)">✕</button>
+      <button class="lightbox-nav-btn lightbox-prev-btn" id="lightboxPrevBtn" onclick="prevLightboxMap(event)" title="上一張 (←)">❮</button>
+      <div class="lightbox-img-wrap">
+        <img id="lightboxImg" class="lightbox-img" src="" alt="交通路線圖">
+      </div>
+      <button class="lightbox-nav-btn lightbox-next-btn" id="lightboxNextBtn" onclick="nextLightboxMap(event)" title="下一張 (→)">❯</button>
+      <div class="lightbox-footer">
+        <div class="lightbox-title" id="lightboxTitle">路線地圖名稱</div>
+        <div class="lightbox-caption" id="lightboxCaption">點擊任意處或按 ESC 關閉</div>
+      </div>
     </div>
   </div>
 

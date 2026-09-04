@@ -42,7 +42,7 @@ function verifyIdToken(token) {
     }
     
     if (json.email) {
-      return json.email.toLowerCase();
+      return json.email.toString().toLowerCase().trim();
     }
   } catch (e) {
     Logger.log("Token 驗證失敗: " + e.message);
@@ -53,6 +53,7 @@ function verifyIdToken(token) {
 // 取得使用者角色與可存取行程列表
 function getUserAccess(email) {
   const masterSpreadsheet = SpreadsheetApp.openById(MASTER_SHEET_ID);
+  const cleanEmail = email ? email.toString().toLowerCase().trim() : "";
   
   // 1. 檢查是否為管理員
   const adminSheet = masterSpreadsheet.getSheetByName("Admins");
@@ -60,7 +61,8 @@ function getUserAccess(email) {
   let isAdmin = false;
   // 從第 2 行開始 (跳過標頭)
   for (let i = 1; i < adminRows.length; i++) {
-    if (adminRows[i][0] && adminRows[i][0].toString().toLowerCase() === email) {
+    const rowEmail = (adminRows[i][0] || "").toString().toLowerCase().trim();
+    if (rowEmail && rowEmail === cleanEmail) {
       isAdmin = true;
       break;
     }
@@ -87,14 +89,14 @@ function getUserAccess(email) {
     } else {
       const allowedEmails = allowedUsersStr.toLowerCase().split(",").map(e => e.trim());
       const isPublic = !allowedUsersStr || allowedEmails.includes("*") || allowedEmails.includes("public");
-      if (isPublic || (email && allowedEmails.indexOf(email) !== -1)) {
+      if (isPublic || (cleanEmail && allowedEmails.includes(cleanEmail))) {
         allowedTrips.push({ uuid: uuid, name: name }); // 一般團員隱蔽實體 Sheet & Folder ID
       }
     }
   }
   
   return {
-    role: isAdmin ? "admin" : (email ? "user" : "guest"),
+    role: isAdmin ? "admin" : (cleanEmail ? "user" : "guest"),
     trips: allowedTrips
   };
 }
@@ -653,8 +655,8 @@ function loadTripDetails(sheetId) {
     }
   }
 
-  // 8. 交通 (Transport) - 路線地圖、周遊券與乘車行程
-  result.transport = { mapImgUrl: "", mapNote: "", passes: [], routes: [] };
+  // 8. 交通 (Transport) - 多張路線地圖相簿、周遊券與乘車行程
+  result.transport = { maps: [], passes: [], routes: [], mapImgUrl: "", mapNote: "" };
   const transSheet = ss.getSheetByName("交通") || ss.getSheetByName("Transport");
   if (transSheet) {
     const trRows = transSheet.getDataRange().getDisplayValues();
@@ -671,10 +673,21 @@ function loadTripDetails(sheetId) {
 
         if (!colA && !colB) continue;
 
-        // 若 A 欄為「地圖」或「MAP」，則讀取為路線地圖
+        // 若 A 欄為「地圖」或「MAP」，則讀取為路線地圖相簿項目
         if (colA === "地圖" || colA === "MAP" || colA.toLowerCase() === "map") {
-          result.transport.mapImgUrl = colB;
-          result.transport.mapNote = colC || "主要交通路線圖";
+          const mapTitle = colC || `路線圖 ${result.transport.maps.length + 1}`;
+          const mapUrl = colB;
+          const mapNote = colH || colC || "";
+          result.transport.maps.push({
+            id: "map_" + i,
+            title: mapTitle,
+            url: mapUrl,
+            note: mapNote
+          });
+          if (!result.transport.mapImgUrl) {
+            result.transport.mapImgUrl = mapUrl;
+            result.transport.mapNote = mapTitle;
+          }
           continue;
         }
 
@@ -819,11 +832,19 @@ function saveTripDetails(sheetId, data) {
     let transSheet = ss.getSheetByName("交通") || ss.getSheetByName("Transport");
     if (!transSheet) transSheet = ss.insertSheet("交通");
     transSheet.clearContents();
-    transSheet.appendRow(["日期", "行程", "起訖點/內容", "時間", "預估費用/人", "幣別", "車種資訊", "備註"]);
+    transSheet.appendRow(["類別/日期", "圖片網址/行程", "名稱/起訖點", "時間", "預估費用/人", "幣別", "車種/座位", "備註"]);
 
-    // 寫入地圖資訊
-    if (data.transport.mapImgUrl) {
-      transSheet.appendRow(["地圖", data.transport.mapImgUrl, data.transport.mapNote || "", "", "", "", "", ""]);
+    // 寫入多張地圖相簿資訊
+    const maps = data.transport.maps || [];
+    if (maps.length > 0) {
+      maps.forEach(m => {
+        if (m.url) {
+          transSheet.appendRow(["地圖", m.url, m.title || "路線地圖", "", "", "", "", m.note || ""]);
+        }
+      });
+    } else if (data.transport.mapImgUrl) {
+      // 向下相容單張地圖
+      transSheet.appendRow(["地圖", data.transport.mapImgUrl, data.transport.mapNote || "主要交通路線圖", "", "", "", "", data.transport.mapNote || ""]);
     }
 
     // 寫入周遊券

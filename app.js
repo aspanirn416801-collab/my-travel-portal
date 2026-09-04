@@ -2867,17 +2867,42 @@ function openEditTripMetaModal(uuid) {
 }
 
 // =========================================================================
-// 2.5 交通模組 (Transport) - 路線地圖、周遊券與每日乘車時間軸
+// 2.5 交通模組 (Transport) - 多張路線地圖相簿、周遊券與每日乘車時間軸
 // =========================================================================
-function renderTransport() {
+
+// 全局當前相簿燈箱瀏覽索引
+let currentLightboxMapIdx = 0;
+
+// 規範化與向後相容交通資料結構
+function ensureTransportData() {
   if (!tripData) return;
   if (!tripData.transport) {
-    tripData.transport = { mapImgUrl: "", mapNote: "", passes: [], routes: [] };
+    tripData.transport = { maps: [], passes: [], routes: [] };
   }
+  if (!Array.isArray(tripData.transport.maps)) {
+    tripData.transport.maps = [];
+  }
+  // 向下相容單張 mapImgUrl
+  if (tripData.transport.mapImgUrl && tripData.transport.maps.length === 0) {
+    tripData.transport.maps.push({
+      id: uid(),
+      title: tripData.transport.mapNote || "主要交通路線圖",
+      url: tripData.transport.mapImgUrl,
+      note: tripData.transport.mapNote || "主要交通路線圖",
+    });
+  }
+  if (!Array.isArray(tripData.transport.passes)) tripData.transport.passes = [];
+  if (!Array.isArray(tripData.transport.routes)) tripData.transport.routes = [];
+}
+
+function renderTransport() {
+  if (!tripData) return;
+  ensureTransportData();
   const transport = tripData.transport;
   const isAdmin = userRole === "admin";
   const routes = transport.routes || [];
   const passes = transport.passes || [];
+  const maps = transport.maps || [];
 
   // 計算預估每人總交通費用
   let totalCostYen = 0;
@@ -2903,34 +2928,64 @@ function renderTransport() {
     }
   });
 
-  // 1. 路線地圖區塊
-  const mapImgUrl = sanitizeUrl(transport.mapImgUrl);
-  const hasMap = mapImgUrl && mapImgUrl !== "#";
-  const mapNote = escapeHtml(transport.mapNote || "主要交通路線圖 (點擊查看高清大圖)");
+  // 1. 多張交通路線地圖相簿區塊
+  const mapsCountText = maps.length ? `已收藏 ${maps.length} 張交通路線圖 (點擊查看高清大圖與切換)` : "尚未上傳交通路線圖";
+  
+  let mapsGridHtml = "";
+  if (maps.length > 0) {
+    mapsGridHtml = `
+      <div class="route-maps-grid">
+        ${maps.map((m, idx) => {
+          const safeTitle = escapeHtml(m.title || `路線圖 ${idx + 1}`);
+          const safeNote = escapeHtml(m.note || "");
+          const safeUrl = sanitizeUrl(m.url);
+          const adminMapActions = isAdmin
+            ? `
+              <div class="item-actions" onclick="event.stopPropagation()">
+                <button class="btn-mini" onclick="openEditRouteMapModal(${idx})">✏️ 編輯</button>
+                <button class="btn-mini btn-mini-danger" onclick="deleteRouteMap(${idx})">🗑️ 刪除</button>
+              </div>
+            `
+            : "";
+
+          return `
+            <div class="route-map-card-item">
+              <div class="route-map-thumb-wrap" onclick="openMapLightbox(${idx})">
+                <img src="${safeUrl}" class="route-map-thumb" referrerpolicy="no-referrer" loading="lazy" onerror="handleImgError(this)" alt="${safeTitle}">
+                <div class="route-map-zoom-tip">🔍 點擊放大檢視</div>
+              </div>
+              <div class="route-map-info-body">
+                <div class="route-map-title-row">
+                  <div class="route-map-item-title">🗺️ ${safeTitle}</div>
+                  ${adminMapActions}
+                </div>
+                ${safeNote ? `<div class="route-map-item-note">📝 ${safeNote}</div>` : ""}
+              </div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    `;
+  } else {
+    mapsGridHtml = `
+      <div style="text-align:center;padding:36px 16px;color:#888;border:1.5px dashed var(--mist);border-radius:18px;margin-top:14px;background:rgba(255,255,255,0.4);">
+        <p style="font-size:13px;margin-bottom:8px;font-weight:700;color:var(--moss);">目前尚未上傳交通路線圖</p>
+        <p style="font-size:12px;color:#888;margin-bottom:12px;">可上傳地下鐵、JR 鐵路、景點觀光巴士等高清路線地圖，方便全體團員離線與隨時放大檢視！</p>
+        ${isAdmin ? `<button class="glass-btn" style="background:var(--moss-gradient);color:#fff;display:inline-flex;" onclick="openAddRouteMapModal()">＋ 上傳第一張地鐵/JR路線圖</button>` : ""}
+      </div>
+    `;
+  }
 
   const mapHtml = `
     <div class="route-map-card">
-      <div style="display:flex;justify-content:space-between;align-items:center;">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
         <div>
-          <span class="card-title">🗺️ 旅程交通路線圖</span>
-          <div style="font-size:12px;color:var(--gold);font-weight:700;margin-top:2px;">${mapNote}</div>
+          <span class="card-title">🗺️ 旅程交通地圖相簿</span>
+          <div style="font-size:12px;color:var(--gold);font-weight:700;margin-top:2px;">${mapsCountText}</div>
         </div>
-        ${isAdmin ? `<button class="btn-mini" onclick="openUploadRouteMapModal()">📷 上傳/更換地圖</button>` : ""}
+        ${isAdmin ? `<button class="btn-mini" style="background:var(--moss);color:#FFF;padding:5px 12px;" onclick="openAddRouteMapModal()">＋ 新增路線圖</button>` : ""}
       </div>
-      ${hasMap
-      ? `
-          <div class="route-map-preview-wrap" onclick="openMapLightbox('${mapImgUrl}', '${mapNote}')">
-            <img src="${mapImgUrl}" class="route-map-preview" referrerpolicy="no-referrer" loading="lazy" onerror="handleImgError(this)">
-            <div class="route-map-zoom-tip">🔍 點擊放大查看高清路線圖</div>
-          </div>
-        `
-      : `
-          <div style="text-align:center;padding:30px 10px;color:#888;border:1.5px dashed var(--mist);border-radius:18px;margin-top:12px;background:rgba(255,255,255,0.4);">
-            <p style="font-size:13px;margin-bottom:8px;">尚未上傳交通路線圖</p>
-            ${isAdmin ? `<button class="glass-btn" style="background:var(--moss-gradient);color:#fff;display:inline-flex;" onclick="openUploadRouteMapModal()">＋ 上傳地鐵/JR路線圖</button>` : ""}
-          </div>
-        `
-    }
+      ${mapsGridHtml}
     </div>
   `;
 
@@ -3055,16 +3110,62 @@ function renderTransport() {
   `;
 }
 
-// 路線圖燈箱開啟與關閉
-function openMapLightbox(imgUrl, caption = "") {
+// 路線圖燈箱開啟與關閉 (支援相簿索引切換與相容直接網址)
+function openMapLightbox(idxOrUrl, caption = "") {
+  ensureTransportData();
   const overlay = document.getElementById("imageLightbox");
   const img = document.getElementById("lightboxImg");
-  const cap = document.getElementById("lightboxCaption");
-  if (overlay && img) {
-    img.src = imgUrl;
-    if (cap) cap.innerText = caption || "點擊任意處關閉";
-    overlay.style.display = "flex";
+  const titleEl = document.getElementById("lightboxTitle");
+  const capEl = document.getElementById("lightboxCaption");
+  const prevBtn = document.getElementById("lightboxPrevBtn");
+  const nextBtn = document.getElementById("lightboxNextBtn");
+
+  if (!overlay || !img) return;
+
+  const maps = (tripData && tripData.transport && tripData.transport.maps) || [];
+
+  if (typeof idxOrUrl === "number") {
+    currentLightboxMapIdx = idxOrUrl;
+    if (currentLightboxMapIdx < 0) currentLightboxMapIdx = 0;
+    if (currentLightboxMapIdx >= maps.length) currentLightboxMapIdx = maps.length - 1;
+
+    const currentMap = maps[currentLightboxMapIdx];
+    if (currentMap) {
+      img.src = sanitizeUrl(currentMap.url);
+      if (titleEl) titleEl.innerText = `🗺️ ${currentMap.title || "交通路線圖"}`;
+      if (capEl) {
+        capEl.innerText = `${currentMap.note ? currentMap.note + " · " : ""}(${currentLightboxMapIdx + 1} / ${maps.length}) · 點擊任意處或按 ESC 關閉`;
+      }
+    }
+  } else {
+    // 傳入純圖片網址的相容模式
+    img.src = sanitizeUrl(idxOrUrl);
+    if (titleEl) titleEl.innerText = "🗺️ 交通路線圖";
+    if (capEl) capEl.innerText = caption || "點擊任意處或按 ESC 關閉";
   }
+
+  // 若有多張地圖則顯示左右導航按鈕
+  const showNav = maps.length > 1 && typeof idxOrUrl === "number";
+  if (prevBtn) prevBtn.style.display = showNav ? "flex" : "none";
+  if (nextBtn) nextBtn.style.display = showNav ? "flex" : "none";
+
+  overlay.style.display = "flex";
+}
+
+function prevLightboxMap(e) {
+  if (e) e.stopPropagation();
+  const maps = (tripData && tripData.transport && tripData.transport.maps) || [];
+  if (maps.length <= 1) return;
+  currentLightboxMapIdx = (currentLightboxMapIdx - 1 + maps.length) % maps.length;
+  openMapLightbox(currentLightboxMapIdx);
+}
+
+function nextLightboxMap(e) {
+  if (e) e.stopPropagation();
+  const maps = (tripData && tripData.transport && tripData.transport.maps) || [];
+  if (maps.length <= 1) return;
+  currentLightboxMapIdx = (currentLightboxMapIdx + 1) % maps.length;
+  openMapLightbox(currentLightboxMapIdx);
 }
 
 function closeMapLightbox() {
@@ -3072,50 +3173,166 @@ function closeMapLightbox() {
   if (overlay) overlay.style.display = "none";
 }
 
-// 全域鍵盤監聽 (按 ESC 鍵快速關閉全螢幕燈箱與彈窗)
+// 全域鍵盤監聽 (按 ESC 鍵關閉燈箱與彈窗，按左右鍵切換燈箱地圖)
 window.addEventListener("keydown", function (e) {
+  const lightbox = document.getElementById("imageLightbox");
+  const isLightboxOpen = lightbox && lightbox.style.display !== "none";
+
   if (e.key === "Escape" || e.keyCode === 27) {
     closeMapLightbox();
     closeModal();
     closeGoogleLoginModal();
+  } else if (isLightboxOpen) {
+    if (e.key === "ArrowLeft" || e.keyCode === 37) {
+      prevLightboxMap();
+    } else if (e.key === "ArrowRight" || e.keyCode === 39) {
+      nextLightboxMap();
+    }
   }
 });
 
-// 上傳或更換交通路線圖對話框
-function openUploadRouteMapModal() {
-  if (!tripData.transport) {
-    tripData.transport = { mapImgUrl: "", mapNote: "", passes: [], routes: [] };
-  }
-  const currentNote = tripData.transport.mapNote || "";
-  const currentImg = tripData.transport.mapImgUrl || "";
-
+// 新增交通路線圖對話框
+function openAddRouteMapModal() {
+  ensureTransportData();
   const formHtml = `
     <div class="ef-wrap">
-      <div class="ef-label">路線圖名稱 / 備註說明</div>
-      <input type="text" id="routeMapNote" class="ef-input" placeholder="例如: 名古屋地下鐵 ＆ JR 路線圖" value="${currentNote}">
+      <div class="ef-label">路線圖名稱 / 系統分類 <span style="color:var(--red);">*</span></div>
+      <input type="text" id="addMapTitle" class="ef-input" placeholder="例如: 名古屋市營地下鐵全圖、JR 東海路線圖">
     </div>
     <div class="ef-wrap">
-      <div class="ef-label">上傳高清路線地圖照片 (支援自動壓縮)</div>
-      <input type="file" accept="image/*" id="routeMapFile" onchange="uploadImageInModal(this, 'routeMapImgUrl', 'routeMapPreviewDiv')">
-      <input type="hidden" id="routeMapImgUrl" value="${currentImg}">
+      <div class="ef-label">上傳高清路線地圖照片 (支援自動壓縮) <span style="color:var(--red);">*</span></div>
+      <input type="file" accept="image/*" id="addMapFile" onchange="uploadImageInModal(this, 'addMapImgUrl', 'addMapPreviewDiv')">
+      <input type="hidden" id="addMapImgUrl" value="">
     </div>
-    <div id="routeMapPreviewDiv" style="margin-top:8px;">
-      ${currentImg ? `<img src="${currentImg}" style="max-height:160px;border-radius:8px;" onerror="handleImgError(this)">` : ""}
+    <div id="addMapPreviewDiv" style="margin-top:8px;"></div>
+    <div class="ef-wrap" style="margin-top:12px;">
+      <div class="ef-label">備註說明 / 適用區間</div>
+      <textarea id="addMapNote" class="ef-textarea" placeholder="例如: 包含名城線、東山線；適用昇龍道地下鐵 24 小時券"></textarea>
     </div>
   `;
 
   openFormModal({
-    title: "📷 上傳交通路線圖",
+    title: "🗺️ 新增交通路線圖",
     bodyHtml: formHtml,
-    confirmText: "儲存並同步",
+    confirmText: "確認新增並同步",
     onConfirm: () => {
-      const note = document.getElementById("routeMapNote").value.trim() || "主要交通路線圖";
-      const imgUrl = document.getElementById("routeMapImgUrl").value.trim();
-      tripData.transport.mapNote = note;
-      tripData.transport.mapImgUrl = imgUrl;
+      const title = document.getElementById("addMapTitle").value.trim();
+      const imgUrl = document.getElementById("addMapImgUrl").value.trim();
+      const note = document.getElementById("addMapNote").value.trim();
+
+      if (!title) {
+        alert("請輸入路線圖名稱！");
+        return false;
+      }
+      if (!imgUrl) {
+        alert("請上傳路線地圖照片！");
+        return false;
+      }
+
+      tripData.transport.maps.push({
+        id: uid(),
+        title: title,
+        url: imgUrl,
+        note: note,
+      });
+
+      // 同步設定主要地圖向後相容欄位
+      tripData.transport.mapImgUrl = tripData.transport.maps[0].url;
+      tripData.transport.mapNote = tripData.transport.maps[0].title;
+
       renderTransport();
       save();
       return true;
+    },
+  });
+}
+
+// 編輯指定交通路線圖對話框
+function openEditRouteMapModal(idx) {
+  ensureTransportData();
+  const map = tripData.transport.maps[idx];
+  if (!map) return;
+
+  const currentTitle = map.title || "";
+  const currentImg = map.url || "";
+  const currentNote = map.note || "";
+
+  const formHtml = `
+    <div class="ef-wrap">
+      <div class="ef-label">路線圖名稱 / 系統分類 <span style="color:var(--red);">*</span></div>
+      <input type="text" id="editMapTitle" class="ef-input" placeholder="例如: 名古屋市營地下鐵全圖" value="${escapeHtml(currentTitle)}">
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">更換高清路線地圖照片 (若不更換請留空)</div>
+      <input type="file" accept="image/*" id="editMapFile" onchange="uploadImageInModal(this, 'editMapImgUrl', 'editMapPreviewDiv')">
+      <input type="hidden" id="editMapImgUrl" value="${currentImg}">
+    </div>
+    <div id="editMapPreviewDiv" style="margin-top:8px;">
+      ${currentImg ? `<img src="${currentImg}" style="max-height:140px;border-radius:10px;border:1px solid #DDD;" onerror="handleImgError(this)">` : ""}
+    </div>
+    <div class="ef-wrap" style="margin-top:12px;">
+      <div class="ef-label">備註說明 / 適用區間</div>
+      <textarea id="editMapNote" class="ef-textarea" placeholder="例如: 包含名城線、東山線">${escapeHtml(currentNote)}</textarea>
+    </div>
+  `;
+
+  openFormModal({
+    title: `✏️ 修改路線圖 - ${escapeHtml(currentTitle || "地圖")}`,
+    bodyHtml: formHtml,
+    confirmText: "儲存修改並同步",
+    onConfirm: () => {
+      const title = document.getElementById("editMapTitle").value.trim();
+      const imgUrl = document.getElementById("editMapImgUrl").value.trim();
+      const note = document.getElementById("editMapNote").value.trim();
+
+      if (!title) {
+        alert("請輸入路線圖名稱！");
+        return false;
+      }
+      if (!imgUrl) {
+        alert("路線地圖照片不能為空！");
+        return false;
+      }
+
+      map.title = title;
+      map.url = imgUrl;
+      map.note = note;
+
+      // 更新首張地圖向下相容欄位
+      if (idx === 0) {
+        tripData.transport.mapImgUrl = imgUrl;
+        tripData.transport.mapNote = title;
+      }
+
+      renderTransport();
+      save();
+      return true;
+    },
+  });
+}
+
+// 刪除指定路線圖
+function deleteRouteMap(idx) {
+  ensureTransportData();
+  const map = tripData.transport.maps[idx];
+  if (!map) return;
+
+  openConfirmModal({
+    title: "刪除路線圖確認",
+    message: `確定要刪除「${map.title || "此路線圖"}」嗎？`,
+    danger: true,
+    confirmText: "確定刪除",
+    onConfirm: () => {
+      tripData.transport.maps.splice(idx, 1);
+      if (tripData.transport.maps.length > 0) {
+        tripData.transport.mapImgUrl = tripData.transport.maps[0].url;
+        tripData.transport.mapNote = tripData.transport.maps[0].title;
+      } else {
+        tripData.transport.mapImgUrl = "";
+        tripData.transport.mapNote = "";
+      }
+      renderTransport();
+      save();
     },
   });
 }
