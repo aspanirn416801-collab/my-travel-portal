@@ -125,6 +125,13 @@ function initGoogleAuth() {
 
       // 預先在彈窗中渲染 Google 官方原生按鈕 (100% 手機相容)
       renderGsiOfficialButton();
+
+      // 若已有登入憑證但即將逾期，嘗試無感自動續期
+      if (idToken && isTokenExpired(idToken)) {
+        try {
+          google.accounts.id.prompt();
+        } catch (err) {}
+      }
     }
   } catch (e) {
     console.warn("Google SDK 初始化警示:", e);
@@ -182,25 +189,72 @@ function closeGoogleLoginModal() {
   if (modal) modal.style.display = "none";
 }
 
+// JWT Token 解析輔助函數
+function parseJwt(token) {
+  try {
+    if (!token) return null;
+    const base64Url = token.split(".")[1];
+    if (!base64Url) return null;
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split("")
+        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+        .join(""),
+    );
+    return JSON.parse(jsonPayload);
+  } catch (e) {
+    return null;
+  }
+}
+
+// 檢查 Token 是否已經過期（提前 60 秒視為過期，保留網路緩衝時間）
+function isTokenExpired(token) {
+  if (!token) return true;
+  const payload = parseJwt(token);
+  if (!payload || !payload.exp) return true;
+  return Date.now() >= (payload.exp * 1000 - 60000);
+}
+
 function updateAuthUI() {
   const badge = document.getElementById("userRoleBadge");
   const loginBtn = document.getElementById("customLoginBtn");
   const logoutBtn = document.getElementById("logoutBtn");
   const adminHubActions = document.getElementById("adminHubActions");
 
+  if (!badge) return;
+
   if (idToken) {
     const userInfo = parseJwt(idToken);
+    const userName = userInfo?.name || userInfo?.email?.split("@")[0] || "使用者";
+    const expired = isTokenExpired(idToken);
+
     if (loginBtn) loginBtn.style.display = "none";
     if (logoutBtn) logoutBtn.style.display = "inline-flex";
 
     if (userRole === "admin") {
       badge.className = "user-badge badge-admin";
-      badge.innerText = `👑 管理員 (${userInfo?.name || userInfo?.email?.split("@")[0] || ""})`;
+      if (expired) {
+        // 憑證過期但本地為管理員：保留管理員視覺與編輯權限，並貼心提示點擊一鍵續期
+        badge.innerHTML = `👑 管理員 (${escapeHtml(userName)}) <span style="font-size:11px;opacity:0.9;text-decoration:underline;cursor:pointer;margin-left:4px;" onclick="triggerGoogleLogin()">[憑證已逾期，點此續期]</span>`;
+      } else {
+        badge.innerText = `👑 管理員 (${userName})`;
+      }
       if (adminHubActions) adminHubActions.style.display = "block";
-    } else {
+    } else if (userRole === "user") {
       badge.className = "user-badge badge-user";
-      badge.innerText = `👤 團員 (${userInfo?.name || userInfo?.email?.split("@")[0] || ""})`;
+      if (expired) {
+        badge.innerHTML = `👤 團員 (${escapeHtml(userName)}) <span style="font-size:11px;opacity:0.9;text-decoration:underline;cursor:pointer;margin-left:4px;" onclick="triggerGoogleLogin()">[憑證已逾期，點此續期]</span>`;
+      } else {
+        badge.innerText = `👤 團員 (${userName})`;
+      }
       if (adminHubActions) adminHubActions.style.display = "none";
+    } else {
+      // 若後端判定 guest 或 Token 驗證逾期，絕不能誤標為「團員」
+      badge.className = "user-badge badge-guest";
+      badge.innerHTML = `⚠️ 登入已逾期 (${escapeHtml(userName)}) <span style="font-size:11px;text-decoration:underline;cursor:pointer;margin-left:4px;" onclick="triggerGoogleLogin()">[點此重新登入]</span>`;
+      if (adminHubActions) adminHubActions.style.display = "none";
+      if (loginBtn) loginBtn.style.display = "inline-flex";
     }
   } else {
     badge.className = "user-badge badge-guest";
@@ -224,26 +278,10 @@ function logout() {
   idToken = null;
   userRole = "guest";
   localStorage.removeItem("google_id_token");
+  localStorage.removeItem("cache_userRole");
   updateAuthUI();
   showToast("已成功登出");
   fetchTrips();
-}
-
-// JWT Token 解析輔助函數
-function parseJwt(token) {
-  try {
-    const base64Url = token.split(".")[1];
-    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-    const jsonPayload = decodeURIComponent(
-      atob(base64)
-        .split("")
-        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
-        .join(""),
-    );
-    return JSON.parse(jsonPayload);
-  } catch (e) {
-    return null;
-  }
 }
 
 // =========================================================================
@@ -421,7 +459,16 @@ async function fetchTrips() {
     const result = await res.json();
 
     if (result.status === "success") {
-      userRole = result.role || "guest";
+      // 權限保護機制：若本地原先為 admin，而後端回傳 guest，且本地 Token 已逾期，則保留 admin 標記並提示續期，絕不誤降級為 guest
+      if (result.role) {
+        if (userRole === "admin" && result.role === "guest" && isTokenExpired(idToken)) {
+          console.warn("後端判定為 guest，但本地為 admin 且 Token 逾期，保留 admin 狀態並提示續期");
+        } else {
+          userRole = result.role;
+        }
+      } else {
+        userRole = "guest";
+      }
       tripsList = result.trips || [];
 
       // 儲存至本地快取
@@ -572,7 +619,14 @@ async function fetchTripData() {
     const result = await res.json();
     if (result.status === "success") {
       tripData = result.data;
-      if (result.role) userRole = result.role;
+      // 權限保護機制：若本地為 admin 且 Token 逾期，不輕易降級為 guest
+      if (result.role) {
+        if (userRole === "admin" && result.role === "guest" && isTokenExpired(idToken)) {
+          console.warn("後端判定為 guest，但本地為 admin 且 Token 逾期，保留 admin 狀態並提示續期");
+        } else {
+          userRole = result.role;
+        }
+      }
 
       if (tripData && tripData.days) {
         sortTripDays(tripData.days);
@@ -581,6 +635,7 @@ async function fetchTripData() {
       // 儲存至本地快取
       try {
         localStorage.setItem("cache_trip_" + currentTripUuid, JSON.stringify(tripData));
+        localStorage.setItem("cache_userRole", userRole);
       } catch (e) {}
 
       updateAuthUI();
@@ -669,6 +724,12 @@ async function save() {
   } catch (e) {}
 
   if (userRole === "admin") {
+    // 檢查登入憑證是否過期，若過期則提示並喚醒登入彈窗續期
+    if (isTokenExpired(idToken)) {
+      showToast("登入憑證已過期，請先登入管理員以同步雲端");
+      triggerGoogleLogin();
+      return false;
+    }
     showToast("正在同步至雲端試算表...");
     try {
       const res = await fetch(`${GAS_API_URL}`, {
@@ -1874,6 +1935,13 @@ async function uploadImageInModal(input, imgUrlInputId, previewDivId) {
   const file = input.files[0];
   if (!file) return;
 
+  // 權限與憑證檢查
+  if (isTokenExpired(idToken)) {
+    showToast("登入憑證已逾期，請先登入管理員以授權上傳照片");
+    triggerGoogleLogin();
+    return;
+  }
+
   const previewDiv = document.getElementById(previewDivId);
   previewDiv.innerHTML =
     "<span style='font-size:12px;color:var(--moss);'>⏳ 圖片智能壓縮中...</span>";
@@ -2708,6 +2776,13 @@ function openCreateTripModal() {
       }
 
       allowedUsers = allowedUsers.replace(/，/g, ",");
+
+      if (isTokenExpired(idToken)) {
+        showToast("登入憑證已逾期，請先登入管理員以建立行程");
+        triggerGoogleLogin();
+        return false;
+      }
+
       showLoading("正在雲端自動建立行程資料夾、初始化試算表結構...");
 
       try {
@@ -2824,6 +2899,13 @@ function openEditTripMetaModal(uuid) {
       }
 
       allowedUsers = allowedUsers.replace(/，/g, ",");
+
+      if (isTokenExpired(idToken)) {
+        showToast("登入憑證已逾期，請先登入管理員以儲存設定");
+        triggerGoogleLogin();
+        return false;
+      }
+
       showLoading("正在更新行程基本設定...");
 
       try {

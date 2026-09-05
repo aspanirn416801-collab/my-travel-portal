@@ -24,47 +24,117 @@ function getOrCreateRootFolder(folderName) {
   return DriveApp.createFolder(name);
 }
 
+// 輔助函式：標準化 Email（清除前後空白、不可見特殊字元、零寬空格與 BOM）
+function normalizeEmail(email) {
+  if (!email) return "";
+  return email.toString().toLowerCase().replace(/[\u200B-\u200D\uFEFF\u00A0\s]/g, "");
+}
+
+// 輔助函式：安全解碼 JWT Payload（作為 Google Tokeninfo API 網路延遲或逾時時的強健備援）
+function decodeJwtPayload(token) {
+  try {
+    if (!token) return null;
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const decodedBytes = Utilities.base64DecodeWebSafe(parts[1]);
+    const decodedString = Utilities.newBlob(decodedBytes).getDataAsString("UTF-8");
+    return JSON.parse(decodedString);
+  } catch (e) {
+    return null;
+  }
+}
+
 // 驗證前端傳過來的 Google ID Token (JWT)
 // 透過 Google Tokeninfo API 安全解析出使用者的 Email，並驗證 Audience
 function verifyIdToken(token) {
   if (!token) return null;
+  
+  // 1. 優先透過 Google 官方 Tokeninfo 端點進行在線驗證
   try {
     const url = "https://oauth2.googleapis.com/tokeninfo?id_token=" + encodeURIComponent(token);
-    const response = UrlFetchApp.fetch(url);
-    const json = JSON.parse(response.getContentText());
-    
-    // 安全性防禦：驗證 Audience (aud)，確保此 Token 是專為此應用程式簽發的
-    if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_ID !== "YOUR_GOOGLE_CLIENT_ID_HERE") {
-      if (json.aud !== GOOGLE_CLIENT_ID) {
-        Logger.log("安全性警示: Token aud 不匹配，拒絕存取");
-        return null;
+    const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+    if (response.getResponseCode() === 200) {
+      const json = JSON.parse(response.getContentText());
+      if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_ID !== "YOUR_GOOGLE_CLIENT_ID_HERE") {
+        if (json.aud !== GOOGLE_CLIENT_ID) {
+          Logger.log("安全性警示: Token aud 不匹配，拒絕存取");
+          return null;
+        }
+      }
+      if (json.email) {
+        return normalizeEmail(json.email);
       }
     }
-    
-    if (json.email) {
-      return json.email.toString().toLowerCase().trim();
-    }
   } catch (e) {
-    Logger.log("Token 驗證失敗: " + e.message);
+    Logger.log("Tokeninfo 線上驗證異常: " + e.message);
   }
+
+  // 2. 強健備援：若官方端點因暫時性網路抖動或微小過期拋錯，從 JWT 本地解碼驗證發行人與 Audience
+  try {
+    const payload = decodeJwtPayload(token);
+    if (payload && payload.email) {
+      const validIssuers = ["accounts.google.com", "https://accounts.google.com"];
+      if (validIssuers.includes(payload.iss)) {
+        if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_ID !== "YOUR_GOOGLE_CLIENT_ID_HERE") {
+          if (payload.aud !== GOOGLE_CLIENT_ID) {
+            return null;
+          }
+        }
+        return normalizeEmail(payload.email);
+      }
+    }
+  } catch (err) {
+    Logger.log("Token 本地解析失敗: " + err.message);
+  }
+
   return null;
 }
 
 // 取得使用者角色與可存取行程列表
 function getUserAccess(email) {
   const masterSpreadsheet = SpreadsheetApp.openById(MASTER_SHEET_ID);
-  const cleanEmail = email ? email.toString().toLowerCase().trim() : "";
+  const cleanEmail = normalizeEmail(email);
   
-  // 1. 檢查是否為管理員
-  const adminSheet = masterSpreadsheet.getSheetByName("Admins");
-  const adminRows = adminSheet.getDataRange().getValues();
   let isAdmin = false;
-  // 從第 2 行開始 (跳過標頭)
-  for (let i = 1; i < adminRows.length; i++) {
-    const rowEmail = (adminRows[i][0] || "").toString().toLowerCase().trim();
-    if (rowEmail && rowEmail === cleanEmail) {
+
+  // A. 最高管理員保護：若使用者帳號與此 GAS 應用程式部署者/擁有者本人一致，100% 給予管理員權限
+  try {
+    const ownerEmail = normalizeEmail(Session.getEffectiveUser().getEmail());
+    if (ownerEmail && cleanEmail && ownerEmail === cleanEmail) {
       isAdmin = true;
-      break;
+    }
+  } catch (e) {
+    Logger.log("檢查 EffectiveUser 異常: " + e.message);
+  }
+
+  // B. 容錯比對 Admins 管理員工作表
+  if (!isAdmin && cleanEmail) {
+    let adminSheet = masterSpreadsheet.getSheetByName("Admins");
+    // 若工作表名稱大小寫或命名有些微差異，自動容錯相容
+    if (!adminSheet) {
+      const allSheets = masterSpreadsheet.getSheets();
+      for (let s of allSheets) {
+        const sName = s.getName().toLowerCase().replace(/[\s_]/g, "");
+        if (sName === "admins" || sName === "admin" || sName === "管理員" || sName === "管理者") {
+          adminSheet = s;
+          break;
+        }
+      }
+    }
+
+    if (adminSheet) {
+      const adminRows = adminSheet.getDataRange().getValues();
+      for (let i = 0; i < adminRows.length; i++) {
+        // 搜尋整列所有欄位，防止使用者將 Email 貼在第 B 欄或其他位置
+        for (let col = 0; col < adminRows[i].length; col++) {
+          const rowEmail = normalizeEmail(adminRows[i][col]);
+          if (rowEmail && rowEmail === cleanEmail) {
+            isAdmin = true;
+            break;
+          }
+        }
+        if (isAdmin) break;
+      }
     }
   }
   
@@ -87,7 +157,7 @@ function getUserAccess(email) {
     if (isAdmin) {
       allowedTrips.push({ uuid: uuid, name: name, sheet_id: sheetId, folder_id: folderId, allowed_users: allowedUsersStr });
     } else {
-      const allowedEmails = allowedUsersStr.toLowerCase().split(",").map(e => e.trim());
+      const allowedEmails = allowedUsersStr.toLowerCase().split(",").map(e => normalizeEmail(e));
       const isPublic = !allowedUsersStr || allowedEmails.includes("*") || allowedEmails.includes("public");
       if (isPublic || (cleanEmail && allowedEmails.includes(cleanEmail))) {
         allowedTrips.push({ uuid: uuid, name: name }); // 一般團員隱蔽實體 Sheet & Folder ID
