@@ -546,9 +546,77 @@ function renderHubTripsGrid() {
   container.innerHTML = cardsHtml;
 }
 
+// 行程景點時段智能評分 (將上午/下午/晚上/具體時間轉換為分鐘數進行穩定排序)
+function getItineraryTimeScore(timeStr) {
+  if (!timeStr) return 999999;
+  const str = String(timeStr).trim().toLowerCase();
+  if (!str) return 999999;
+
+  // 1. 檢查具體時間 (支援: 09:30, 9:30, 14:00~16:00, 下午2:30, 晚上8點 等)
+  const isPm = str.includes("下午") || str.includes("晚上") || str.includes("pm") || str.includes("夜間") || str.includes("黃昏") || str.includes("傍晚");
+  const isAm = str.includes("上午") || str.includes("早上") || str.includes("清晨") || str.includes("am") || str.includes("早晨");
+
+  const timeMatch = str.match(/(\d{1,2})[:：點](\d{1,2})?/) || str.match(/(\d{1,2})\s*(?:點|時)/);
+  if (timeMatch) {
+    let hours = parseInt(timeMatch[1], 10);
+    let minutes = timeMatch[2] ? parseInt(timeMatch[2], 10) : (str.includes("半") ? 30 : 0);
+
+    if (isPm && hours < 12) {
+      hours += 12;
+    } else if (isAm && hours === 12) {
+      hours = 0;
+    }
+
+    if (hours >= 0 && hours <= 24 && minutes >= 0 && minutes < 60) {
+      return hours * 60 + minutes;
+    }
+  }
+
+  // 2. 時段中文詞彙權重對應
+  if (str.includes("全天") || str.includes("整天")) return 300; // 05:00 (全天概覽排在最前面)
+  if (str.includes("清晨") || str.includes("早晨")) return 420; // 07:00
+  if (str.includes("早上")) return 480;                         // 08:00
+  if (str.includes("上午")) return 540;                         // 09:00
+  if (str.includes("中午") || str.includes("午餐") || str.includes("午膳")) return 720; // 12:00
+  if (str.includes("下午")) return 840;                         // 14:00
+  if (str.includes("傍晚") || str.includes("黃昏")) return 1050; // 17:30
+  if (str.includes("晚上") || str.includes("晚餐")) return 1140; // 19:00
+  if (str.includes("夜間") || str.includes("宵夜") || str.includes("深夜")) return 1320; // 22:00
+
+  return 999999;
+}
+
+// 對景點陣列進行穩定時段排序 (上午 < 下午 < 晚上)
+function sortDayItems(items) {
+  if (!Array.isArray(items) || items.length <= 1) return items || [];
+  return items.sort((a, b) => {
+    const scoreA = getItineraryTimeScore(a.time);
+    const scoreB = getItineraryTimeScore(b.time);
+    return scoreA - scoreB;
+  });
+}
+
 // 智能依照 Day 序號 (Day 1 < Day 2 < Day 8) 或日期升冪排序
 function sortTripDays(days) {
-  if (!Array.isArray(days) || days.length <= 1) return days || [];
+  if (!Array.isArray(days) || days.length === 0) return days || [];
+
+  // 自動檢測並校正每一天的景點時段順序 (若有上午排在下午後面的情況，自動重新排序)
+  days.forEach((d) => {
+    if (d && Array.isArray(d.items) && d.items.length > 1) {
+      let hasInversion = false;
+      for (let k = 0; k < d.items.length - 1; k++) {
+        if (getItineraryTimeScore(d.items[k].time) > getItineraryTimeScore(d.items[k + 1].time)) {
+          hasInversion = true;
+          break;
+        }
+      }
+      if (hasInversion) {
+        sortDayItems(d.items);
+      }
+    }
+  });
+
+  if (days.length <= 1) return days;
 
   return days.sort((a, b) => {
     // 1. 優先比對 Day 數字序號 (例如 "Day 1" vs "Day 8" vs "Day 2")
@@ -1567,6 +1635,21 @@ function renderItinerary() {
   const day = tripData.days[selectedDay] || tripData.days[0];
   if (!day) return;
 
+  // 自動檢測並校正當前天數景點時段順序 (若有上午排在下午後面的情況，自動重新排序)
+  if (Array.isArray(day.items) && day.items.length > 1) {
+    let needsSort = false;
+    for (let k = 0; k < day.items.length - 1; k++) {
+      if (getItineraryTimeScore(day.items[k].time) > getItineraryTimeScore(day.items[k + 1].time)) {
+        needsSort = true;
+        break;
+      }
+    }
+    if (needsSort) {
+      sortDayItems(day.items);
+      save(); // 靜默同步正確排序至試算表與本地快取
+    }
+  }
+
   const dayActions = isAdmin
     ? `<div class="item-actions">
          <button class="btn-mini" onclick="openEditDayTitleModal(${selectedDay})">✏️ 編輯主題</button>
@@ -1855,6 +1938,9 @@ function openEditItineraryModal(dayIdx, itemIdx) {
         document.getElementById("editItImgUrl").value.trim()
       );
 
+      // 編輯景點時段後，自動依時段重新排序
+      sortDayItems(tripData.days[dayIdx].items);
+
       renderItinerary();
       save();
       return true;
@@ -2009,6 +2095,33 @@ function deleteItineraryItem(dayIdx, itemIdx) {
   });
 }
 
+// 手動調整景點前後順序 (上移 / 下移)
+function moveItineraryItem(dayIdx, itemIdx, offset) {
+  const day = tripData && tripData.days && tripData.days[dayIdx];
+  if (!day || !Array.isArray(day.items)) return;
+  const targetIdx = itemIdx + offset;
+  if (targetIdx < 0 || targetIdx >= day.items.length) return;
+
+  const item = day.items.splice(itemIdx, 1)[0];
+  day.items.splice(targetIdx, 0, item);
+  renderItinerary();
+  save();
+  showToast("已調整景點順序");
+}
+
+// 依時段自動排序當日所有景點
+function autoSortCurrentDayItems(dayIdx) {
+  const day = tripData && tripData.days && tripData.days[dayIdx];
+  if (!day || !Array.isArray(day.items) || day.items.length <= 1) {
+    showToast("景點數量無需排序");
+    return;
+  }
+  sortDayItems(day.items);
+  renderItinerary();
+  save();
+  showToast("已依時段順序重新排列！");
+}
+
 function openAddItineraryModal(dayIdx) {
   const currentDay = tripData.days[dayIdx];
   const dayTitle = currentDay ? currentDay.id : `Day ${dayIdx + 1}`;
@@ -2076,6 +2189,9 @@ function openAddItineraryModal(dayIdx) {
         desc: desc,
         imgUrl: imgUrl || "",
       });
+
+      // 新增景點後自動依時段重新排序，確保時間軸早中晚順序井然
+      sortDayItems(tripData.days[dayIdx].items);
 
       renderItinerary();
       save();
