@@ -1734,32 +1734,142 @@ function renderItinerary() {
   `;
 }
 
+// =========================================================================
+// 行程天數與日期星期智能換算輔助函式
+// =========================================================================
+
+// 將 ISO 日期 (YYYY-MM-DD) 轉換為繁體中文格式「X月X日（星期幾）」
+function formatDateToDisplayWithWeekday(isoDateStr) {
+  if (!isoDateStr) return "";
+  const parts = isoDateStr.split("-");
+  if (parts.length < 3) return "";
+  const y = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  const d = parseInt(parts[2], 10);
+  const dt = new Date(y, m - 1, d);
+  if (isNaN(dt.getTime())) return "";
+  const weekDays = ["日", "一", "二", "三", "四", "五", "六"];
+  return `${m}月${d}日（${weekDays[dt.getDay()]}）`;
+}
+
+// 根據行程出發日期與第 N 天計算對應的 YYYY-MM-DD
+function calculateIsoDateForDayNum(startDateStr, dayNum) {
+  if (!startDateStr || !dayNum || dayNum < 1) return "";
+  const base = new Date(startDateStr + "T00:00:00");
+  if (isNaN(base.getTime())) return "";
+  base.setDate(base.getDate() + (dayNum - 1));
+  const y = base.getFullYear();
+  const m = String(base.getMonth() + 1).padStart(2, "0");
+  const d = String(base.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+// 根據行程出發日期與目標日期計算是第幾天 (Day N)
+function calculateDayNumFromDate(startDateStr, targetDateStr) {
+  if (!startDateStr || !targetDateStr) return null;
+  const start = new Date(startDateStr + "T00:00:00");
+  const target = new Date(targetDateStr + "T00:00:00");
+  if (isNaN(start.getTime()) || isNaN(target.getTime())) return null;
+  const diffDays = Math.round((target - start) / (1000 * 60 * 60 * 24));
+  return diffDays + 1;
+}
+
+// 智慧推算建議的下一個天數編號 (若有中間缺漏如 1, 2, 4 缺 3，優先建議填補 3)
+function getSuggestedNextDayNum(days) {
+  if (!Array.isArray(days) || days.length === 0) return 1;
+  const existingNums = new Set();
+  days.forEach((d) => {
+    const m = (d.id || "").match(/Day\s*(\d+)/i);
+    if (m) existingNums.add(parseInt(m[1], 10));
+  });
+
+  for (let n = 1; n <= 30; n++) {
+    if (!existingNums.has(n)) return n;
+  }
+  return days.length + 1;
+}
+
+// 全域彈窗連動回呼：新增天數時由日曆選取器同步天數與星期文字
+window.onAddDayPickerChange = function (newDateStr) {
+  if (!newDateStr) return;
+  const chineseDate = formatDateToDisplayWithWeekday(newDateStr);
+  const dateInput = document.getElementById("addDayDate");
+  if (dateInput) dateInput.value = chineseDate;
+
+  // 若有出發日期，自動反推並同步天數識別
+  if (tripData && tripData.startDate) {
+    const dayNum = calculateDayNumFromDate(tripData.startDate, newDateStr);
+    if (dayNum && dayNum > 0) {
+      const idInput = document.getElementById("addDayId");
+      if (idInput) idInput.value = `Day ${dayNum}`;
+    }
+  }
+};
+
+// 全域彈窗連動回呼：新增天數時由天數序號同步日曆與星期文字
+window.onAddDayIdChange = function () {
+  const val = (document.getElementById("addDayId")?.value || "").trim();
+  const m = val.match(/Day\s*(\d+)/i) || val.match(/^(\d+)$/);
+  if (m && tripData && tripData.startDate) {
+    const dayNum = parseInt(m[1], 10);
+    const isoDate = calculateIsoDateForDayNum(tripData.startDate, dayNum);
+    if (isoDate) {
+      const picker = document.getElementById("addDayPicker");
+      if (picker) picker.value = isoDate;
+      const chineseDate = formatDateToDisplayWithWeekday(isoDate);
+      const dateInput = document.getElementById("addDayDate");
+      if (dateInput) dateInput.value = chineseDate;
+    }
+  }
+};
+
+// 全域彈窗連動回呼：編輯天數時由日曆選取器同步星期文字
+window.onEditDayPickerChange = function (newDateStr) {
+  if (!newDateStr) return;
+  const chineseDate = formatDateToDisplayWithWeekday(newDateStr);
+  const dateInput = document.getElementById("editDayDate");
+  if (dateInput) dateInput.value = chineseDate;
+};
+
 // 新增行程天數對話框
 function openAddDayModal() {
   if (!tripData.days) tripData.days = [];
-  const nextDayNum = tripData.days.length + 1;
+  const nextDayNum = getSuggestedNextDayNum(tripData.days);
   const nextDayId = `Day ${nextDayNum}`;
 
-  // 嘗試推算下一天日期
+  // 自動推算預設日期
+  let defaultIsoDate = "";
   let defaultDateText = "";
   if (tripData.startDate) {
-    const base = new Date(tripData.startDate + "T00:00:00");
-    base.setDate(base.getDate() + (nextDayNum - 1));
-    const m = base.getMonth() + 1;
-    const d = base.getDate();
-    const dayNames = ["日", "一", "二", "三", "四", "五", "六"];
-    const w = dayNames[base.getDay()];
-    defaultDateText = `${m}月${d}日（${w}）`;
+    defaultIsoDate = calculateIsoDateForDayNum(tripData.startDate, nextDayNum);
+    defaultDateText = formatDateToDisplayWithWeekday(defaultIsoDate);
+  }
+
+  // 快捷天數選項
+  const maxDay = Math.max(nextDayNum + 2, 10);
+  let presetOptions = "";
+  for (let d = 1; d <= maxDay; d++) {
+    presetOptions += `<option value="Day ${d}" ${d === nextDayNum ? "selected" : ""}>Day ${d}</option>`;
   }
 
   const formHtml = `
     <div class="ef-wrap">
-      <div class="ef-label">天數識別 (例如: Day ${nextDayNum}) <span style="color:var(--red);">*</span></div>
-      <input type="text" id="addDayId" class="ef-input" value="${nextDayId}">
+      <div class="ef-label">天數識別 <span style="color:var(--red);">*</span></div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <input type="text" id="addDayId" class="ef-input" style="flex:1;" value="${nextDayId}" oninput="window.onAddDayIdChange()" placeholder="例如: Day ${nextDayNum}">
+        <select class="ef-select" style="width:auto;min-width:110px;" onchange="document.getElementById('addDayId').value=this.value;window.onAddDayIdChange();">
+          ${presetOptions}
+        </select>
+      </div>
+      <div style="font-size:11px;color:#888;margin-top:4px;">💡 切換天數序號，下方日期與星期會自動同步推算</div>
     </div>
     <div class="ef-wrap">
-      <div class="ef-label">日期文字說明 (例如: 10月5日（日）)</div>
-      <input type="text" id="addDayDate" class="ef-input" value="${defaultDateText}" placeholder="例如: 10月5日（日）">
+      <div class="ef-label">選擇日期 (點選日曆，系統自動計算日期與星期)</div>
+      <input type="date" id="addDayPicker" class="ef-input" value="${defaultIsoDate}" onchange="window.onAddDayPickerChange(this.value)">
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">日期文字說明 (依日曆自動生成，可自由微調)</div>
+      <input type="text" id="addDayDate" class="ef-input" value="${defaultDateText}" placeholder="例如: 2月16日（一）">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">當日行程主題名稱 <span style="color:var(--red);">*</span></div>
@@ -1768,7 +1878,7 @@ function openAddDayModal() {
   `;
 
   openFormModal({
-    title: `➕ 新增 ${nextDayId} 行程天數`,
+    title: `➕ 新增行程天數`,
     bodyHtml: formHtml,
     confirmText: "確認新增並同步",
     onConfirm: () => {
@@ -1823,13 +1933,25 @@ function deleteCurrentDay(dayIdx) {
 
 function openEditDayTitleModal(dayIdx) {
   const day = tripData.days[dayIdx];
+  
+  // 嘗試從現有日期文字反推 ISO 日期
+  let currentIsoDate = "";
+  const m = (day.id || "").match(/Day\s*(\d+)/i);
+  if (m && tripData.startDate) {
+    currentIsoDate = calculateIsoDateForDayNum(tripData.startDate, parseInt(m[1], 10));
+  }
+
   const formHtml = `
     <div class="ef-wrap">
       <div class="ef-label">天數識別 (例如: Day 1)</div>
       <input type="text" id="editDayId" class="ef-input" value="${day.id || ""}">
     </div>
     <div class="ef-wrap">
-      <div class="ef-label">日期文字 (例如: 10月5日（日）)</div>
+      <div class="ef-label">選擇日期 (更換日期自動重算星期)</div>
+      <input type="date" id="editDayPicker" class="ef-input" value="${currentIsoDate}" onchange="window.onEditDayPickerChange(this.value)">
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">日期文字 (依日曆自動更新，例如: 2月13日（五）)</div>
       <input type="text" id="editDayDate" class="ef-input" value="${day.date || ""}">
     </div>
     <div class="ef-wrap">
@@ -3271,7 +3393,16 @@ function renderTransport() {
     groupedRoutes[tag].push({ ...r, originalIdx: idx });
   });
 
-  const groupKeys = Object.keys(groupedRoutes);
+  const groupKeys = Object.keys(groupedRoutes).sort((a, b) => {
+    const matchA = a.match(/D(\d+)/i);
+    const matchB = b.match(/D(\d+)/i);
+    if (matchA && matchB) {
+      return parseInt(matchA[1], 10) - parseInt(matchB[1], 10);
+    }
+    if (matchA) return -1;
+    if (matchB) return 1;
+    return a.localeCompare(b, undefined, { numeric: true });
+  });
   const transitListHtml = groupKeys.length
     ? groupKeys
       .map((tag) => {
@@ -3586,21 +3717,70 @@ function openAddTransportModal() {
   }
   if (!tripData.transport.routes) tripData.transport.routes = [];
 
-  // 推算天數標籤候選清單 (如 D1-8/5, D2-8/6)
+  // 推算天數標籤候選清單 (如 D1-2/12, D2-2/13)
   const dayOptions = (tripData.days || []).map((d, i) => {
+    const m = (d.id || "").match(/Day\s*(\d+)/i);
+    const dayPrefix = m ? `D${m[1]}` : `D${i + 1}`;
     const rawDate = (d.date || "").split("（")[0].replace("月", "/").replace("日", "").trim();
-    return `D${i + 1}${rawDate ? `-${rawDate}` : ""}`;
+    const tag = `${dayPrefix}${rawDate ? `-${rawDate}` : ""}`;
+    const label = `${tag}（${d.id}：${d.date || ""} ｜ ${d.title || "未設定主題"}）`;
+    return { tag, label };
   });
-  const defaultDayTag = dayOptions[0] || "D1";
+
+  // 預設選中當前行程選中的天數或第 1 天
+  const currentSelectedDayTag = dayOptions[selectedDay]
+    ? dayOptions[selectedDay].tag
+    : dayOptions[0]
+      ? dayOptions[0].tag
+      : "主要交通";
+
+  // 全域回呼：點擊快捷標籤或切換下拉選單
+  window.onSelectTransitDay = function (tag) {
+    if (!tag) return;
+    const input = document.getElementById("addTransDay");
+    if (input) {
+      if (tag === "__custom__") {
+        input.value = "";
+        input.focus();
+      } else {
+        input.value = tag;
+      }
+    }
+  };
+
+  const tagButtonsHtml = dayOptions.length
+    ? `
+      <div class="time-tags" style="margin-bottom:8px;">
+        ${dayOptions
+          .map(
+            (opt) =>
+              `<button type="button" class="time-tag" onclick="window.onSelectTransitDay('${opt.tag}')">${opt.tag}</button>`
+          )
+          .join("")}
+        <button type="button" class="time-tag" onclick="window.onSelectTransitDay('主要交通')">主要交通</button>
+      </div>
+    `
+    : "";
+
+  const selectOptionsHtml = `
+    ${dayOptions.map((opt) => `<option value="${opt.tag}" ${opt.tag === currentSelectedDayTag ? "selected" : ""}>${opt.label}</option>`).join("")}
+    <option value="主要交通" ${currentSelectedDayTag === "主要交通" ? "selected" : ""}>主要交通 (全程通用 / 機場接駁)</option>
+    <option value="__custom__">✏️ 自訂其他日期代號...</option>
+  `;
 
   const formHtml = `
     <div class="ef-wrap">
-      <div class="ef-label">日期代號 (例如: D1-8/5、D2-8/6) <span style="color:var(--red);">*</span></div>
-      <input type="text" id="addTransDay" class="ef-input" placeholder="例如: D1-8/5" value="${defaultDayTag}">
+      <div class="ef-label">選擇乘車所屬天數 <span style="color:var(--red);">*</span></div>
+      ${tagButtonsHtml}
+      <select id="addTransDaySelect" class="ef-select" onchange="window.onSelectTransitDay(this.value)">
+        ${selectOptionsHtml}
+      </select>
+      <input type="text" id="addTransDay" class="ef-input" style="margin-top:6px;" placeholder="例如: D1-2/12" value="${currentSelectedDayTag}">
+      <div style="font-size:11px;color:#888;margin-top:4px;">💡 點擊上方天數標籤或下拉選單即可自動填入，無需手動打字</div>
     </div>
     <div class="ef-wrap">
       <div class="ef-label">乘車區間 / 路線 <span style="color:var(--red);">*</span></div>
-      <input type="text" id="addTransFromTo" class="ef-input" placeholder="例如: 中部機場到名古屋、名古屋到高山">
+      <input type="text" id="addTransFromTo" class="ef-input" placeholder="例如: 岡山機場～岡山站、岡山站到JR 琴平站">
     </div>
     <div style="display:flex;gap:10px;">
       <div class="ef-wrap" style="flex:1;">
@@ -3609,22 +3789,22 @@ function openAddTransportModal() {
       </div>
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">預估費用 / 人</div>
-        <input type="text" id="addTransCost" class="ef-input" placeholder="例如: 980 或 0">
+        <input type="text" id="addTransCost" class="ef-input" placeholder="例如: 1000 或 0">
       </div>
     </div>
     <div style="display:flex;gap:10px;">
       <div class="ef-wrap" style="flex:1;">
-        <div class="ef-label">車種名稱 (例如: 名鐵特急、JR 特急 Hida)</div>
-        <input type="text" id="addTransTrain" class="ef-input" placeholder="例如: JR 特急 Wide View Hida 15">
+        <div class="ef-label">車種名稱 (例如: JR特急、機場巴士)</div>
+        <input type="text" id="addTransTrain" class="ef-input" placeholder="例如: 機場巴士、JR 瀨戶大橋線">
       </div>
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">劃位/座位資訊</div>
-        <input type="text" id="addTransSeat" class="ef-input" placeholder="例如: 使用周遊券(劃位)、指定席450円">
+        <input type="text" id="addTransSeat" class="ef-input" placeholder="例如: 自由席、指定席、bus 2號口">
       </div>
     </div>
     <div class="ef-wrap">
       <div class="ef-label">備註事項 (月台、轉乘、換券說明)</div>
-      <textarea id="addTransNote" class="ef-textarea" placeholder="例如: 第1月台搭乘、需於高山站轉乘巴士"></textarea>
+      <textarea id="addTransNote" class="ef-textarea" placeholder="例如: bus 2號口搭乘、琴平站轉搭琴電"></textarea>
     </div>
   `;
 
@@ -3670,10 +3850,57 @@ function openEditTransportModal(idx) {
   const item = tripData.transport.routes[idx];
   if (!item) return;
 
+  const dayOptions = (tripData.days || []).map((d, i) => {
+    const m = (d.id || "").match(/Day\s*(\d+)/i);
+    const dayPrefix = m ? `D${m[1]}` : `D${i + 1}`;
+    const rawDate = (d.date || "").split("（")[0].replace("月", "/").replace("日", "").trim();
+    const tag = `${dayPrefix}${rawDate ? `-${rawDate}` : ""}`;
+    const label = `${tag}（${d.id}：${d.date || ""} ｜ ${d.title || "未設定主題"}）`;
+    return { tag, label };
+  });
+
+  window.onSelectEditTransitDay = function (tag) {
+    if (!tag) return;
+    const input = document.getElementById("editTransDay");
+    if (input) {
+      if (tag === "__custom__") {
+        input.value = "";
+        input.focus();
+      } else {
+        input.value = tag;
+      }
+    }
+  };
+
+  const tagButtonsHtml = dayOptions.length
+    ? `
+      <div class="time-tags" style="margin-bottom:8px;">
+        ${dayOptions
+          .map(
+            (opt) =>
+              `<button type="button" class="time-tag" onclick="window.onSelectEditTransitDay('${opt.tag}')">${opt.tag}</button>`
+          )
+          .join("")}
+        <button type="button" class="time-tag" onclick="window.onSelectEditTransitDay('主要交通')">主要交通</button>
+      </div>
+    `
+    : "";
+
+  const selectOptionsHtml = `
+    ${dayOptions.map((opt) => `<option value="${opt.tag}" ${opt.tag === item.dayTag ? "selected" : ""}>${opt.label}</option>`).join("")}
+    <option value="主要交通" ${item.dayTag === "主要交通" ? "selected" : ""}>主要交通 (全程通用 / 機場接駁)</option>
+    <option value="__custom__">✏️ 自訂其他日期代號...</option>
+  `;
+
   const formHtml = `
     <div class="ef-wrap">
-      <div class="ef-label">日期代號 (例如: D1-8/5、D2-8/6) <span style="color:var(--red);">*</span></div>
-      <input type="text" id="editTransDay" class="ef-input" value="${item.dayTag || ""}">
+      <div class="ef-label">選擇乘車所屬天數 <span style="color:var(--red);">*</span></div>
+      ${tagButtonsHtml}
+      <select id="editTransDaySelect" class="ef-select" onchange="window.onSelectEditTransitDay(this.value)">
+        ${selectOptionsHtml}
+      </select>
+      <input type="text" id="editTransDay" class="ef-input" style="margin-top:6px;" value="${item.dayTag || ""}">
+      <div style="font-size:11px;color:#888;margin-top:4px;">💡 點擊上方天數標籤或下拉選單即可一鍵切換所屬天數</div>
     </div>
     <div class="ef-wrap">
       <div class="ef-label">乘車區間 / 路線 <span style="color:var(--red);">*</span></div>
