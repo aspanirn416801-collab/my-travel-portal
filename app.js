@@ -99,19 +99,29 @@ function navigateTo(tripUuid) {
 }
 
 // =========================================================================
-// 旅程專屬密碼鎖機制 (管理員尊榮免密碼直通、訪客/團員密碼唯讀、自動記憶解鎖)
+// 旅程專屬密碼鎖機制 (管理員尊榮免密碼直通、訪客/團員密碼唯讀、Session 隔離關閉即鎖定)
 // =========================================================================
+// 清除舊版本殘留在 localStorage 中的解鎖標記，確保「關閉網頁/離開即鎖定」嚴格生效
+try {
+  Object.keys(localStorage).forEach((key) => {
+    if (key.startsWith("unlocked_trip_")) {
+      localStorage.removeItem(key);
+    }
+  });
+} catch (e) {}
+
 function isTripUnlocked(tripUuid, tripPassword) {
   if (userRole === "admin") return true; // 管理員尊榮特權：100% 免密碼直通
   const pwd = tripPassword !== undefined && tripPassword !== null ? String(tripPassword).trim() : "";
   if (!pwd) return true; // 未設密碼的公開行程：免密碼直接唯讀瀏覽
-  const savedUnlock = localStorage.getItem("unlocked_trip_" + tripUuid);
+  // 改為 sessionStorage：關閉分頁、重啟瀏覽器或離開網頁即自動失效登出
+  const savedUnlock = sessionStorage.getItem("unlocked_trip_" + tripUuid);
   return savedUnlock === pwd;
 }
 
 function markTripUnlocked(tripUuid, tripPassword) {
   const pwd = tripPassword !== undefined && tripPassword !== null ? String(tripPassword).trim() : "";
-  localStorage.setItem("unlocked_trip_" + tripUuid, pwd);
+  sessionStorage.setItem("unlocked_trip_" + tripUuid, pwd);
 }
 
 function togglePasswordVisibility(inputId, btnEl) {
@@ -336,7 +346,7 @@ function updateAuthUI() {
     if (userRole === "admin") {
       badge.className = "user-badge badge-admin";
       if (expired) {
-        // 憑證過期但本地為管理員：保留管理員視覺與編輯權限，並貼心提示點擊一鍵續期
+        // 憑證真過期時才提示續期
         badge.innerHTML = `👑 管理員 (${escapeHtml(userName)}) <span style="font-size:11px;opacity:0.9;text-decoration:underline;cursor:pointer;margin-left:4px;" onclick="triggerGoogleLogin()">[憑證已逾期，點此續期]</span>`;
       } else {
         badge.innerText = `👑 管理員 (${userName})`;
@@ -351,11 +361,15 @@ function updateAuthUI() {
       }
       if (adminHubActions) adminHubActions.style.display = "none";
     } else {
-      // 若後端判定 guest 或 Token 驗證逾期，絕不能誤標為「團員」
-      badge.className = "user-badge badge-guest";
-      badge.innerHTML = `⚠️ 登入已逾期 (${escapeHtml(userName)}) <span style="font-size:11px;text-decoration:underline;cursor:pointer;margin-left:4px;" onclick="triggerGoogleLogin()">[點此重新登入]</span>`;
+      // 只有在 Token 真正過期時才顯示已逾期；Token 尚未過期時絕不誤報逾期！
+      if (expired) {
+        badge.className = "user-badge badge-guest";
+        badge.innerHTML = `⚠️ 登入已逾期 (${escapeHtml(userName)}) <span style="font-size:11px;text-decoration:underline;cursor:pointer;margin-left:4px;" onclick="triggerGoogleLogin()">[點此重新登入]</span>`;
+      } else {
+        badge.className = "user-badge badge-guest";
+        badge.innerText = `👤 訪客已登入 (${userName})`;
+      }
       if (adminHubActions) adminHubActions.style.display = "none";
-      if (loginBtn) loginBtn.style.display = "inline-flex";
     }
   } else {
     badge.className = "user-badge badge-guest";
@@ -371,6 +385,12 @@ function handleCredentialResponse(response) {
   closeGoogleLoginModal();
   idToken = response.credential;
   localStorage.setItem("google_id_token", idToken);
+  // 保留快取的管理員權限，避免在網路連線 GAS 期間被誤置為 guest
+  const cachedRole = localStorage.getItem("cache_userRole");
+  if (cachedRole === "admin") {
+    userRole = "admin";
+  }
+  updateAuthUI();
   showToast("登入成功，驗證權限中...");
   fetchTrips();
 }
@@ -560,15 +580,17 @@ async function fetchTrips() {
     const result = await res.json();
 
     if (result.status === "success") {
-      // 權限保護機制：若本地原先為 admin，而後端回傳 guest，且本地 Token 已逾期，則保留 admin 標記並提示續期，絕不誤降級為 guest
+      // 權限穩固保護機制：若本地已登入為 admin，只要 Token 尚未逾期，絕不因後端暫時抖動而誤降級為 guest
       if (result.role) {
-        if (userRole === "admin" && result.role === "guest" && isTokenExpired(idToken)) {
-          console.warn("後端判定為 guest，但本地為 admin 且 Token 逾期，保留 admin 狀態並提示續期");
+        if (userRole === "admin" && result.role === "guest" && !isTokenExpired(idToken)) {
+          console.warn("後端暫時判定為 guest，但本地 Token 有效且身分為 admin，穩定保留 admin 權限");
         } else {
           userRole = result.role;
         }
       } else {
-        userRole = "guest";
+        if (userRole !== "admin" || isTokenExpired(idToken)) {
+          userRole = "guest";
+        }
       }
       tripsList = result.trips || [];
 
@@ -830,10 +852,10 @@ async function fetchTripData() {
     const result = await res.json();
     if (result.status === "success") {
       tripData = result.data;
-      // 權限保護機制：若本地為 admin 且 Token 逾期，不輕易降級為 guest
+      // 權限穩固保護機制：若本地為 admin 且 Token 有效，絕不輕易降級為 guest
       if (result.role) {
-        if (userRole === "admin" && result.role === "guest" && isTokenExpired(idToken)) {
-          console.warn("後端判定為 guest，但本地為 admin 且 Token 逾期，保留 admin 狀態並提示續期");
+        if (userRole === "admin" && result.role === "guest" && !isTokenExpired(idToken)) {
+          console.warn("後端暫時判定為 guest，但本地 Token 有效且為 admin，穩定保留 admin 狀態");
         } else {
           userRole = result.role;
         }
