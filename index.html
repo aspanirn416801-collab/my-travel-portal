@@ -1772,6 +1772,33 @@ body.large { font-size: 16px; }
         <div class="page" id="page-admin"></div>
       </div>
     </div>
+
+    <!-- ================================================================= -->
+    <!-- 視圖 3: 私密行程專屬門禁鎖定畫面 (Trip Locked Guard) -->
+    <!-- ================================================================= -->
+    <div id="view-locked" style="display: none; padding: 30px 16px 60px 16px;">
+      <div class="card" style="max-width: 440px; margin: 30px auto; text-align: center; padding: 36px 24px; box-shadow: var(--glass-shadow-hover); border-radius: 24px;">
+        <div style="font-size: 52px; margin-bottom: 12px; line-height: 1;">🔒</div>
+        <h2 id="lockedTripTitle" style="font-size: 20px; font-weight: 900; color: var(--moss); margin-bottom: 8px;">私密行程手冊</h2>
+        <p style="font-size: 13px; color: #666; margin-bottom: 24px; line-height: 1.6;">
+          本旅程設有專屬密碼保護，請輸入存取密碼以解鎖手冊內容。<br>
+          <span style="font-size: 11px; color: #999;">（離開或關閉網頁時將自動重新上鎖）</span>
+        </p>
+        
+        <form onsubmit="handleTripUnlockSubmit(event)" style="text-align: left;">
+          <div class="ef-wrap" style="margin-bottom: 18px;">
+            <div class="ef-label">請輸入存取密碼 <span style="color: var(--red);">*</span></div>
+            <div style="position: relative;">
+              <input type="password" id="lockedTripPwdInput" class="ef-input" placeholder="請輸入密碼" style="padding-right: 42px;" required autofocus>
+              <button type="button" onclick="togglePasswordVisibility('lockedTripPwdInput', this)" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; font-size: 16px; padding: 4px; color: #777;" title="切換顯示密碼">👁️</button>
+            </div>
+            <div id="lockedTripErrorMsg" style="color: var(--red); font-size: 12px; margin-top: 6px; font-weight: 700; display: none;">❌ 密碼錯誤，請重新輸入！</div>
+          </div>
+          <button type="submit" class="glass-btn" style="background: var(--moss-gradient); color: #fff; width: 100%; justify-content: center; font-size: 14px; padding: 12px; border-radius: 14px; font-weight: bold;">🔓 解鎖並進入手冊</button>
+          <button type="button" class="glass-btn" style="background: rgba(0,0,0,0.06); color: #555; width: 100%; justify-content: center; font-size: 13px; margin-top: 10px; padding: 10px; border-radius: 14px;" onclick="navigateTo('')">🏠 返回行程大廳</button>
+        </form>
+      </div>
+    </div>
   </div>
 
   <!-- 路線地圖全螢幕相簿燈箱 Lightbox (支援多張地圖輪播切換) -->
@@ -1840,6 +1867,6 @@ body.large { font-size: 16px; }
   <!-- Google Identity Services SDK -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- 前端核心邏輯 (加入版本號防快取) -->
-  <script src="app.js?v=20260906_5"></script>
+  <script src="app.js?v=20260906_7"></script>
 </body>
 </html>

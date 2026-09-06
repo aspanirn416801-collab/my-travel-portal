@@ -21,83 +21,6 @@ try {
   if (cachedTrips) tripsList = JSON.parse(cachedTrips);
 } catch (e) {}
 
-// 初始化流程：DOMContentLoaded 立即觸發，不等網路！
-document.addEventListener("DOMContentLoaded", function () {
-  initRouter();
-  initGoogleAuth();
-
-  // 若當前在手冊頁，立即從快取渲染，0 秒等待！
-  if (currentTripUuid) {
-    try {
-      const cachedTrip = localStorage.getItem("cache_trip_" + currentTripUuid);
-      if (cachedTrip) {
-        tripData = JSON.parse(cachedTrip);
-        initCountdown();
-        render();
-      }
-    } catch (e) {}
-  } else {
-    // 若在大廳頁，立即渲染大廳卡片！
-    renderHubTripsGrid();
-  }
-
-  // 在背景靜默連線 Google Apps Script 同步最新數據
-  fetchTrips();
-});
-
-// 監聽瀏覽器上一頁/下一頁
-window.onpopstate = function () {
-  initRouter();
-  if (currentTripUuid) {
-    fetchTripData();
-  } else {
-    showHubView();
-    renderHubTripsGrid();
-  }
-};
-
-// 解析 URL Query 參數取得行程 UUID (例如 ?trip=okayama-2027 或 ?okayama-2027)
-function getTripUuidFromUrl() {
-  const urlParams = new URLSearchParams(window.location.search);
-  const tripParam = urlParams.get("trip");
-  if (tripParam) return tripParam.trim();
-
-  // 支援簡短寫法 (例如 ?okayama-2027)
-  const search = window.location.search.replace(/^\?/, "").trim();
-  if (search && !search.includes("=")) {
-    return search;
-  }
-  return "";
-}
-
-function initRouter() {
-  currentTripUuid = getTripUuidFromUrl();
-  if (currentTripUuid) {
-    showTripView();
-  } else {
-    showHubView();
-  }
-}
-
-// 路由導航切換函式
-function navigateTo(tripUuid) {
-  currentTripUuid = (tripUuid || "").trim();
-  const currentPath = window.location.pathname;
-  const newUrl = currentTripUuid
-    ? `${currentPath}?trip=${encodeURIComponent(currentTripUuid)}`
-    : currentPath;
-
-  history.pushState({ trip: currentTripUuid }, "", newUrl);
-
-  if (currentTripUuid) {
-    showTripView();
-    fetchTripData();
-  } else {
-    showHubView();
-    renderHubTripsGrid();
-  }
-}
-
 // =========================================================================
 // 旅程專屬密碼鎖機制 (管理員尊榮免密碼直通、訪客/團員密碼唯讀、Session 隔離關閉即鎖定)
 // =========================================================================
@@ -111,6 +34,7 @@ try {
 } catch (e) {}
 
 function isTripUnlocked(tripUuid, tripPassword) {
+  if (!tripUuid) return true;
   if (userRole === "admin") return true; // 管理員尊榮特權：100% 免密碼直通
   const pwd = tripPassword !== undefined && tripPassword !== null ? String(tripPassword).trim() : "";
   if (!pwd) return true; // 未設密碼的公開行程：免密碼直接唯讀瀏覽
@@ -136,59 +60,72 @@ function togglePasswordVisibility(inputId, btnEl) {
   }
 }
 
-function openTripPasswordModal(trip, onUnlockSuccess, onCancel) {
-  const safeName = escapeHtml(trip.name || trip.uuid || "此旅程");
-  const formHtml = `
-    <div style="text-align:center;margin-bottom:18px;">
-      <div style="font-size:38px;margin-bottom:8px;">🔒</div>
-      <div style="font-size:16px;font-weight:900;color:var(--ink);">【${safeName}】設有專屬密碼保護</div>
-      <div style="font-size:12px;color:#777;margin-top:6px;line-height:1.5;">請輸入專屬密碼以唯讀檢視手冊內容<br>（解鎖成功後自動記憶於本機，無需重複輸入）</div>
-    </div>
-    <div class="ef-wrap">
-      <div class="ef-label">請輸入存取密碼 <span style="color:var(--red);">*</span></div>
-      <div style="position:relative;">
-        <input type="password" id="tripUnlockPwdInput" class="ef-input" placeholder="請輸入密碼" autofocus style="padding-right:42px;" onkeydown="if(event.key==='Enter'){document.getElementById('modalConfirmBtn').click();}">
-        <button type="button" onclick="togglePasswordVisibility('tripUnlockPwdInput', this)" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:16px;padding:4px;color:#777;" title="切換顯示密碼">👁️</button>
-      </div>
-      <div id="tripUnlockError" style="color:var(--red);font-size:12px;margin-top:6px;font-weight:700;display:none;">❌ 密碼錯誤，請重新輸入！</div>
-    </div>
-  `;
+let pendingUnlockTrip = null;
 
-  openFormModal({
-    title: "🔐 私密旅程解鎖",
-    bodyHtml: formHtml,
-    confirmText: "🔓 解鎖手冊",
-    onConfirm: () => {
-      const inputVal = (document.getElementById("tripUnlockPwdInput").value || "").trim();
-      const expectedPwd = String(trip.password || "").trim();
-      if (!inputVal) {
-        alert("請輸入存取密碼！");
-        return false;
-      }
-      if (inputVal !== expectedPwd) {
-        const errEl = document.getElementById("tripUnlockError");
-        if (errEl) errEl.style.display = "block";
-        const inputEl = document.getElementById("tripUnlockPwdInput");
-        if (inputEl) {
-          inputEl.style.borderColor = "var(--red)";
-          inputEl.select();
-        }
-        return false;
-      }
-      // 驗證通過
-      markTripUnlocked(trip.uuid, expectedPwd);
-      showToast("密碼驗證成功，手冊已解鎖 ✓");
-      if (typeof onUnlockSuccess === "function") {
-        onUnlockSuccess();
-      }
-      return true;
-    },
-    onCancel: () => {
-      if (typeof onCancel === "function") {
-        onCancel();
-      }
+// 顯示專屬私密行程門禁鎖定畫面 (整塊隱蔽手冊，絕不露出一絲內容)
+function showLockedView(trip) {
+  pendingUnlockTrip = trip;
+  document.getElementById("view-hub").style.display = "none";
+  document.getElementById("view-trip").style.display = "none";
+  const lockedView = document.getElementById("view-locked");
+  if (lockedView) lockedView.style.display = "block";
+
+  const indicator = document.getElementById("currentTripIndicator");
+  if (indicator) {
+    indicator.style.display = "inline-block";
+    indicator.innerText = `🔒 ${(trip && (trip.name || trip.uuid)) || currentTripUuid}`;
+  }
+
+  const titleEl = document.getElementById("lockedTripTitle");
+  if (titleEl) {
+    titleEl.innerText = `🔒【${escapeHtml((trip && (trip.name || trip.uuid)) || currentTripUuid)}】`;
+  }
+
+  const pwdInput = document.getElementById("lockedTripPwdInput");
+  if (pwdInput) {
+    pwdInput.value = "";
+    pwdInput.style.borderColor = "var(--mist)";
+    pwdInput.focus();
+  }
+
+  const errEl = document.getElementById("lockedTripErrorMsg");
+  if (errEl) errEl.style.display = "none";
+}
+
+// 門禁解鎖表單送出驗證
+function handleTripUnlockSubmit(e) {
+  if (e) e.preventDefault();
+  const inputEl = document.getElementById("lockedTripPwdInput");
+  const errEl = document.getElementById("lockedTripErrorMsg");
+  const inputPwd = (inputEl ? inputEl.value : "").trim();
+
+  const trip = pendingUnlockTrip || tripsList.find((t) => t.uuid === currentTripUuid) || (tripData && tripData.uuid === currentTripUuid ? tripData : { uuid: currentTripUuid, password: "" });
+  const expectedPwd = String((trip && trip.password) || (tripData && tripData.password) || "").trim();
+
+  if (!inputPwd) {
+    alert("請輸入存取密碼！");
+    return;
+  }
+
+  if (inputPwd !== expectedPwd) {
+    if (errEl) errEl.style.display = "block";
+    if (inputEl) {
+      inputEl.style.borderColor = "var(--red)";
+      inputEl.select();
     }
-  });
+    return;
+  }
+
+  // 密碼完全正確：授權解鎖並進入手冊
+  markTripUnlocked(trip.uuid, expectedPwd);
+  showToast("密碼驗證成功，手冊已解鎖 ✓");
+
+  const lockedView = document.getElementById("view-locked");
+  if (lockedView) lockedView.style.display = "none";
+
+  showTripView();
+  initCountdown();
+  render();
 }
 
 // 點擊大廳行程卡片時的安全進入路由
@@ -199,29 +136,156 @@ function openTripByUuid(uuid) {
   if (isTripUnlocked(uuid, tripPassword)) {
     navigateTo(uuid);
   } else {
-    openTripPasswordModal(trip || { uuid, name: uuid, password: tripPassword }, () => {
-      navigateTo(uuid);
-    });
+    // 進入專屬門禁鎖定畫面，未解鎖前完全不載入手冊內容
+    currentTripUuid = uuid;
+    const currentPath = window.location.pathname;
+    history.pushState({ trip: uuid }, "", `${currentPath}?trip=${encodeURIComponent(uuid)}`);
+    showLockedView(trip || { uuid, name: uuid, password: tripPassword });
   }
 }
 
 function showHubView() {
   document.getElementById("view-hub").style.display = "block";
   document.getElementById("view-trip").style.display = "none";
+  const lockedView = document.getElementById("view-locked");
+  if (lockedView) lockedView.style.display = "none";
   document.getElementById("currentTripIndicator").style.display = "none";
 }
 
 function showTripView() {
+  const trip = tripsList.find((t) => t.uuid === currentTripUuid) || tripData;
+  const tripPassword = trip ? (trip.password || "") : "";
+  // 雙重安全閥：若未解鎖，絕對不允許開啟手冊畫面
+  if (currentTripUuid && !isTripUnlocked(currentTripUuid, tripPassword)) {
+    showLockedView(trip || { uuid: currentTripUuid, name: currentTripUuid, password: tripPassword });
+    return;
+  }
+
   currentFoodFilter = "all";
   currentShoppingFilter = "all";
   document.getElementById("view-hub").style.display = "none";
+  const lockedView = document.getElementById("view-locked");
+  if (lockedView) lockedView.style.display = "none";
   document.getElementById("view-trip").style.display = "block";
   const indicator = document.getElementById("currentTripIndicator");
   if (indicator) {
     indicator.style.display = "inline-block";
-    indicator.innerText = `📍 ${currentTripUuid}`;
+    indicator.innerText = `📍 ${(trip && trip.name) || currentTripUuid}`;
   }
 }
+
+// 解析 URL Query 參數取得行程 UUID (例如 ?trip=okayama-2027 或 ?okayama-2027)
+function getTripUuidFromUrl() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const tripParam = urlParams.get("trip");
+  if (tripParam) return tripParam.trim();
+
+  // 支援簡短寫法 (例如 ?okayama-2027)
+  const search = window.location.search.replace(/^\?/, "").trim();
+  if (search && !search.includes("=")) {
+    return search;
+  }
+  return "";
+}
+
+function initRouter() {
+  currentTripUuid = getTripUuidFromUrl();
+  if (currentTripUuid) {
+    const trip = tripsList.find((t) => t.uuid === currentTripUuid);
+    const pwd = trip ? (trip.password || "") : (tripData && tripData.uuid === currentTripUuid ? (tripData.password || "") : "");
+    if (isTripUnlocked(currentTripUuid, pwd)) {
+      showTripView();
+    } else {
+      showLockedView(trip || { uuid: currentTripUuid, name: currentTripUuid, password: pwd });
+    }
+  } else {
+    showHubView();
+  }
+}
+
+// 路由導航切換函式
+function navigateTo(tripUuid) {
+  currentTripUuid = (tripUuid || "").trim();
+  const currentPath = window.location.pathname;
+  const newUrl = currentTripUuid
+    ? `${currentPath}?trip=${encodeURIComponent(currentTripUuid)}`
+    : currentPath;
+
+  history.pushState({ trip: currentTripUuid }, "", newUrl);
+
+  if (currentTripUuid) {
+    const trip = tripsList.find((t) => t.uuid === currentTripUuid);
+    const tripPassword = trip ? (trip.password || "") : (tripData && tripData.uuid === currentTripUuid ? (tripData.password || "") : "");
+
+    if (!isTripUnlocked(currentTripUuid, tripPassword)) {
+      showLockedView(trip || { uuid: currentTripUuid, name: currentTripUuid, password: tripPassword });
+      fetchTripData();
+    } else {
+      showTripView();
+      fetchTripData();
+    }
+  } else {
+    showHubView();
+    renderHubTripsGrid();
+  }
+}
+
+// 監聽瀏覽器上一頁/下一頁
+window.onpopstate = function () {
+  initRouter();
+  if (currentTripUuid) {
+    const trip = tripsList.find((t) => t.uuid === currentTripUuid);
+    const tripPassword = trip ? (trip.password || "") : (tripData && tripData.uuid === currentTripUuid ? (tripData.password || "") : "");
+    if (isTripUnlocked(currentTripUuid, tripPassword)) {
+      showTripView();
+      fetchTripData();
+    } else {
+      showLockedView(trip || { uuid: currentTripUuid, name: currentTripUuid, password: tripPassword });
+    }
+  } else {
+    showHubView();
+    renderHubTripsGrid();
+  }
+};
+
+// 初始化流程：DOMContentLoaded 立即觸發，不等網路！
+document.addEventListener("DOMContentLoaded", function () {
+  initRouter();
+  initGoogleAuth();
+
+  // 若當前在手冊頁，嚴格檢查密碼門禁後再決定是否從快取渲染！
+  if (currentTripUuid) {
+    let tripPassword = "";
+    try {
+      const cachedTrip = localStorage.getItem("cache_trip_" + currentTripUuid);
+      if (cachedTrip) {
+        tripData = JSON.parse(cachedTrip);
+        tripPassword = tripData.password || "";
+      }
+      if (!tripPassword && tripsList.length > 0) {
+        const found = tripsList.find((t) => t.uuid === currentTripUuid);
+        if (found) tripPassword = found.password || "";
+      }
+    } catch (e) {}
+
+    // 關鍵門禁：未解鎖時「絕對不渲染手冊內容」，直接顯示門禁鎖定畫面！
+    if (!isTripUnlocked(currentTripUuid, tripPassword)) {
+      showLockedView({ uuid: currentTripUuid, name: (tripData && tripData.name) || currentTripUuid, password: tripPassword });
+    } else {
+      showTripView();
+      if (tripData) {
+        initCountdown();
+        render();
+      }
+    }
+  } else {
+    // 若在大廳頁，立即渲染大廳卡片！
+    renderHubTripsGrid();
+  }
+
+  // 在背景靜默連線 Google Apps Script 同步最新數據
+  fetchTrips();
+});
 
 // 初始化 Google 登入元件 (無論登入與否均能運作)
 function initGoogleAuth() {
@@ -800,17 +864,8 @@ async function fetchTripData() {
     if (isTripUnlocked(currentTripUuid, pwd)) {
       return true;
     }
-    // 未解鎖狀態：隱蔽手冊畫面並彈出解鎖對話框
-    openTripPasswordModal(
-      { uuid: currentTripUuid, name: data.name || currentTripUuid, password: pwd },
-      () => {
-        initCountdown();
-        render();
-      },
-      () => {
-        navigateTo("");
-      }
-    );
+    // 未解鎖狀態：切換至門禁鎖定畫面，絕不露出任何手冊內容！
+    showLockedView({ uuid: currentTripUuid, name: data.name || (currentMeta ? currentMeta.name : "") || currentTripUuid, password: pwd });
     return false;
   }
 
@@ -830,6 +885,7 @@ async function fetchTripData() {
         indicator.innerText = `📍 ${tripData.name || currentTripUuid}`;
       }
       if (ensureTripUnlockedOrPrompt(tripData)) {
+        showTripView();
         initCountdown();
         render();
       }
@@ -880,6 +936,7 @@ async function fetchTripData() {
       }
 
       if (ensureTripUnlockedOrPrompt(tripData)) {
+        showTripView();
         initCountdown();
         render();
         if (hasCache) {
