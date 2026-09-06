@@ -1796,19 +1796,19 @@ window.onAddDayPickerChange = function (newDateStr) {
   const dateInput = document.getElementById("addDayDate");
   if (dateInput) dateInput.value = chineseDate;
 
-  // 若有出發日期，自動反推並同步天數識別
+  // 若有出發日期，自動反推並同步選取天數下拉選單
   if (tripData && tripData.startDate) {
     const dayNum = calculateDayNumFromDate(tripData.startDate, newDateStr);
-    if (dayNum && dayNum > 0) {
-      const idInput = document.getElementById("addDayId");
-      if (idInput) idInput.value = `Day ${dayNum}`;
+    if (dayNum && dayNum >= 1 && dayNum <= 14) {
+      const select = document.getElementById("addDayId");
+      if (select) select.value = `Day ${dayNum}`;
     }
   }
 };
 
-// 全域彈窗連動回呼：新增天數時由天數序號同步日曆與星期文字
-window.onAddDayIdChange = function () {
-  const val = (document.getElementById("addDayId")?.value || "").trim();
+// 全域彈窗連動回呼：新增天數時由下拉選單同步日曆與星期文字
+window.onAddDaySelectChange = function (val) {
+  if (!val) return;
   const m = val.match(/Day\s*(\d+)/i) || val.match(/^(\d+)$/);
   if (m && tripData && tripData.startDate) {
     const dayNum = parseInt(m[1], 10);
@@ -1834,7 +1834,7 @@ window.onEditDayPickerChange = function (newDateStr) {
 // 新增行程天數對話框
 function openAddDayModal() {
   if (!tripData.days) tripData.days = [];
-  const nextDayNum = getSuggestedNextDayNum(tripData.days);
+  const nextDayNum = Math.min(getSuggestedNextDayNum(tripData.days), 14);
   const nextDayId = `Day ${nextDayNum}`;
 
   // 自動推算預設日期
@@ -1845,23 +1845,18 @@ function openAddDayModal() {
     defaultDateText = formatDateToDisplayWithWeekday(defaultIsoDate);
   }
 
-  // 快捷天數選項
-  const maxDay = Math.max(nextDayNum + 2, 10);
+  // 內建 14 天選項
   let presetOptions = "";
-  for (let d = 1; d <= maxDay; d++) {
+  for (let d = 1; d <= 14; d++) {
     presetOptions += `<option value="Day ${d}" ${d === nextDayNum ? "selected" : ""}>Day ${d}</option>`;
   }
 
   const formHtml = `
     <div class="ef-wrap">
-      <div class="ef-label">天數識別 <span style="color:var(--red);">*</span></div>
-      <div style="display:flex;gap:8px;align-items:center;">
-        <input type="text" id="addDayId" class="ef-input" style="flex:1;" value="${nextDayId}" oninput="window.onAddDayIdChange()" placeholder="例如: Day ${nextDayNum}">
-        <select class="ef-select" style="width:auto;min-width:110px;" onchange="document.getElementById('addDayId').value=this.value;window.onAddDayIdChange();">
-          ${presetOptions}
-        </select>
-      </div>
-      <div style="font-size:11px;color:#888;margin-top:4px;">💡 切換天數序號，下方日期與星期會自動同步推算</div>
+      <div class="ef-label">天數識別 (內建 14 天) <span style="color:var(--red);">*</span></div>
+      <select id="addDayId" class="ef-select" onchange="window.onAddDaySelectChange(this.value)">
+        ${presetOptions}
+      </select>
     </div>
     <div class="ef-wrap">
       <div class="ef-label">選擇日期 (點選日曆，系統自動計算日期與星期)</div>
@@ -1941,10 +1936,18 @@ function openEditDayTitleModal(dayIdx) {
     currentIsoDate = calculateIsoDateForDayNum(tripData.startDate, parseInt(m[1], 10));
   }
 
+  let editPresetOptions = "";
+  for (let d = 1; d <= 14; d++) {
+    const dayVal = `Day ${d}`;
+    editPresetOptions += `<option value="${dayVal}" ${dayVal === day.id ? "selected" : ""}>${dayVal}</option>`;
+  }
+
   const formHtml = `
     <div class="ef-wrap">
-      <div class="ef-label">天數識別 (例如: Day 1)</div>
-      <input type="text" id="editDayId" class="ef-input" value="${day.id || ""}">
+      <div class="ef-label">天數識別 (內建 14 天) <span style="color:var(--red);">*</span></div>
+      <select id="editDayId" class="ef-select" onchange="window.onAddDaySelectChange ? window.onAddDaySelectChange(this.value) : null">
+        ${editPresetOptions}
+      </select>
     </div>
     <div class="ef-wrap">
       <div class="ef-label">選擇日期 (更換日期自動重算星期)</div>
@@ -3765,18 +3768,14 @@ function openAddTransportModal() {
   const selectOptionsHtml = `
     ${dayOptions.map((opt) => `<option value="${opt.tag}" ${opt.tag === currentSelectedDayTag ? "selected" : ""}>${opt.label}</option>`).join("")}
     <option value="主要交通" ${currentSelectedDayTag === "主要交通" ? "selected" : ""}>主要交通 (全程通用 / 機場接駁)</option>
-    <option value="__custom__">✏️ 自訂其他日期代號...</option>
   `;
 
   const formHtml = `
     <div class="ef-wrap">
       <div class="ef-label">選擇乘車所屬天數 <span style="color:var(--red);">*</span></div>
-      ${tagButtonsHtml}
-      <select id="addTransDaySelect" class="ef-select" onchange="window.onSelectTransitDay(this.value)">
+      <select id="addTransDay" class="ef-select">
         ${selectOptionsHtml}
       </select>
-      <input type="text" id="addTransDay" class="ef-input" style="margin-top:6px;" placeholder="例如: D1-2/12" value="${currentSelectedDayTag}">
-      <div style="font-size:11px;color:#888;margin-top:4px;">💡 點擊上方天數標籤或下拉選單即可自動填入，無需手動打字</div>
     </div>
     <div class="ef-wrap">
       <div class="ef-label">乘車區間 / 路線 <span style="color:var(--red);">*</span></div>
@@ -3859,48 +3858,17 @@ function openEditTransportModal(idx) {
     return { tag, label };
   });
 
-  window.onSelectEditTransitDay = function (tag) {
-    if (!tag) return;
-    const input = document.getElementById("editTransDay");
-    if (input) {
-      if (tag === "__custom__") {
-        input.value = "";
-        input.focus();
-      } else {
-        input.value = tag;
-      }
-    }
-  };
-
-  const tagButtonsHtml = dayOptions.length
-    ? `
-      <div class="time-tags" style="margin-bottom:8px;">
-        ${dayOptions
-          .map(
-            (opt) =>
-              `<button type="button" class="time-tag" onclick="window.onSelectEditTransitDay('${opt.tag}')">${opt.tag}</button>`
-          )
-          .join("")}
-        <button type="button" class="time-tag" onclick="window.onSelectEditTransitDay('主要交通')">主要交通</button>
-      </div>
-    `
-    : "";
-
   const selectOptionsHtml = `
     ${dayOptions.map((opt) => `<option value="${opt.tag}" ${opt.tag === item.dayTag ? "selected" : ""}>${opt.label}</option>`).join("")}
     <option value="主要交通" ${item.dayTag === "主要交通" ? "selected" : ""}>主要交通 (全程通用 / 機場接駁)</option>
-    <option value="__custom__">✏️ 自訂其他日期代號...</option>
   `;
 
   const formHtml = `
     <div class="ef-wrap">
       <div class="ef-label">選擇乘車所屬天數 <span style="color:var(--red);">*</span></div>
-      ${tagButtonsHtml}
-      <select id="editTransDaySelect" class="ef-select" onchange="window.onSelectEditTransitDay(this.value)">
+      <select id="editTransDay" class="ef-select">
         ${selectOptionsHtml}
       </select>
-      <input type="text" id="editTransDay" class="ef-input" style="margin-top:6px;" value="${item.dayTag || ""}">
-      <div style="font-size:11px;color:#888;margin-top:4px;">💡 點擊上方天數標籤或下拉選單即可一鍵切換所屬天數</div>
     </div>
     <div class="ef-wrap">
       <div class="ef-label">乘車區間 / 路線 <span style="color:var(--red);">*</span></div>
