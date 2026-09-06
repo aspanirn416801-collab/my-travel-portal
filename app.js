@@ -4184,15 +4184,31 @@ function renderTransport() {
       const safeCost = escapeHtml(p.cost);
       const safeCurr = escapeHtml(p.currency || "日円");
       const safeNote = escapeHtml(p.note || "");
+
+      // 智能辨識備註中是否包含超連結網址
+      let noteContent = "";
+      if (safeNote) {
+        if (safeNote.startsWith("http://") || safeNote.startsWith("https://")) {
+          noteContent = `<a href="${safeNote}" target="_blank" rel="noopener noreferrer" style="font-size:11px;color:var(--gold-glow);margin-left:6px;text-decoration:underline;font-weight:700;" onclick="event.stopPropagation();" title="${safeNote}">🔗 官網連結</a>`;
+        } else {
+          noteContent = `<span style="font-size:11px;margin-left:6px;opacity:0.9;">· ${safeNote}</span>`;
+        }
+      }
+
       const adminPassActions = isAdmin
-        ? `<button class="btn-mini btn-mini-danger" style="margin-left:6px;padding:1px 6px;" onclick="deleteTransitPass(${idx})">✕</button>`
+        ? `
+          <div style="display:inline-flex;align-items:center;gap:4px;margin-left:8px;">
+            <button class="btn-mini" style="background:rgba(255,255,255,0.25);color:#fff;border-color:rgba(255,255,255,0.4);padding:2px 7px;font-size:11px;" onclick="event.stopPropagation();openEditTransitPassModal(${idx})">✏️ 修改</button>
+            <button class="btn-mini btn-mini-danger" style="padding:2px 7px;font-size:11px;" onclick="event.stopPropagation();deleteTransitPass(${idx})">✕</button>
+          </div>
+        `
         : "";
 
       return `
-      <div style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);padding:6px 12px;border-radius:12px;display:inline-flex;align-items:center;margin-top:6px;margin-right:6px;">
+      <div style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);padding:6px 12px;border-radius:12px;display:inline-flex;align-items:center;margin-top:6px;margin-right:6px;flex-wrap:wrap;max-width:100%;${isAdmin ? 'cursor:pointer;' : ''}" ${isAdmin ? `onclick="openEditTransitPassModal(${idx})"` : ""}>
         <span style="font-weight:800;font-size:12px;">🎟️ ${safePassName}</span>
-        ${safeCost ? `<span style="font-size:11px;margin-left:6px;opacity:0.9;">(${safeCost} ${safeCurr})</span>` : ""}
-        ${safeNote ? `<span style="font-size:10px;margin-left:4px;opacity:0.8;">· ${safeNote}</span>` : ""}
+        ${safeCost ? `<span style="font-size:11px;margin-left:6px;opacity:0.95;font-weight:700;">(${safeCost} ${safeCurr})</span>` : ""}
+        ${noteContent}
         ${adminPassActions}
       </div>
     `;
@@ -4831,6 +4847,65 @@ function openAddTransitPassModal() {
 
       renderTransport();
       save();
+      return true;
+    },
+  });
+}
+
+// 編輯周遊券對話框
+function openEditTransitPassModal(idx) {
+  if (!tripData.transport || !tripData.transport.passes || !tripData.transport.passes[idx]) return;
+  const pass = tripData.transport.passes[idx];
+
+  const safeName = escapeHtml(pass.name || "");
+  const safeCost = escapeHtml(pass.cost || "");
+  const safeCurr = escapeHtml(pass.currency || "日円");
+  const safeNote = escapeHtml(pass.note || "");
+
+  const formHtml = `
+    <div class="ef-wrap">
+      <div class="ef-label">周遊券 / 交通票券名稱 <span style="color:var(--red);">*</span></div>
+      <input type="text" id="editPassName" class="ef-input" value="${safeName}" placeholder="例如: 關西廣域鐵路周遊券">
+    </div>
+    <div style="display:flex;gap:10px;">
+      <div class="ef-wrap" style="flex:1;">
+        <div class="ef-label">票券費用 (純數字)</div>
+        <input type="text" id="editPassCost" class="ef-input" value="${safeCost}" placeholder="例如: 17000">
+      </div>
+      <div class="ef-wrap" style="flex:1;">
+        <div class="ef-label">幣別</div>
+        <input type="text" id="editPassCurr" class="ef-input" value="${safeCurr}">
+      </div>
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">備註說明 / 官方購票或兌換網址</div>
+      <textarea id="editPassNote" class="ef-textarea" placeholder="例如: 兌換窗口或官方介紹網址">${safeNote}</textarea>
+    </div>
+  `;
+
+  openFormModal({
+    title: "✏️ 編輯周遊券 / 交通票券",
+    bodyHtml: formHtml,
+    confirmText: "儲存修改並同步",
+    onConfirm: () => {
+      const name = document.getElementById("editPassName").value.trim();
+      const cost = document.getElementById("editPassCost").value.trim();
+      const curr = document.getElementById("editPassCurr").value.trim() || "日円";
+      const note = document.getElementById("editPassNote").value.trim();
+
+      if (!name) {
+        alert("請輸入票券名稱！");
+        return false;
+      }
+
+      tripData.transport.passes[idx].name = name;
+      tripData.transport.passes[idx].cost = cost;
+      tripData.transport.passes[idx].currency = curr;
+      tripData.transport.passes[idx].note = note;
+
+      renderTransport();
+      save();
+      showToast("周遊券已更新 ✓");
       return true;
     },
   });
