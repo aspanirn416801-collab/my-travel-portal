@@ -27,6 +27,10 @@
   --red: #C83B2B;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
 body {
   background: var(--washi);
   background-image: 
@@ -44,12 +48,13 @@ body {
 }
 body.large { font-size: 16px; }
 
-/* 容器寬度限制 */
+/* 容器寬度限制與防橫向滾動溢出 */
 .app-container {
   max-width: 860px;
   margin: 0 auto;
   min-height: 100vh;
   position: relative;
+  overflow-x: hidden;
 }
 
 /* 登入阻擋層 */
@@ -1004,16 +1009,20 @@ body.large { font-size: 16px; }
   position: sticky;
   top: 0;
   z-index: 1000;
+  max-width: 100vw;
+  box-sizing: border-box;
 }
 .header-left {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 .header-right {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-shrink: 0;
 }
 .hub-nav-btn {
   background: rgba(255, 255, 255, 0.8);
@@ -1522,45 +1531,87 @@ body.large { font-size: 16px; }
    手機端 RWD 響應式深度適配 (Mobile First Responsive Design)
    ========================================================================= */
 @media (max-width: 640px) {
+  html, body {
+    overflow-x: hidden;
+    max-width: 100vw;
+  }
   body {
     padding-bottom: 24px;
   }
+  .app-container {
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
   .app-header {
-    padding: 10px 14px;
+    padding: 8px 10px;
+    gap: 6px;
+    max-width: 100vw;
+    box-sizing: border-box;
+  }
+  .header-left {
+    gap: 6px;
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
   }
   .hub-nav-btn {
-    padding: 6px 12px;
+    flex-shrink: 0;
+    padding: 5px 8px;
     font-size: 11px;
+    border-radius: 10px;
+    gap: 3px;
+    white-space: nowrap;
   }
-  .user-badge {
-    padding: 4px 10px;
-    font-size: 10px;
-    max-width: 130px;
+  #currentTripIndicator {
+    font-size: 11px !important;
+    max-width: 115px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    display: inline-block;
+    vertical-align: middle;
+  }
+  .header-right {
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .user-badge {
+    padding: 4px 8px;
+    font-size: 10px;
+    max-width: 75px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  #customLoginBtn, #logoutBtn {
+    padding: 5px 8px !important;
+    font-size: 11px !important;
+    flex-shrink: 0;
+    white-space: nowrap;
   }
   .hero {
-    min-height: 220px;
-    padding: 20px 16px 26px;
-    border-radius: 0 0 24px 24px;
+    min-height: 200px;
+    padding: 16px 14px 22px;
+    border-radius: 0 0 20px 20px;
   }
   .hero-title {
-    font-size: 22px;
+    font-size: 20px;
     letter-spacing: 0.5px;
+    word-break: break-word;
   }
   .hero-subtitle {
     font-size: 12px;
     margin-top: 4px;
   }
   .tabs-outer {
-    padding: 0 12px;
-    margin-top: -18px;
-    top: 54px;
+    padding: 0 10px;
+    margin-top: -16px;
+    top: 50px;
   }
   .tabs-card {
     padding: 4px;
-    border-radius: 20px;
+    border-radius: 18px;
   }
   .tabs {
     overflow-x: auto;
@@ -1574,53 +1625,106 @@ body.large { font-size: 16px; }
   }
   .tab-btn {
     flex: 0 0 auto;
-    padding: 8px 12px;
+    padding: 7px 10px;
     font-size: 12px;
-    border-radius: 14px;
+    border-radius: 12px;
   }
   .main {
-    padding: 16px 12px;
+    padding: 14px 10px;
   }
   .day-selector {
-    gap: 8px;
-    padding: 4px 0 10px;
+    gap: 6px;
+    padding: 4px 0 8px;
   }
   .day-btn {
-    min-width: 68px;
-    padding: 8px 10px;
-    border-radius: 14px;
+    min-width: 60px;
+    padding: 7px 8px;
+    border-radius: 12px;
   }
   .day-btn-date {
     font-size: 10px;
   }
   .day-btn-id {
-    font-size: 13px;
+    font-size: 12px;
   }
   .day-add-btn {
-    height: 48px;
-    padding: 8px 12px;
+    height: 44px;
+    padding: 6px 10px;
     font-size: 11px;
-    border-radius: 14px;
+    border-radius: 12px;
   }
   .hub-grid {
     grid-template-columns: 1fr;
-    gap: 16px;
-  }
-  .food-grid, .shopping-grid {
-    grid-template-columns: 1fr;
     gap: 14px;
   }
-  .bp-airports {
-    font-size: 22px;
+  .trip-hub-card {
+    border-radius: 20px;
+  }
+  .hub-card-title {
+    font-size: 16px;
+    word-break: break-word;
+  }
+  .route-maps-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .bp-body {
+    padding: 14px 12px;
+  }
+  .bp-airport-code {
+    font-size: 17px !important;
   }
   .bp-city {
-    font-size: 12px;
+    font-size: 11px;
+  }
+  .bp-time {
+    font-size: 14px;
+  }
+  .bp-route-line {
+    padding: 0 6px;
+  }
+  .bp-route-plane {
+    font-size: 14px;
+  }
+  .card {
+    border-radius: 20px;
+    padding: 16px 12px;
+    margin-bottom: 14px;
+    word-break: break-word;
+  }
+  .card-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .tl {
+    gap: 10px;
+  }
+  .tl-time-badge {
+    font-size: 10px;
+    padding: 3px 8px;
+  }
+  .tl-content {
+    padding: 12px 12px;
+    border-radius: 16px;
+  }
+  .tl-place {
+    font-size: 15px;
+    word-break: break-word;
   }
   .modal-card {
-    width: 92%;
+    width: 94%;
     max-width: 360px;
-    padding: 20px 16px;
+    padding: 20px 14px;
     border-radius: 22px;
+  }
+  #view-locked {
+    padding: 20px 10px 40px 10px !important;
+  }
+  #view-locked .card {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 16px auto !important;
+    padding: 24px 14px !important;
   }
   .lightbox-content {
     max-width: 96vw;
@@ -1632,7 +1736,25 @@ body.large { font-size: 16px; }
     height: 38px;
   }
   .transit-item-card {
-    padding: 14px 14px;
+    padding: 14px 12px;
+  }
+}
+
+@media (max-width: 380px) {
+  #currentTripIndicator {
+    max-width: 65px;
+  }
+  .user-badge {
+    max-width: 55px;
+    padding: 3px 5px;
+    font-size: 9px;
+  }
+  .hub-nav-btn {
+    padding: 4px 6px;
+    font-size: 10px;
+  }
+  .bp-airport-code {
+    font-size: 15px !important;
   }
 }
 
@@ -1867,6 +1989,6 @@ body.large { font-size: 16px; }
   <!-- Google Identity Services SDK -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- 前端核心邏輯 (加入版本號防快取) -->
-  <script src="app.js?v=20260906_10"></script>
+  <script src="app.js?v=20260906_11"></script>
 </body>
 </html>

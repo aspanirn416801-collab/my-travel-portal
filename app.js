@@ -950,11 +950,11 @@ function renderHubTripsGrid() {
       let lockBadge = "";
       if (hasPassword) {
         if (userRole === "admin") {
-          lockBadge = '<span style="font-size:10px;background:rgba(197,160,89,0.18);color:#6B5A2A;padding:2px 8px;border-radius:12px;font-weight:800;border:1px solid var(--gold);">👑 管理員免密</span>';
+          lockBadge = '<span style="flex-shrink:0;white-space:nowrap;font-size:10px;background:rgba(197,160,89,0.18);color:#6B5A2A;padding:2px 8px;border-radius:12px;font-weight:800;border:1px solid var(--gold);">👑 管理員免密</span>';
         } else if (isUnlocked) {
-          lockBadge = '<span style="font-size:10px;background:rgba(26,56,34,0.12);color:var(--moss);padding:2px 8px;border-radius:12px;font-weight:800;">🔓 已解鎖</span>';
+          lockBadge = '<span style="flex-shrink:0;white-space:nowrap;font-size:10px;background:rgba(26,56,34,0.12);color:var(--moss);padding:2px 8px;border-radius:12px;font-weight:800;">🔓 已解鎖</span>';
         } else {
-          lockBadge = '<span style="font-size:10px;background:rgba(200,59,43,0.12);color:var(--red);padding:2px 8px;border-radius:12px;font-weight:800;">🔒 密碼保護</span>';
+          lockBadge = '<span style="flex-shrink:0;white-space:nowrap;font-size:10px;background:rgba(200,59,43,0.12);color:var(--red);padding:2px 8px;border-radius:12px;font-weight:800;">🔒 密碼保護</span>';
         }
       }
 
@@ -969,7 +969,7 @@ function renderHubTripsGrid() {
           <div class="hub-card-body">
             <div>
               <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;margin-bottom:4px;">
-                <div class="hub-card-title">${safeName}</div>
+                <div class="hub-card-title" style="flex:1;min-width:0;word-break:break-word;">${safeName}</div>
                 ${lockBadge}
               </div>
               <div class="hub-card-uuid">ID: ${safeUuid}</div>
@@ -2227,8 +2227,8 @@ function renderItinerary() {
         <div class="tl">
           <div class="tl-time-badge">${displayTime}</div>
           <div class="tl-content">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-              <div class="tl-place">${safePlace}</div>
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">
+              <div class="tl-place" style="flex:1;min-width:140px;word-break:break-word;">${safePlace}</div>
               ${adminActions}
             </div>
             ${safeDesc ? `<div class="tl-desc">${safeDesc}</div>` : ""}
