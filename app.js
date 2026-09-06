@@ -7,6 +7,15 @@ const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlv
 // 前端全局狀態管理 (啟動時立即從 LocalStorage 快取中還原，實現 0.001 秒瞬間秒開！)
 let idToken = localStorage.getItem("google_id_token") || null;
 let userRole = localStorage.getItem("cache_userRole") || "guest"; // 'admin' | 'user' | 'guest'
+
+// 安全校驗：若無有效 Token 或已逾期，一律強制歸為 guest 訪客身分，防止身分快取偽冒
+if (!idToken || isTokenExpired(idToken)) {
+  userRole = "guest";
+  try {
+    localStorage.setItem("cache_userRole", "guest");
+  } catch (e) {}
+}
+
 let tripsList = []; // 可存取的行程列表
 let currentTripUuid = "";
 let tripData = null; // 當前行程詳細手冊資料
@@ -48,7 +57,8 @@ try {
 
 function isTripUnlocked(tripUuid, tripPassword) {
   if (!tripUuid) return true;
-  if (userRole === "admin") return true; // 管理員尊榮特權：100% 免密碼直通
+  // 管理員尊榮特權：必須確實持有有效且未過期的 Google 登入 Token
+  if (userRole === "admin" && idToken && !isTokenExpired(idToken)) return true;
   const pwd = tripPassword !== undefined && tripPassword !== null ? String(tripPassword).trim() : "";
   if (!pwd) return true; // 未設密碼的公開行程：免密碼直接唯讀瀏覽
   // 改為 sessionStorage：關閉分頁、重啟瀏覽器或離開網頁即自動失效登出
@@ -213,12 +223,77 @@ function openTripByUuid(uuid) {
 }
 
 function showHubView() {
+  // 訪客跳離行程手冊返回大廳時，清空所有解鎖授權，確保再次進入時必須重新輸入密碼
+  const isAdmin = userRole === "admin" && idToken && !isTokenExpired(idToken);
+  if (!isAdmin) {
+    Object.keys(sessionStorage).forEach((key) => {
+      if (key.startsWith("unlocked_trip_")) {
+        sessionStorage.removeItem(key);
+      }
+    });
+  }
   document.getElementById("view-hub").style.display = "block";
   document.getElementById("view-trip").style.display = "none";
   const lockedView = document.getElementById("view-locked");
   if (lockedView) lockedView.style.display = "none";
   document.getElementById("currentTripIndicator").style.display = "none";
 }
+
+// =========================================================================
+// 全方位跳離與防呆安全機制 (切換分頁、跳離網站、關閉分頁或 BFCache 返回立即鎖定)
+// =========================================================================
+// 1. 監聽切換到其他分頁或跳離本頁 (visibilitychange)
+document.addEventListener("visibilitychange", function () {
+  if (document.visibilityState === "hidden") {
+    const isAdmin = userRole === "admin" && idToken && !isTokenExpired(idToken);
+    if (!isAdmin) {
+      Object.keys(sessionStorage).forEach((key) => {
+        if (key.startsWith("unlocked_trip_")) {
+          sessionStorage.removeItem(key);
+        }
+      });
+      if (currentTripUuid) {
+        document.getElementById("view-trip").style.display = "none";
+        showLockedView({ uuid: currentTripUuid, name: (tripData && tripData.name) || currentTripUuid });
+      }
+    }
+  }
+});
+
+// 2. 監聽跳離網頁、切換至其他網址或關閉分頁 (pagehide 與 beforeunload)
+window.addEventListener("pagehide", function () {
+  const isAdmin = userRole === "admin" && idToken && !isTokenExpired(idToken);
+  if (!isAdmin) {
+    Object.keys(sessionStorage).forEach((key) => {
+      if (key.startsWith("unlocked_trip_")) {
+        sessionStorage.removeItem(key);
+      }
+    });
+  }
+});
+
+window.addEventListener("beforeunload", function () {
+  const isAdmin = userRole === "admin" && idToken && !isTokenExpired(idToken);
+  if (!isAdmin) {
+    Object.keys(sessionStorage).forEach((key) => {
+      if (key.startsWith("unlocked_trip_")) {
+        sessionStorage.removeItem(key);
+      }
+    });
+  }
+});
+
+// 3. 監聽 pageshow (破除瀏覽器 BFCache 往返快取記憶體快照漏洞)
+window.addEventListener("pageshow", function () {
+  const isAdmin = userRole === "admin" && idToken && !isTokenExpired(idToken);
+  if (currentTripUuid && !isAdmin) {
+    const savedUnlock = sessionStorage.getItem("unlocked_trip_" + currentTripUuid);
+    if (!savedUnlock) {
+      document.getElementById("view-trip").style.display = "none";
+      showLockedView({ uuid: currentTripUuid, name: (tripData && tripData.name) || currentTripUuid });
+    }
+  }
+});
 
 function showTripView() {
   const trip = tripsList.find((t) => t.uuid === currentTripUuid) || tripData;
