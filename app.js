@@ -98,6 +98,103 @@ function navigateTo(tripUuid) {
   }
 }
 
+// =========================================================================
+// 旅程專屬密碼鎖機制 (管理員尊榮免密碼直通、訪客/團員密碼唯讀、自動記憶解鎖)
+// =========================================================================
+function isTripUnlocked(tripUuid, tripPassword) {
+  if (userRole === "admin") return true; // 管理員尊榮特權：100% 免密碼直通
+  const pwd = tripPassword !== undefined && tripPassword !== null ? String(tripPassword).trim() : "";
+  if (!pwd) return true; // 未設密碼的公開行程：免密碼直接唯讀瀏覽
+  const savedUnlock = localStorage.getItem("unlocked_trip_" + tripUuid);
+  return savedUnlock === pwd;
+}
+
+function markTripUnlocked(tripUuid, tripPassword) {
+  const pwd = tripPassword !== undefined && tripPassword !== null ? String(tripPassword).trim() : "";
+  localStorage.setItem("unlocked_trip_" + tripUuid, pwd);
+}
+
+function togglePasswordVisibility(inputId, btnEl) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  if (input.type === "password") {
+    input.type = "text";
+    btnEl.innerText = "🙈";
+  } else {
+    input.type = "password";
+    btnEl.innerText = "👁️";
+  }
+}
+
+function openTripPasswordModal(trip, onUnlockSuccess, onCancel) {
+  const safeName = escapeHtml(trip.name || trip.uuid || "此旅程");
+  const formHtml = `
+    <div style="text-align:center;margin-bottom:18px;">
+      <div style="font-size:38px;margin-bottom:8px;">🔒</div>
+      <div style="font-size:16px;font-weight:900;color:var(--ink);">【${safeName}】設有專屬密碼保護</div>
+      <div style="font-size:12px;color:#777;margin-top:6px;line-height:1.5;">請輸入專屬密碼以唯讀檢視手冊內容<br>（解鎖成功後自動記憶於本機，無需重複輸入）</div>
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">請輸入存取密碼 <span style="color:var(--red);">*</span></div>
+      <div style="position:relative;">
+        <input type="password" id="tripUnlockPwdInput" class="ef-input" placeholder="請輸入密碼" autofocus style="padding-right:42px;" onkeydown="if(event.key==='Enter'){document.getElementById('modalConfirmBtn').click();}">
+        <button type="button" onclick="togglePasswordVisibility('tripUnlockPwdInput', this)" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:16px;padding:4px;color:#777;" title="切換顯示密碼">👁️</button>
+      </div>
+      <div id="tripUnlockError" style="color:var(--red);font-size:12px;margin-top:6px;font-weight:700;display:none;">❌ 密碼錯誤，請重新輸入！</div>
+    </div>
+  `;
+
+  openFormModal({
+    title: "🔐 私密旅程解鎖",
+    bodyHtml: formHtml,
+    confirmText: "🔓 解鎖手冊",
+    onConfirm: () => {
+      const inputVal = (document.getElementById("tripUnlockPwdInput").value || "").trim();
+      const expectedPwd = String(trip.password || "").trim();
+      if (!inputVal) {
+        alert("請輸入存取密碼！");
+        return false;
+      }
+      if (inputVal !== expectedPwd) {
+        const errEl = document.getElementById("tripUnlockError");
+        if (errEl) errEl.style.display = "block";
+        const inputEl = document.getElementById("tripUnlockPwdInput");
+        if (inputEl) {
+          inputEl.style.borderColor = "var(--red)";
+          inputEl.select();
+        }
+        return false;
+      }
+      // 驗證通過
+      markTripUnlocked(trip.uuid, expectedPwd);
+      showToast("密碼驗證成功，手冊已解鎖 ✓");
+      if (typeof onUnlockSuccess === "function") {
+        onUnlockSuccess();
+      }
+      return true;
+    },
+    onCancel: () => {
+      if (typeof onCancel === "function") {
+        onCancel();
+      }
+    }
+  });
+}
+
+// 點擊大廳行程卡片時的安全進入路由
+function openTripByUuid(uuid) {
+  const trip = tripsList.find((t) => t.uuid === uuid);
+  const tripPassword = trip ? (trip.password || "") : (tripData && tripData.uuid === uuid ? (tripData.password || "") : "");
+
+  if (isTripUnlocked(uuid, tripPassword)) {
+    navigateTo(uuid);
+  } else {
+    openTripPasswordModal(trip || { uuid, name: uuid, password: tripPassword }, () => {
+      navigateTo(uuid);
+    });
+  }
+}
+
 function showHubView() {
   document.getElementById("view-hub").style.display = "block";
   document.getElementById("view-trip").style.display = "none";
@@ -525,22 +622,40 @@ function renderHubTripsGrid() {
       const safeName = escapeHtml(t.name);
       const safeUuid = escapeHtml(t.uuid);
       const coverInfo = getAutoCoverInfo(t.name, t.uuid, t.coverUrl);
+      const hasPassword = Boolean(t.password && String(t.password).trim());
+      const isUnlocked = isTripUnlocked(t.uuid, t.password);
+
+      let lockBadge = "";
+      if (hasPassword) {
+        if (userRole === "admin") {
+          lockBadge = '<span style="font-size:10px;background:rgba(197,160,89,0.18);color:#6B5A2A;padding:2px 8px;border-radius:12px;font-weight:800;border:1px solid var(--gold);">👑 管理員免密</span>';
+        } else if (isUnlocked) {
+          lockBadge = '<span style="font-size:10px;background:rgba(26,56,34,0.12);color:var(--moss);padding:2px 8px;border-radius:12px;font-weight:800;">🔓 已解鎖</span>';
+        } else {
+          lockBadge = '<span style="font-size:10px;background:rgba(200,59,43,0.12);color:var(--red);padding:2px 8px;border-radius:12px;font-weight:800;">🔒 密碼保護</span>';
+        }
+      }
+
+      const btnText = hasPassword && !isUnlocked && userRole !== "admin" ? "輸入密碼解鎖 ➔" : "開啟手冊 ➔";
 
       return `
-        <div class="trip-hub-card" onclick="navigateTo('${safeUuid}')">
+        <div class="trip-hub-card" onclick="openTripByUuid('${safeUuid}')">
           <div class="hub-card-cover-wrap">
             <img class="hub-card-cover" src="${coverInfo.url}" loading="lazy" referrerpolicy="no-referrer" onerror="handleImgError(this)">
             <div class="hub-card-tag">${coverInfo.tag}</div>
           </div>
           <div class="hub-card-body">
             <div>
-              <div class="hub-card-title">${safeName}</div>
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;margin-bottom:4px;">
+                <div class="hub-card-title">${safeName}</div>
+                ${lockBadge}
+              </div>
               <div class="hub-card-uuid">ID: ${safeUuid}</div>
               <div class="hub-card-meta">
                 <div>📖 包含每日行程、航班住宿、美食口袋、代購清單</div>
               </div>
             </div>
-            <div class="hub-card-btn">開啟手冊 ➔</div>
+            <div class="hub-card-btn">${btnText}</div>
           </div>
         </div>
       `;
@@ -655,6 +770,28 @@ function sortTripDays(days) {
 async function fetchTripData() {
   if (!currentTripUuid) return;
 
+  // 檢查特定行程是否受密碼保護且尚未解鎖
+  function ensureTripUnlockedOrPrompt(data) {
+    if (!data) return true;
+    const currentMeta = tripsList.find((t) => t.uuid === currentTripUuid);
+    const pwd = (data.password !== undefined ? data.password : (currentMeta ? currentMeta.password : "")) || "";
+    if (isTripUnlocked(currentTripUuid, pwd)) {
+      return true;
+    }
+    // 未解鎖狀態：隱蔽手冊畫面並彈出解鎖對話框
+    openTripPasswordModal(
+      { uuid: currentTripUuid, name: data.name || currentTripUuid, password: pwd },
+      () => {
+        initCountdown();
+        render();
+      },
+      () => {
+        navigateTo("");
+      }
+    );
+    return false;
+  }
+
   // 1. 優先從本地快取秒開（0.01 秒瞬間出現手冊內容，完全不用乾等轉圈圈！）
   let hasCache = false;
   try {
@@ -670,8 +807,10 @@ async function fetchTripData() {
         indicator.style.display = "inline-block";
         indicator.innerText = `📍 ${tripData.name || currentTripUuid}`;
       }
-      initCountdown();
-      render();
+      if (ensureTripUnlockedOrPrompt(tripData)) {
+        initCountdown();
+        render();
+      }
     }
   } catch (e) {}
 
@@ -718,10 +857,12 @@ async function fetchTripData() {
         indicator.innerText = `📍 ${tripData.name || currentTripUuid}`;
       }
 
-      initCountdown();
-      render();
-      if (hasCache) {
-        showToast("手冊資料已同步最新 ✓");
+      if (ensureTripUnlockedOrPrompt(tripData)) {
+        initCountdown();
+        render();
+        if (hasCache) {
+          showToast("手冊資料已同步最新 ✓");
+        }
       }
     }
   } catch (e) {
@@ -3270,6 +3411,7 @@ function renderAdminTripsList() {
         <div>📄 試算表 ID: <span style="font-family:monospace;font-size:11px;background:#F9F9F9;padding:1px 4px;border-radius:4px;">${escapeHtml(t.sheet_id || "")}</span></div>
         <div>📁 圖片資料夾 ID: <span style="font-family:monospace;font-size:11px;background:#F9F9F9;padding:1px 4px;border-radius:4px;">${escapeHtml(t.folder_id || "")}</span></div>
         <div>👥 授權團員: <span style="color:${t.allowed_users ? "#333" : "#999"};">${escapeHtml(t.allowed_users || "僅管理員")}</span></div>
+        <div>🔐 存取密碼: <span style="font-family:monospace;font-size:11px;background:#F9F9F9;padding:1px 6px;border-radius:4px;color:var(--moss);font-weight:bold;">${escapeHtml(t.password || "未設密碼 (公開手冊)")}</span></div>
       </div>
     </div>
   `,
@@ -3316,6 +3458,10 @@ function openCreateTripModal() {
       <div class="ef-label">授權人員 Email (以英文逗號分隔，留空則僅管理員可見)</div>
       <textarea id="newAllowedUsers" class="ef-textarea" placeholder="user1@gmail.com, user2@gmail.com"></textarea>
     </div>
+    <div class="ef-wrap">
+      <div class="ef-label">🔐 旅程專屬存取密碼 <span style="font-weight:normal;color:#888;">(選填，留空為公開手冊，有設密碼訪客需輸入密碼唯讀)</span></div>
+      <input type="text" id="newTripPassword" class="ef-input" placeholder="例如: okayama2027 (選填)">
+    </div>
   `;
 
   openFormModal({
@@ -3330,6 +3476,7 @@ function openCreateTripModal() {
       const duration = document.getElementById("newDuration").value.trim();
       const sheetId = document.getElementById("newSheetId").value.trim();
       const folderId = document.getElementById("newFolderId").value.trim();
+      const password = document.getElementById("newTripPassword").value.trim();
       let allowedUsers = document
         .getElementById("newAllowedUsers")
         .value.trim();
@@ -3370,6 +3517,7 @@ function openCreateTripModal() {
             sheetId,
             folderId,
             allowedUsers,
+            password,
           }),
         });
         const result = await res.json();
@@ -3446,6 +3594,10 @@ function openEditTripMetaModal(uuid) {
       <div class="ef-label">授權人員 Email (以英文逗號分隔)</div>
       <textarea id="editTripAllowedUsers" class="ef-textarea">${trip.allowed_users || ""}</textarea>
     </div>
+    <div class="ef-wrap">
+      <div class="ef-label">🔐 旅程專屬存取密碼 <span style="font-weight:normal;color:#888;">(選填，留空即取消密碼變為公開手冊)</span></div>
+      <input type="text" id="editTripPassword" class="ef-input" value="${trip.password || ""}" placeholder="例如: okayama2027 (選填)">
+    </div>
   `;
 
   openFormModal({
@@ -3459,6 +3611,7 @@ function openEditTripMetaModal(uuid) {
         .value.trim();
       const endDate = document.getElementById("editTripEndDate").value.trim();
       const duration = document.getElementById("editTripDuration").value.trim();
+      const password = document.getElementById("editTripPassword").value.trim();
       let allowedUsers = document
         .getElementById("editTripAllowedUsers")
         .value.trim();
@@ -3491,17 +3644,20 @@ function openEditTripMetaModal(uuid) {
             endDate,
             duration,
             allowedUsers,
+            password,
           }),
         });
         const result = await res.json();
         if (result.status === "success") {
           showToast("行程設定更新成功 ✓");
+          trip.password = password;
           // 若修改的是當前行程，同步更新記憶體資料
           if (currentTripUuid === uuid && tripData) {
             tripData.name = name;
             tripData.startDate = startDate;
             tripData.endDate = endDate;
             tripData.duration = duration;
+            tripData.password = password;
             initCountdown();
           }
           fetchTrips();

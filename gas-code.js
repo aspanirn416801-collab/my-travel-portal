@@ -152,15 +152,17 @@ function getUserAccess(email) {
     
     if (!uuid) continue;
     
+    const password = tripRows[i][5] ? String(tripRows[i][5]).trim() : "";
+
     // 如果是管理員，可以看到所有行程
     // 如果是一般人，檢查其 Email 是否在 allowedUsersStr 清單內，或是公開行程
     if (isAdmin) {
-      allowedTrips.push({ uuid: uuid, name: name, sheet_id: sheetId, folder_id: folderId, allowed_users: allowedUsersStr });
+      allowedTrips.push({ uuid: uuid, name: name, sheet_id: sheetId, folder_id: folderId, allowed_users: allowedUsersStr, password: password });
     } else {
       const allowedEmails = allowedUsersStr.toLowerCase().split(",").map(e => normalizeEmail(e));
       const isPublic = !allowedUsersStr || allowedEmails.includes("*") || allowedEmails.includes("public");
       if (isPublic || (cleanEmail && allowedEmails.includes(cleanEmail))) {
-        allowedTrips.push({ uuid: uuid, name: name }); // 一般團員隱蔽實體 Sheet & Folder ID
+        allowedTrips.push({ uuid: uuid, name: name, password: password }); // 傳遞密碼資訊供前端解鎖校驗
       }
     }
   }
@@ -341,12 +343,14 @@ function doPost(e) {
       }
     }
     
+    const password = (postData.password || "").trim();
+    
     const tripSheet = masterSpreadsheet.getSheetByName("Trips");
-    tripSheet.appendRow([uuid, name, sheetId, folderId, allowedUsers]);
+    tripSheet.appendRow([uuid, name, sheetId, folderId, allowedUsers, password]);
     
     // 初始化關聯試算表的結構與分頁
     try {
-      initializeSubSheet(sheetId, name, startDate, endDate, duration);
+      initializeSubSheet(sheetId, name, startDate, endDate, duration, password);
       return ContentService.createTextOutput(JSON.stringify({ 
         status: "success", 
         sheetId: sheetId,
@@ -392,6 +396,7 @@ function doPost(e) {
     const endDate = postData.endDate;
     const duration = postData.duration;
     const allowedUsers = postData.allowedUsers || "";
+    const password = postData.password !== undefined ? String(postData.password).trim() : null;
     
     const tripSheet = masterSpreadsheet.getSheetByName("Trips");
     const tripRows = tripSheet.getDataRange().getValues();
@@ -406,9 +411,12 @@ function doPost(e) {
     }
     
     if (targetRowIndex !== -1 && targetSheetId) {
-      // 1. 更新主控表 Trips 分頁 (名稱與授權清單)
+      // 1. 更新主控表 Trips 分頁 (名稱、授權清單與密碼)
       tripSheet.getRange(targetRowIndex, 2).setValue(name);
       tripSheet.getRange(targetRowIndex, 5).setValue(allowedUsers);
+      if (password !== null) {
+        tripSheet.getRange(targetRowIndex, 6).setValue(password);
+      }
       
       // 2. 更新個別試算表 Info 分頁
       try {
@@ -419,6 +427,20 @@ function doPost(e) {
           infoSheet.getRange(3, 2).setValue(startDate);
           infoSheet.getRange(4, 2).setValue(endDate);
           infoSheet.getRange(5, 2).setValue(duration);
+          if (password !== null) {
+            let hasPwdRow = false;
+            const infoData = infoSheet.getDataRange().getValues();
+            for (let r = 0; r < infoData.length; r++) {
+              if (String(infoData[r][0]).toLowerCase() === "password") {
+                infoSheet.getRange(r + 1, 2).setValue(password);
+                hasPwdRow = true;
+                break;
+              }
+            }
+            if (!hasPwdRow) {
+              infoSheet.appendRow(["Password", password]);
+            }
+          }
         }
         return ContentService.createTextOutput(JSON.stringify({ status: "success", message: "Trip meta updated successfully" }))
                              .setMimeType(ContentService.MimeType.JSON);
@@ -477,7 +499,7 @@ function doPost(e) {
 }
 
 // 初始化關聯試算表結構
-function initializeSubSheet(sheetId, tripName, startDate, endDate, duration) {
+function initializeSubSheet(sheetId, tripName, startDate, endDate, duration, password) {
   const ss = SpreadsheetApp.openById(sheetId);
   
   // 1. 基本資訊頁 (Info)
@@ -489,6 +511,7 @@ function initializeSubSheet(sheetId, tripName, startDate, endDate, duration) {
   infoSheet.appendRow(["StartDate", startDate || "2027-02-12"]);
   infoSheet.appendRow(["EndDate", endDate || "2027-02-19"]);
   infoSheet.appendRow(["Duration", duration || "8天7夜"]);
+  infoSheet.appendRow(["Password", password || ""]);
   
   // 2. 準備清單頁 (Checklist)
   let checklistSheet = ss.getSheetByName("Checklist");
@@ -575,6 +598,12 @@ function loadTripDetails(sheetId) {
   result.startDate = infoRows[2][1];
   result.endDate = infoRows[3][1];
   result.duration = infoRows[4][1];
+  for (let r = 1; r < infoRows.length; r++) {
+    if (String(infoRows[r][0]).toLowerCase() === "password") {
+      result.password = infoRows[r][1];
+      break;
+    }
+  }
   
   // 2. Checklist
   result.checklist = [];
