@@ -201,8 +201,14 @@ function doGet(e) {
       const allowedUsersStr = tripRows[i][4] || "";
       const allowedEmails = allowedUsersStr.toLowerCase().split(",").map(u => u.trim());
       const isPublic = !allowedUsersStr || allowedEmails.includes("*") || allowedEmails.includes("public");
+      const password = tripRows[i][5] ? String(tripRows[i][5]).trim() : "";
       if (uuid && isPublic) {
-        publicTrips.push({ uuid: uuid, name: name });
+        publicTrips.push({
+          uuid: uuid,
+          name: name,
+          hasPassword: !!password,
+          password: password // 供前端即時比對，後端亦進行實質雙重校驗
+        });
       }
     }
     access = { role: "guest", trips: publicTrips };
@@ -222,12 +228,16 @@ function doGet(e) {
     const tripUuid = e.parameter.tripUuid;
     let targetSheetId = "";
     let allowedUsersStr = "";
+    let tripPassword = "";
+    let tripName = "";
     
-    // 搜尋對應的 Sheet ID 與授權名單
+    // 搜尋對應的 Sheet ID、授權名單與專屬密碼
     for (let i = 1; i < tripRows.length; i++) {
       if (tripRows[i][0] === tripUuid) {
+        tripName = tripRows[i][1];
         targetSheetId = tripRows[i][2];
         allowedUsersStr = tripRows[i][4] || "";
+        tripPassword = tripRows[i][5] ? String(tripRows[i][5]).trim() : "";
         break;
       }
     }
@@ -249,6 +259,20 @@ function doGet(e) {
         status: "error", 
         message: "此行程為私人專屬手冊，請先登入已被授權的 Google 帳號。" 
       })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // 關鍵資安門禁：若行程設有密碼且非管理員，後端嚴格校驗密碼，未通過絕不發送手冊數據！
+    if (tripPassword && !isAdmin) {
+      const clientPwd = String(e.parameter.tripPassword || e.parameter.password || "").trim();
+      if (clientPwd !== tripPassword) {
+        return ContentService.createTextOutput(JSON.stringify({
+          status: "locked",
+          uuid: tripUuid,
+          name: tripName,
+          hasPassword: true,
+          message: "此旅程設有專屬密碼保護，請輸入密碼以解鎖手冊內容。"
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
     }
     
     // 讀取該旅遊專屬試算表的資料

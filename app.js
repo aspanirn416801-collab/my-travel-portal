@@ -15,6 +15,19 @@ let selectedDay = 0;
 let currentFoodFilter = "all"; // 美食分類過濾：'all' | 'must' | 'todo' | 'done' | 地區名稱
 let currentShoppingFilter = "all"; // 代購分類過濾：'all' | 'todo' | 'done' | 委託人姓名
 
+// 升級快取清理：強制清除舊版無密碼標記的舊快取，防止舊快取未上鎖漏洞
+try {
+  const cacheVersion = localStorage.getItem("app_cache_version");
+  if (cacheVersion !== "20260906_lock_v3") {
+    Object.keys(localStorage).forEach((key) => {
+      if (key.startsWith("cache_trip_") || key === "cache_tripsList" || key.startsWith("unlocked_trip_")) {
+        localStorage.removeItem(key);
+      }
+    });
+    localStorage.setItem("app_cache_version", "20260906_lock_v3");
+  }
+} catch (e) {}
+
 // 預先同步載入本地快取
 try {
   const cachedTrips = localStorage.getItem("cache_tripsList");
@@ -92,23 +105,27 @@ function showLockedView(trip) {
   if (errEl) errEl.style.display = "none";
 }
 
-// 門禁解鎖表單送出驗證
-function handleTripUnlockSubmit(e) {
+// 門禁解鎖表單送出驗證 (支援本機與後端雙重實質校驗)
+async function handleTripUnlockSubmit(e) {
   if (e) e.preventDefault();
   const inputEl = document.getElementById("lockedTripPwdInput");
   const errEl = document.getElementById("lockedTripErrorMsg");
   const inputPwd = (inputEl ? inputEl.value : "").trim();
-
-  const trip = pendingUnlockTrip || tripsList.find((t) => t.uuid === currentTripUuid) || (tripData && tripData.uuid === currentTripUuid ? tripData : { uuid: currentTripUuid, password: "" });
-  const expectedPwd = String((trip && trip.password) || (tripData && tripData.password) || "").trim();
 
   if (!inputPwd) {
     alert("請輸入存取密碼！");
     return;
   }
 
-  if (inputPwd !== expectedPwd) {
-    if (errEl) errEl.style.display = "block";
+  const trip = pendingUnlockTrip || tripsList.find((t) => t.uuid === currentTripUuid) || (tripData && tripData.uuid === currentTripUuid ? tripData : { uuid: currentTripUuid, password: "" });
+  const expectedPwd = String((trip && trip.password) || (tripData && tripData.password) || "").trim();
+
+  // 若前端已知密碼且不相符，直接攔截
+  if (expectedPwd && inputPwd !== expectedPwd) {
+    if (errEl) {
+      errEl.innerText = "❌ 密碼錯誤，請重新輸入！";
+      errEl.style.display = "block";
+    }
     if (inputEl) {
       inputEl.style.borderColor = "var(--red)";
       inputEl.select();
@@ -116,32 +133,83 @@ function handleTripUnlockSubmit(e) {
     return;
   }
 
-  // 密碼完全正確：授權解鎖並進入手冊
-  markTripUnlocked(trip.uuid, expectedPwd);
-  showToast("密碼驗證成功，手冊已解鎖 ✓");
+  // 向後端請求驗證並同步解鎖資料
+  showLoading("正在驗證密碼，請稍候...");
+  try {
+    const tokenParam = idToken ? `&token=${encodeURIComponent(idToken)}` : "";
+    const res = await fetch(
+      `${GAS_API_URL}?action=getTripData&tripUuid=${encodeURIComponent(
+        currentTripUuid,
+      )}&tripPassword=${encodeURIComponent(inputPwd)}${tokenParam}`,
+    );
+    const result = await res.json();
+    hideLoading();
 
-  const lockedView = document.getElementById("view-locked");
-  if (lockedView) lockedView.style.display = "none";
+    if (result.status === "locked" || result.status === "error") {
+      if (errEl) {
+        errEl.innerText = result.message || "❌ 密碼錯誤，請重新輸入！";
+        errEl.style.display = "block";
+      }
+      if (inputEl) {
+        inputEl.style.borderColor = "var(--red)";
+        inputEl.select();
+      }
+      return;
+    }
 
-  showTripView();
-  initCountdown();
-  render();
+    if (result.status === "success") {
+      // 密碼完全正確：授權解鎖並進入手冊
+      markTripUnlocked(currentTripUuid, inputPwd);
+      showToast("密碼驗證成功，手冊已解鎖 ✓");
+
+      tripData = result.data;
+      if (tripData && tripData.days) {
+        sortTripDays(tripData.days);
+      }
+      try {
+        localStorage.setItem("cache_trip_" + currentTripUuid, JSON.stringify(tripData));
+      } catch (e) {}
+
+      const lockedView = document.getElementById("view-locked");
+      if (lockedView) lockedView.style.display = "none";
+
+      showTripView();
+      initCountdown();
+      render();
+    }
+  } catch (err) {
+    hideLoading();
+    // 網路延遲或離線備援：若已知密碼且相符
+    if (expectedPwd && inputPwd === expectedPwd) {
+      markTripUnlocked(currentTripUuid, inputPwd);
+      showToast("密碼驗證成功，手冊已解鎖 ✓");
+      const lockedView = document.getElementById("view-locked");
+      if (lockedView) lockedView.style.display = "none";
+      showTripView();
+      initCountdown();
+      render();
+    } else {
+      alert("驗證連線失敗，請檢查網路連線後重試");
+    }
+  }
 }
 
 // 點擊大廳行程卡片時的安全進入路由
 function openTripByUuid(uuid) {
   const trip = tripsList.find((t) => t.uuid === uuid);
   const tripPassword = trip ? (trip.password || "") : (tripData && tripData.uuid === uuid ? (tripData.password || "") : "");
+  const hasPassword = trip ? (trip.hasPassword || !!tripPassword) : !!tripPassword;
 
-  if (isTripUnlocked(uuid, tripPassword)) {
-    navigateTo(uuid);
-  } else {
+  if (hasPassword && !isTripUnlocked(uuid, tripPassword)) {
     // 進入專屬門禁鎖定畫面，未解鎖前完全不載入手冊內容
     currentTripUuid = uuid;
     const currentPath = window.location.pathname;
     history.pushState({ trip: uuid }, "", `${currentPath}?trip=${encodeURIComponent(uuid)}`);
     showLockedView(trip || { uuid, name: uuid, password: tripPassword });
+    return;
   }
+
+  navigateTo(uuid);
 }
 
 function showHubView() {
@@ -268,15 +336,21 @@ document.addEventListener("DOMContentLoaded", function () {
       }
     } catch (e) {}
 
+    const isAdmin = userRole === "admin";
+    const savedUnlock = sessionStorage.getItem("unlocked_trip_" + currentTripUuid);
+
     // 關鍵門禁：未解鎖時「絕對不渲染手冊內容」，直接顯示門禁鎖定畫面！
-    if (!isTripUnlocked(currentTripUuid, tripPassword)) {
+    if (!isAdmin && tripPassword && savedUnlock !== tripPassword) {
       showLockedView({ uuid: currentTripUuid, name: (tripData && tripData.name) || currentTripUuid, password: tripPassword });
-    } else {
+    } else if (isAdmin || savedUnlock) {
       showTripView();
       if (tripData) {
         initCountdown();
         render();
       }
+    } else {
+      // 尚未確定密碼狀態：先顯示安全載入提示，由 fetchTripData 進行門禁確認
+      showLoading("正在驗證存取權限，請稍候...");
     }
   } else {
     // 若在大廳頁，立即渲染大廳卡片！
@@ -856,12 +930,17 @@ function sortTripDays(days) {
 async function fetchTripData() {
   if (!currentTripUuid) return;
 
+  const isAdmin = userRole === "admin";
+  const savedUnlockPwd = sessionStorage.getItem("unlocked_trip_" + currentTripUuid) || "";
+
   // 檢查特定行程是否受密碼保護且尚未解鎖
   function ensureTripUnlockedOrPrompt(data) {
     if (!data) return true;
+    if (isAdmin) return true;
     const currentMeta = tripsList.find((t) => t.uuid === currentTripUuid);
     const pwd = (data.password !== undefined ? data.password : (currentMeta ? currentMeta.password : "")) || "";
-    if (isTripUnlocked(currentTripUuid, pwd)) {
+    if (!pwd) return true;
+    if (savedUnlockPwd === pwd) {
       return true;
     }
     // 未解鎖狀態：切換至門禁鎖定畫面，絕不露出任何手冊內容！
@@ -869,43 +948,57 @@ async function fetchTripData() {
     return false;
   }
 
-  // 1. 優先從本地快取秒開（0.01 秒瞬間出現手冊內容，完全不用乾等轉圈圈！）
+  // 1. 若本地快取存在且已確認通過門禁或為管理員，才從快取秒開
   let hasCache = false;
   try {
     const cached = localStorage.getItem("cache_trip_" + currentTripUuid);
     if (cached) {
-      tripData = JSON.parse(cached);
-      if (tripData && tripData.days) {
-        sortTripDays(tripData.days);
-      }
-      hasCache = true;
-      const indicator = document.getElementById("currentTripIndicator");
-      if (indicator) {
-        indicator.style.display = "inline-block";
-        indicator.innerText = `📍 ${tripData.name || currentTripUuid}`;
-      }
-      if (ensureTripUnlockedOrPrompt(tripData)) {
+      const parsedData = JSON.parse(cached);
+      const cachedPwd = parsedData.password ? String(parsedData.password).trim() : "";
+      if (isAdmin || !cachedPwd || savedUnlockPwd === cachedPwd) {
+        tripData = parsedData;
+        if (tripData && tripData.days) {
+          sortTripDays(tripData.days);
+        }
+        hasCache = true;
+        const indicator = document.getElementById("currentTripIndicator");
+        if (indicator) {
+          indicator.style.display = "inline-block";
+          indicator.innerText = `📍 ${tripData.name || currentTripUuid}`;
+        }
         showTripView();
         initCountdown();
         render();
+      } else {
+        // 快取含密碼且未解鎖：直接進入門禁鎖定畫面
+        showLockedView({ uuid: currentTripUuid, name: parsedData.name || currentTripUuid, password: cachedPwd });
+        return;
       }
     }
   } catch (e) {}
 
-  // 若完全無快取（首次造訪該行程），才顯示載入提示
   if (!hasCache) {
-    showLoading("正在載入手冊資料，請稍候...");
+    showLoading("正在驗證存取權限，請稍候...");
   }
 
-  // 2. 在背景向 Google 試算表靜默同步最新修改
+  // 2. 在背景向 Google 試算表靜默同步最新資料，同時帶上 Token 與 Session 解鎖密碼
   try {
     const tokenParam = idToken ? `&token=${encodeURIComponent(idToken)}` : "";
+    const pwdParam = savedUnlockPwd ? `&tripPassword=${encodeURIComponent(savedUnlockPwd)}` : "";
     const res = await fetch(
       `${GAS_API_URL}?action=getTripData&tripUuid=${encodeURIComponent(
         currentTripUuid,
-      )}${tokenParam}`,
+      )}${tokenParam}${pwdParam}`,
     );
     const result = await res.json();
+
+    // 關鍵門禁：若後端判定鎖定（未提供密碼或密碼錯誤）
+    if (result.status === "locked") {
+      try { localStorage.removeItem("cache_trip_" + currentTripUuid); } catch (e) {}
+      showLockedView({ uuid: currentTripUuid, name: result.name || currentTripUuid, hasPassword: true });
+      return;
+    }
+
     if (result.status === "success") {
       tripData = result.data;
       // 權限穩固保護機制：若本地為 admin 且 Token 有效，絕不輕易降級為 guest
@@ -915,6 +1008,11 @@ async function fetchTripData() {
         } else {
           userRole = result.role;
         }
+      }
+
+      // 前端二次安全確認：若資料含密碼且尚未解鎖，立即切換為鎖定門禁
+      if (!ensureTripUnlockedOrPrompt(tripData)) {
+        return;
       }
 
       if (tripData && tripData.days) {
@@ -935,17 +1033,15 @@ async function fetchTripData() {
         indicator.innerText = `📍 ${tripData.name || currentTripUuid}`;
       }
 
-      if (ensureTripUnlockedOrPrompt(tripData)) {
-        showTripView();
-        initCountdown();
-        render();
-        if (hasCache) {
-          showToast("手冊資料已同步最新 ✓");
-        }
+      showTripView();
+      initCountdown();
+      render();
+      if (hasCache) {
+        showToast("手冊資料已同步最新 ✓");
       }
     }
   } catch (e) {
-    console.warn("背景同步失敗:", e);
+    console.warn("背景同步狀態:", e);
   } finally {
     hideLoading();
   }
