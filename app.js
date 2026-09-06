@@ -12,6 +12,8 @@ let currentTripUuid = "";
 let tripData = null; // 當前行程詳細手冊資料
 let currentTab = "checklist";
 let selectedDay = 0;
+let currentFoodFilter = "all"; // 美食分類過濾：'all' | 'must' | 'todo' | 'done' | 地區名稱
+let currentShoppingFilter = "all"; // 代購分類過濾：'all' | 'todo' | 'done' | 委託人姓名
 
 // 預先同步載入本地快取
 try {
@@ -103,6 +105,8 @@ function showHubView() {
 }
 
 function showTripView() {
+  currentFoodFilter = "all";
+  currentShoppingFilter = "all";
   document.getElementById("view-hub").style.display = "none";
   document.getElementById("view-trip").style.display = "block";
   const indicator = document.getElementById("currentTripIndicator");
@@ -1650,8 +1654,18 @@ function renderItinerary() {
     }
   }
 
+  // 檢查是否有天數跳號 (例如 Day 1, Day 2, Day 4)
+  let hasSkippedDays = false;
+  tripData.days.forEach((d, idx) => {
+    const m = (d.id || "").match(/Day\s*(\d+)/i);
+    if (m && parseInt(m[1], 10) !== idx + 1) {
+      hasSkippedDays = true;
+    }
+  });
+
   const dayActions = isAdmin
     ? `<div class="item-actions">
+         ${hasSkippedDays ? `<button class="btn-mini" style="background:var(--gold-soft);color:#6B5A2A;border-color:var(--gold);" onclick="resequenceAllDays()" title="偵測到天數跳號，點擊自動連續編號">⚡ 連續重編天數</button>` : ""}
          <button class="btn-mini" onclick="openEditDayTitleModal(${selectedDay})">✏️ 編輯主題</button>
          ${tripData.days.length > 1
       ? `<button class="btn-mini btn-mini-danger" onclick="deleteCurrentDay(${selectedDay})">🗑️ 刪除本日</button>`
@@ -1659,6 +1673,53 @@ function renderItinerary() {
     }
        </div>`
     : "";
+
+  // 智能比對當日今晚入住飯店
+  let tonightHotelHtml = "";
+  const hotels = tripData.hotels || (tripData.hotel && tripData.hotel.name ? [tripData.hotel] : []);
+  if (hotels.length > 0) {
+    const currentDayNumMatch = (day.id || "").match(/Day\s*(\d+)/i);
+    let currentDayIso = "";
+    if (currentDayNumMatch && tripData.startDate) {
+      currentDayIso = calculateIsoDateForDayNum(tripData.startDate, parseInt(currentDayNumMatch[1], 10));
+    }
+
+    let tonightHotel = null;
+    if (currentDayIso) {
+      // 比對 checkin <= currentDayIso < checkout
+      tonightHotel = hotels.find((h) => {
+        if (!h.checkin) return false;
+        if (h.checkout) {
+          return currentDayIso >= h.checkin && currentDayIso < h.checkout;
+        }
+        return currentDayIso === h.checkin;
+      });
+    }
+
+    // 若無具體日期但僅有一間飯店時作為預設提示
+    if (!tonightHotel && hotels.length === 1 && hotels[0].name) {
+      tonightHotel = hotels[0];
+    }
+
+    if (tonightHotel && tonightHotel.name) {
+      const safeHotelName = escapeHtml(tonightHotel.name);
+      const safeHotelAddr = escapeHtml(tonightHotel.addr || "");
+      const hotelQuery = encodeURIComponent(`${tonightHotel.name} ${tonightHotel.addr || ""}`);
+      const hotelMapUrl = `https://www.google.com/maps/search/?api=1&query=${hotelQuery}`;
+      tonightHotelHtml = `
+        <div style="background:rgba(197,160,89,0.12);border:1px solid rgba(197,160,89,0.35);border-radius:14px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:18px;">🏨</span>
+            <div>
+              <div style="font-size:13px;font-weight:800;color:var(--ink);">今晚入住：${safeHotelName}</div>
+              ${safeHotelAddr ? `<div style="font-size:11px;color:#777;margin-top:2px;">📍 ${safeHotelAddr}</div>` : ""}
+            </div>
+          </div>
+          <a class="map-link" style="margin-top:0;padding:4px 10px;font-size:11px;" href="${hotelMapUrl}" target="_blank" rel="noopener noreferrer">🗺️ 導航回飯店</a>
+        </div>
+      `;
+    }
+  }
 
   const items = (day.items || [])
     .map((item, j) => {
@@ -1726,12 +1787,86 @@ function renderItinerary() {
         </div>
         ${dayActions}
       </div>
+      ${tonightHotelHtml}
       <div class="timeline">${items ||
     '<p style="color:#888;font-size:13px;padding:10px 0;">本日尚無規劃景點，請點擊下方按鈕新增！</p>'
     }</div>
       ${addBtn}
     </div>
   `;
+}
+
+// 智慧一鍵連續重編所有天數序號 (如 Day 1, Day 2, Day 4, Day 8 重新順序排列為 Day 1 ~ Day 4)
+function resequenceAllDays() {
+  if (!tripData || !Array.isArray(tripData.days) || tripData.days.length <= 1) {
+    showToast("目前天數無需重整序號");
+    return;
+  }
+
+  openConfirmModal({
+    title: "⚡ 連續重編天數序號確認",
+    message: `確定要將現有 ${tripData.days.length} 天行程重新連續編號為「Day 1 ～ Day ${tripData.days.length}」嗎？系統將自動重新對齊連續日期與交通對應代號。`,
+    confirmText: "確認重編序號",
+    onConfirm: () => {
+      // 先依原先日期與數字排序好
+      sortTripDays(tripData.days);
+      const tagMapping = {}; // 記錄舊交通代號 -> 新交通代號
+
+      tripData.days.forEach((d, idx) => {
+        const oldId = d.id;
+        const oldDate = d.date;
+        const newDayNum = idx + 1;
+        const newId = `Day ${newDayNum}`;
+
+        // 推算新日期
+        let newDate = d.date;
+        if (tripData.startDate) {
+          const newIsoDate = calculateIsoDateForDayNum(tripData.startDate, newDayNum);
+          newDate = formatDateToDisplayWithWeekday(newIsoDate);
+        }
+
+        const oldDayNumMatch = (oldId || "").match(/Day\s*(\d+)/i);
+        const oldRawDate = (oldDate || "").split("（")[0].replace("月", "/").replace("日", "").trim();
+        const newRawDate = (newDate || "").split("（")[0].replace("月", "/").replace("日", "").trim();
+
+        const oldPrefix = oldDayNumMatch ? `D${oldDayNumMatch[1]}` : "";
+        const newPrefix = `D${newDayNum}`;
+        const oldTag = `${oldPrefix}${oldRawDate ? `-${oldRawDate}` : ""}`;
+        const newTag = `${newPrefix}${newRawDate ? `-${newRawDate}` : ""}`;
+
+        if (oldTag !== newTag) {
+          tagMapping[oldTag] = newTag;
+          if (oldPrefix) tagMapping[oldPrefix] = newPrefix;
+        }
+
+        d.id = newId;
+        d.date = newDate;
+      });
+
+      // 同步更新交通路線中的 dayTag
+      if (tripData.transport && Array.isArray(tripData.transport.routes)) {
+        tripData.transport.routes.forEach((r) => {
+          if (!r.dayTag) return;
+          if (tagMapping[r.dayTag]) {
+            r.dayTag = tagMapping[r.dayTag];
+          } else {
+            for (const oldPrefix in tagMapping) {
+              if (r.dayTag.startsWith(`${oldPrefix}-`)) {
+                r.dayTag = r.dayTag.replace(`${oldPrefix}-`, `${tagMapping[oldPrefix]}-`);
+                break;
+              }
+            }
+          }
+        });
+      }
+
+      sortTripDays(tripData.days);
+      if (selectedDay >= tripData.days.length) selectedDay = 0;
+      renderItinerary();
+      save();
+      showToast(`已成功將天數重整為 Day 1 ～ Day ${tripData.days.length}！`);
+    },
+  });
 }
 
 // =========================================================================
@@ -1977,9 +2112,43 @@ function openEditDayTitleModal(dayIdx) {
         return false;
       }
 
+      const oldId = day.id;
+      const oldDate = day.date;
+
       tripData.days[dayIdx].id = id;
       tripData.days[dayIdx].title = title;
       tripData.days[dayIdx].date = date;
+
+      // 智慧連動：當天數序號或日期變更時，自動批次更新交通路線中的對應天數標籤
+      const oldDayNumMatch = (oldId || "").match(/Day\s*(\d+)/i);
+      const newDayNumMatch = (id || "").match(/Day\s*(\d+)/i);
+      const oldRawDate = (oldDate || "").split("（")[0].replace("月", "/").replace("日", "").trim();
+      const newRawDate = (date || "").split("（")[0].replace("月", "/").replace("日", "").trim();
+
+      const oldPrefix = oldDayNumMatch ? `D${oldDayNumMatch[1]}` : "";
+      const newPrefix = newDayNumMatch ? `D${newDayNumMatch[1]}` : "";
+      const oldTag = `${oldPrefix}${oldRawDate ? `-${oldRawDate}` : ""}`;
+      const newTag = `${newPrefix}${newRawDate ? `-${newRawDate}` : ""}`;
+
+      if (oldTag && newTag && oldTag !== newTag && tripData.transport && Array.isArray(tripData.transport.routes)) {
+        let updatedCount = 0;
+        tripData.transport.routes.forEach((r) => {
+          if (!r.dayTag) return;
+          if (r.dayTag === oldTag) {
+            r.dayTag = newTag;
+            updatedCount++;
+          } else if (oldPrefix && (r.dayTag === oldPrefix || r.dayTag.startsWith(`${oldPrefix}-`))) {
+            r.dayTag = r.dayTag.replace(new RegExp(`^${oldPrefix}\\b`), newPrefix);
+            if (oldRawDate && newRawDate) {
+              r.dayTag = r.dayTag.replace(oldRawDate, newRawDate);
+            }
+            updatedCount++;
+          }
+        });
+        if (updatedCount > 0) {
+          showToast(`已同步更新 ${updatedCount} 筆對應交通路線之天數標籤 (${oldTag} ➔ ${newTag})`);
+        }
+      }
 
       sortTripDays(tripData.days);
       const editedIdx = tripData.days.findIndex((d) => d.id === id);
@@ -2326,15 +2495,86 @@ function openAddItineraryModal(dayIdx) {
 }
 
 // =========================================================================
-// 4. 美食清單 (Food) - 美食單筆微編輯、地圖導航、照片上傳與即時同步
+// 4. 美食清單 (Food) - 地區/必吃快速分類標籤、微編輯、地圖導航、照片上傳與即時同步
 // =========================================================================
+// 智慧提取或辨識美食所屬地區 (優先使用自訂 area，次之從名稱或說明辨識常見地區關鍵字)
+function extractFoodArea(item) {
+  if (!item) return "";
+  if (item.area && item.area.trim()) {
+    return item.area.trim();
+  }
+  const fullText = `${item.name || ""} ${item.desc || ""}`;
+  const commonAreas = ["岡山", "倉敷", "高松", "小豆島", "兒島", "廣島", "尾道", "松山", "直島", "豐島", "丸龜", "琴平"];
+  for (const a of commonAreas) {
+    if (fullText.includes(a)) {
+      return a;
+    }
+  }
+  return "";
+}
+
+function setFoodFilter(filterId) {
+  currentFoodFilter = filterId;
+  renderFood();
+}
+
 function renderFood() {
   if (!tripData) return;
   const list = tripData.food || [];
   const isAdmin = userRole === "admin";
 
-  const items = list
-    .map((item, i) => {
+  const totalCount = list.length;
+  const mustCount = list.filter((it) => it.must).length;
+  const todoCount = list.filter((it) => !it.done).length;
+  const doneCount = list.filter((it) => it.done).length;
+
+  // 統計所有地區分組與數量
+  const areaCounts = {};
+  list.forEach((it) => {
+    const a = extractFoodArea(it);
+    if (a) {
+      areaCounts[a] = (areaCounts[a] || 0) + 1;
+    }
+  });
+  const areas = Object.keys(areaCounts).sort((a, b) => areaCounts[b] - areaCounts[a]);
+
+  // 構建分類膠囊按鈕清單
+  const foodFilters = [
+    { id: "all", label: `全部 (${totalCount})` },
+    ...(mustCount > 0 ? [{ id: "must", label: `🔥 必吃 (${mustCount})` }] : []),
+    ...areas.map((a) => ({ id: `area:${a}`, label: `📍 ${a} (${areaCounts[a]})` })),
+    { id: "todo", label: `⏳ 想吃 (${todoCount})` },
+    { id: "done", label: `✅ 已品嚐 (${doneCount})` },
+  ];
+
+  // 膠囊過濾列 HTML
+  const filterHtml = totalCount > 0 ? `
+    <div class="filter-scroll-row">
+      ${foodFilters.map((f) => `
+        <button type="button" class="filter-pill ${currentFoodFilter === f.id ? "active" : ""}" onclick="setFoodFilter('${f.id}')">
+          ${f.label}
+        </button>
+      `).join("")}
+    </div>
+  ` : "";
+
+  // 依條件過濾並保留原陣列索引 (確保修改、刪除、品嚐狀態操作正確)
+  const filteredItems = list
+    .map((item, originalIndex) => ({ item, originalIndex }))
+    .filter(({ item }) => {
+      if (currentFoodFilter === "all") return true;
+      if (currentFoodFilter === "must") return !!item.must;
+      if (currentFoodFilter === "todo") return !item.done;
+      if (currentFoodFilter === "done") return !!item.done;
+      if (currentFoodFilter.startsWith("area:")) {
+        const targetArea = currentFoodFilter.substring(5);
+        return extractFoodArea(item) === targetArea;
+      }
+      return true;
+    });
+
+  const itemsHtml = filteredItems
+    .map(({ item, originalIndex: i }) => {
       const adminActions = isAdmin
         ? `<div class="item-actions">
              <button class="btn-mini" onclick="openEditFoodModal(${i})">✏️ 修改</button>
@@ -2346,6 +2586,7 @@ function renderFood() {
       const safeName = escapeHtml(item.name || "");
       const safeDesc = escapeHtml(item.desc || "");
       const safeImgUrl = sanitizeUrl(item.imgUrl);
+      const detectedArea = extractFoodArea(item);
 
       // 自動依美食/店家名稱產生 Google 地圖導航搜尋連結
       const autoMapUrl = item.name
@@ -2369,6 +2610,10 @@ function renderFood() {
                   ${safeName}
                   ${item.must
           ? '<span style="font-size:10px;background:var(--red);color:#fff;padding:2px 6px;border-radius:4px;vertical-align:middle;font-weight:normal;margin-left:4px;">必吃</span>'
+          : ""
+        }
+                  ${detectedArea
+          ? `<span style="font-size:10px;background:rgba(26,56,34,0.1);color:var(--moss);padding:2px 6px;border-radius:4px;vertical-align:middle;font-weight:600;margin-left:4px;">📍 ${escapeHtml(detectedArea)}</span>`
           : ""
         }
                 </div>
@@ -2400,12 +2645,27 @@ function renderFood() {
     ? `<button class="glass-btn" style="background:var(--moss);color:#fff;width:100%;margin-top:16px;justify-content:center;" onclick="openAddFoodModal()">＋ 新增美食</button>`
     : "";
 
+  let listContent = "";
+  if (totalCount === 0) {
+    listContent = '<p style="color:#888;padding:12px 0;">尚未加入美食口袋名單</p>';
+  } else if (filteredItems.length === 0) {
+    listContent = '<p style="color:#888;padding:16px 0;text-align:center;">此分類條件下尚無符合的美食項目</p>';
+  } else {
+    listContent = itemsHtml;
+  }
+
   document.getElementById("page-food").innerHTML = `
     <div class="card">
       <div class="card-header">
-        <span class="card-title">🍽 旅遊口袋名單</span>
+        <div>
+          <span class="card-title">🍽 旅遊口袋名單</span>
+          <div style="font-size:11px;color:var(--gold);font-weight:700;margin-top:2px;">
+            共 ${totalCount} 筆口袋名單 ｜ 已品嚐 ${doneCount} 筆
+          </div>
+        </div>
       </div>
-      ${items || '<p style="color:#888;">尚未加入美食</p>'}
+      ${filterHtml}
+      ${listContent}
       ${addBtn}
     </div>
   `;
@@ -2427,6 +2687,10 @@ function openEditFoodModal(index) {
     <div class="ef-wrap">
       <div class="ef-label">美食或店家名稱 <span style="color:var(--red);">*</span> (輸入後自動產生地圖導航)</div>
       <input type="text" id="editFoodName" class="ef-input" value="${item.name || ""}">
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">地區/分區 (例如: 岡山、倉敷、高松、小豆島，選填)</div>
+      <input type="text" id="editFoodArea" class="ef-input" placeholder="例如: 岡山、倉敷、高松" value="${item.area || extractFoodArea(item) || ""}">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">特色說明或推薦菜色</div>
@@ -2463,7 +2727,9 @@ function openEditFoodModal(index) {
       tripData.food[index].emoji =
         document.getElementById("editFoodEmoji").value.trim() || "🍴";
       tripData.food[index].name = name;
-      tripData.food[index].area = "";
+      tripData.food[index].area = document
+        .getElementById("editFoodArea")
+        .value.trim();
       tripData.food[index].desc = document
         .getElementById("editFoodDesc")
         .value.trim();
@@ -2506,6 +2772,10 @@ function openAddFoodModal() {
       <input type="text" id="addFoodName" class="ef-input" placeholder="例如: 一蘭拉麵 岡山站前店、日生町牡蠣燒">
     </div>
     <div class="ef-wrap">
+      <div class="ef-label">地區/分區 (例如: 岡山、倉敷、高松、小豆島，選填)</div>
+      <input type="text" id="addFoodArea" class="ef-input" placeholder="例如: 岡山、倉敷、高松">
+    </div>
+    <div class="ef-wrap">
       <div class="ef-label">特色說明或推薦菜色</div>
       <input type="text" id="addFoodDesc" class="ef-input" placeholder="例如: 招牌豚骨拉麵、岡山限定冬季美味">
     </div>
@@ -2528,6 +2798,7 @@ function openAddFoodModal() {
       const emoji =
         document.getElementById("addFoodEmoji").value.trim() || "🍴";
       const name = document.getElementById("addFoodName").value.trim();
+      const area = document.getElementById("addFoodArea").value.trim();
       const desc = document.getElementById("addFoodDesc").value.trim();
       const must = document.getElementById("addFoodMust").checked;
       const imgUrl = formatDriveImageUrl(
@@ -2544,7 +2815,7 @@ function openAddFoodModal() {
         id: uid(),
         emoji: emoji,
         name: name,
-        area: "",
+        area: area,
         desc: desc,
         must: must,
         done: false,
@@ -2581,8 +2852,13 @@ function getBuyerTagsHtml(inputElId) {
 }
 
 // =========================================================================
-// 5. 代購商品 (Shopping) - 代購者、數量、商品、地點(Google Maps)、價格、網址、照片與採買狀態
+// 5. 代購商品 (Shopping) - 依委託人/未買狀態膠囊過濾、數量、商品、地點(Google Maps)、價格、網址、照片與採買狀態
 // =========================================================================
+function setShoppingFilter(filterId) {
+  currentShoppingFilter = filterId;
+  renderShopping();
+}
+
 function renderShopping() {
   if (!tripData) return;
   const list = tripData.shopping || [];
@@ -2590,9 +2866,52 @@ function renderShopping() {
 
   const totalCount = list.length;
   const doneCount = list.filter((it) => it.done).length;
+  const todoCount = totalCount - doneCount;
 
-  const items = list
-    .map((item, i) => {
+  // 統計各委託人的代購件數
+  const buyerCounts = {};
+  list.forEach((it) => {
+    const b = (it.buyer || "").trim() || "未指定";
+    buyerCounts[b] = (buyerCounts[b] || 0) + 1;
+  });
+  const buyers = Object.keys(buyerCounts).sort((a, b) => buyerCounts[b] - buyerCounts[a]);
+
+  // 構建膠囊過濾按鈕清單
+  const shoppingFilters = [
+    { id: "all", label: `全部 (${totalCount})` },
+    ...(todoCount > 0 ? [{ id: "todo", label: `⏳ 未購買 (${todoCount})` }] : []),
+    ...(doneCount > 0 ? [{ id: "done", label: `✅ 已買齊 (${doneCount})` }] : []),
+    ...buyers.map((b) => ({ id: `buyer:${b}`, label: `👤 ${b} (${buyerCounts[b]})` })),
+  ];
+
+  // 膠囊過濾列 HTML
+  const filterHtml = totalCount > 0 ? `
+    <div class="filter-scroll-row">
+      ${shoppingFilters.map((f) => `
+        <button type="button" class="filter-pill ${currentShoppingFilter === f.id ? "active" : ""}" onclick="setShoppingFilter('${f.id}')">
+          ${f.label}
+        </button>
+      `).join("")}
+    </div>
+  ` : "";
+
+  // 依篩選條件過濾並保留原陣列索引
+  const filteredItems = list
+    .map((item, originalIndex) => ({ item, originalIndex }))
+    .filter(({ item }) => {
+      if (currentShoppingFilter === "all") return true;
+      if (currentShoppingFilter === "todo") return !item.done;
+      if (currentShoppingFilter === "done") return !!item.done;
+      if (currentShoppingFilter.startsWith("buyer:")) {
+        const targetBuyer = currentShoppingFilter.substring(6);
+        const b = (item.buyer || "").trim() || "未指定";
+        return b === targetBuyer;
+      }
+      return true;
+    });
+
+  const itemsHtml = filteredItems
+    .map(({ item, originalIndex: i }) => {
       // 只要有填寫地點或店名，或以商品名稱為備用，自動生成 Google 地圖導航搜尋網址
       const queryTarget = (item.location || "").trim() || (item.name || "").trim();
       const autoMapUrl = queryTarget
@@ -2686,6 +3005,15 @@ function renderShopping() {
     ? `<button class="glass-btn" style="background:var(--moss-gradient);color:#fff;width:100%;margin-top:16px;justify-content:center;" onclick="openAddShoppingModal()">＋ 新增代購商品</button>`
     : "";
 
+  let listContent = "";
+  if (totalCount === 0) {
+    listContent = '<p style="color:#888;font-size:13px;padding:10px 0;">目前尚未新增任何代購商品，請點擊下方按鈕新增！</p>';
+  } else if (filteredItems.length === 0) {
+    listContent = '<p style="color:#888;font-size:13px;padding:16px 0;text-align:center;">此分類條件下尚無符合的代購商品</p>';
+  } else {
+    listContent = itemsHtml;
+  }
+
   document.getElementById("page-shopping").innerHTML = `
     <div class="card">
       <div class="card-header">
@@ -2696,7 +3024,8 @@ function renderShopping() {
           </div>
         </div>
       </div>
-      ${items || '<p style="color:#888;font-size:13px;padding:10px 0;">目前尚未新增任何代購商品，請點擊下方按鈕新增！</p>'}
+      ${filterHtml}
+      ${listContent}
       ${addBtn}
     </div>
   `;

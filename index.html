@@ -1635,6 +1635,48 @@ body.large { font-size: 16px; }
     padding: 14px 14px;
   }
 }
+
+/* 分類過濾水平滾動列與膠囊標籤 */
+.filter-scroll-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 4px 2px 10px 2px;
+  margin-bottom: 12px;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+.filter-scroll-row::-webkit-scrollbar {
+  height: 4px;
+}
+.filter-scroll-row::-webkit-scrollbar-thumb {
+  background: var(--mist);
+  border-radius: 4px;
+}
+.filter-pill {
+  flex-shrink: 0;
+  padding: 5px 13px;
+  border-radius: 20px;
+  border: 1px solid var(--mist);
+  background: var(--glass-bg);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.02);
+  user-select: none;
+}
+.filter-pill:hover {
+  background: var(--glass-bg-hover);
+  border-color: var(--gold);
+}
+.filter-pill.active {
+  background: var(--moss);
+  color: #FFF;
+  border-color: var(--moss);
+  box-shadow: 0 4px 12px rgba(26, 56, 34, 0.2);
+}
 </style>
 </head>
 <body>
@@ -1798,6 +1840,6 @@ body.large { font-size: 16px; }
   <!-- Google Identity Services SDK -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- 前端核心邏輯 (加入版本號防快取) -->
-  <script src="app.js?v=20260906_1"></script>
+  <script src="app.js?v=20260906_2"></script>
 </body>
 </html>
