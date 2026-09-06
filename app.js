@@ -59,11 +59,41 @@ function isTripUnlocked(tripUuid, tripPassword) {
   if (!tripUuid) return true;
   // 管理員尊榮特權：必須確實持有有效且未過期的 Google 登入 Token
   if (userRole === "admin" && idToken && !isTokenExpired(idToken)) return true;
-  const pwd = tripPassword !== undefined && tripPassword !== null ? String(tripPassword).trim() : "";
-  if (!pwd) return true; // 未設密碼的公開行程：免密碼直接唯讀瀏覽
+  // 雙重校驗密碼：優先比對傳入密碼，若無則查詢本機已知加密紀錄，杜絕後端 tripsList 漏回密碼之破口
+  const pwd = (tripPassword !== undefined && tripPassword !== null && String(tripPassword).trim())
+    ? String(tripPassword).trim()
+    : getKnownTripPassword(tripUuid);
+
+  if (!pwd) return true; // 確認完全未設密碼的公開行程：免密碼直接唯讀瀏覽
   // 改為 sessionStorage：關閉分頁、重啟瀏覽器或離開網頁即自動失效登出
   const savedUnlock = sessionStorage.getItem("unlocked_trip_" + tripUuid);
   return savedUnlock === pwd;
+}
+
+// 記錄與讀取已知加密行程清單 (徹底解決線上 GAS 未部署時 tripsList 漏掉密碼的問題)
+function markTripHasPassword(uuid, password) {
+  if (!uuid) return;
+  try {
+    const list = JSON.parse(localStorage.getItem("known_locked_trips") || "{}");
+    list[uuid] = password || true;
+    localStorage.setItem("known_locked_trips", JSON.stringify(list));
+  } catch (e) {}
+}
+
+function getKnownTripPassword(uuid) {
+  if (!uuid) return "";
+  try {
+    const list = JSON.parse(localStorage.getItem("known_locked_trips") || "{}");
+    if (list[uuid] && typeof list[uuid] === "string") return list[uuid];
+  } catch (e) {}
+  try {
+    const cached = localStorage.getItem("cache_trip_" + uuid);
+    if (cached) {
+      const data = JSON.parse(cached);
+      if (data && data.password) return String(data.password).trim();
+    }
+  } catch (e) {}
+  return "";
 }
 
 function markTripUnlocked(tripUuid, tripPassword) {
@@ -115,7 +145,7 @@ function showLockedView(trip) {
   if (errEl) errEl.style.display = "none";
 }
 
-// 門禁解鎖表單送出驗證 (支援本機與後端雙重實質校驗)
+// 門禁解鎖表單送出驗證 (0.001 秒本地極速瞬驗 + 零卡頓秒開)
 async function handleTripUnlockSubmit(e) {
   if (e) e.preventDefault();
   const inputEl = document.getElementById("lockedTripPwdInput");
@@ -128,22 +158,40 @@ async function handleTripUnlockSubmit(e) {
   }
 
   const trip = pendingUnlockTrip || tripsList.find((t) => t.uuid === currentTripUuid) || (tripData && tripData.uuid === currentTripUuid ? tripData : { uuid: currentTripUuid, password: "" });
-  const expectedPwd = String((trip && trip.password) || (tripData && tripData.password) || "").trim();
+  const expectedPwd = String((trip && trip.password) || getKnownTripPassword(currentTripUuid) || "").trim();
 
-  // 若前端已知密碼且不相符，直接攔截
-  if (expectedPwd && inputPwd !== expectedPwd) {
-    if (errEl) {
-      errEl.innerText = "❌ 密碼錯誤，請重新輸入！";
-      errEl.style.display = "block";
+  // 1. 若本機已知密碼：0.001 秒極速秒驗秒開，完全不需要浪費 3~5 秒乾等網路！
+  if (expectedPwd) {
+    if (inputPwd !== expectedPwd) {
+      if (errEl) {
+        errEl.innerText = "❌ 密碼錯誤，請重新輸入！";
+        errEl.style.display = "block";
+      }
+      if (inputEl) {
+        inputEl.style.borderColor = "var(--red)";
+        inputEl.select();
+      }
+      return;
     }
-    if (inputEl) {
-      inputEl.style.borderColor = "var(--red)";
-      inputEl.select();
-    }
+
+    // 密碼完全正確：瞬間授權解鎖並進入手冊
+    markTripUnlocked(currentTripUuid, inputPwd);
+    markTripHasPassword(currentTripUuid, inputPwd);
+    showToast("密碼驗證成功，手冊已解鎖 ✓");
+
+    const lockedView = document.getElementById("view-locked");
+    if (lockedView) lockedView.style.display = "none";
+
+    showTripView();
+    initCountdown();
+    render();
+
+    // 在背景靜默同步最新資料 (完全不阻擋使用者操作)
+    fetchTripData();
     return;
   }
 
-  // 向後端請求驗證並同步解鎖資料
+  // 2. 若本機尚未知曉密碼 (初次訪問且尚未同步)：向後端請求驗證並同步解鎖資料
   showLoading("正在驗證密碼，請稍候...");
   try {
     const tokenParam = idToken ? `&token=${encodeURIComponent(idToken)}` : "";
@@ -168,8 +216,8 @@ async function handleTripUnlockSubmit(e) {
     }
 
     if (result.status === "success") {
-      // 密碼完全正確：授權解鎖並進入手冊
       markTripUnlocked(currentTripUuid, inputPwd);
+      markTripHasPassword(currentTripUuid, inputPwd);
       showToast("密碼驗證成功，手冊已解鎖 ✓");
 
       tripData = result.data;
@@ -189,33 +237,22 @@ async function handleTripUnlockSubmit(e) {
     }
   } catch (err) {
     hideLoading();
-    // 網路延遲或離線備援：若已知密碼且相符
-    if (expectedPwd && inputPwd === expectedPwd) {
-      markTripUnlocked(currentTripUuid, inputPwd);
-      showToast("密碼驗證成功，手冊已解鎖 ✓");
-      const lockedView = document.getElementById("view-locked");
-      if (lockedView) lockedView.style.display = "none";
-      showTripView();
-      initCountdown();
-      render();
-    } else {
-      alert("驗證連線失敗，請檢查網路連線後重試");
-    }
+    alert("驗證連線失敗，請檢查網路連線後重試");
   }
 }
 
 // 點擊大廳行程卡片時的安全進入路由
 function openTripByUuid(uuid) {
   const trip = tripsList.find((t) => t.uuid === uuid);
-  const tripPassword = trip ? (trip.password || "") : (tripData && tripData.uuid === uuid ? (tripData.password || "") : "");
-  const hasPassword = trip ? (trip.hasPassword || !!tripPassword) : !!tripPassword;
+  const tripPassword = (trip && trip.password) || getKnownTripPassword(uuid) || "";
+  const hasPassword = Boolean(tripPassword || (trip && trip.hasPassword));
 
   if (hasPassword && !isTripUnlocked(uuid, tripPassword)) {
     // 進入專屬門禁鎖定畫面，未解鎖前完全不載入手冊內容
     currentTripUuid = uuid;
     const currentPath = window.location.pathname;
     history.pushState({ trip: uuid }, "", `${currentPath}?trip=${encodeURIComponent(uuid)}`);
-    showLockedView(trip || { uuid, name: uuid, password: tripPassword });
+    showLockedView(trip || { uuid, name: (trip && trip.name) || uuid, password: tripPassword });
     return;
   }
 
@@ -335,11 +372,11 @@ function initRouter() {
   currentTripUuid = getTripUuidFromUrl();
   if (currentTripUuid) {
     const trip = tripsList.find((t) => t.uuid === currentTripUuid);
-    const pwd = trip ? (trip.password || "") : (tripData && tripData.uuid === currentTripUuid ? (tripData.password || "") : "");
-    if (isTripUnlocked(currentTripUuid, pwd)) {
-      showTripView();
+    const pwd = (trip && trip.password) || getKnownTripPassword(currentTripUuid) || "";
+    if (pwd && !isTripUnlocked(currentTripUuid, pwd)) {
+      showLockedView(trip || { uuid: currentTripUuid, name: (trip && trip.name) || currentTripUuid, password: pwd });
     } else {
-      showLockedView(trip || { uuid: currentTripUuid, name: currentTripUuid, password: pwd });
+      showTripView();
     }
   } else {
     showHubView();
@@ -358,10 +395,10 @@ function navigateTo(tripUuid) {
 
   if (currentTripUuid) {
     const trip = tripsList.find((t) => t.uuid === currentTripUuid);
-    const tripPassword = trip ? (trip.password || "") : (tripData && tripData.uuid === currentTripUuid ? (tripData.password || "") : "");
+    const tripPassword = (trip && trip.password) || getKnownTripPassword(currentTripUuid) || "";
 
-    if (!isTripUnlocked(currentTripUuid, tripPassword)) {
-      showLockedView(trip || { uuid: currentTripUuid, name: currentTripUuid, password: tripPassword });
+    if (tripPassword && !isTripUnlocked(currentTripUuid, tripPassword)) {
+      showLockedView(trip || { uuid: currentTripUuid, name: (trip && trip.name) || currentTripUuid, password: tripPassword });
       fetchTripData();
     } else {
       showTripView();
@@ -378,12 +415,12 @@ window.onpopstate = function () {
   initRouter();
   if (currentTripUuid) {
     const trip = tripsList.find((t) => t.uuid === currentTripUuid);
-    const tripPassword = trip ? (trip.password || "") : (tripData && tripData.uuid === currentTripUuid ? (tripData.password || "") : "");
-    if (isTripUnlocked(currentTripUuid, tripPassword)) {
+    const tripPassword = (trip && trip.password) || getKnownTripPassword(currentTripUuid) || "";
+    if (tripPassword && !isTripUnlocked(currentTripUuid, tripPassword)) {
+      showLockedView(trip || { uuid: currentTripUuid, name: (trip && trip.name) || currentTripUuid, password: tripPassword });
+    } else {
       showTripView();
       fetchTripData();
-    } else {
-      showLockedView(trip || { uuid: currentTripUuid, name: currentTripUuid, password: tripPassword });
     }
   } else {
     showHubView();
@@ -405,13 +442,12 @@ document.addEventListener("DOMContentLoaded", function () {
         tripData = JSON.parse(cachedTrip);
         tripPassword = tripData.password || "";
       }
-      if (!tripPassword && tripsList.length > 0) {
-        const found = tripsList.find((t) => t.uuid === currentTripUuid);
-        if (found) tripPassword = found.password || "";
+      if (!tripPassword) {
+        tripPassword = getKnownTripPassword(currentTripUuid);
       }
     } catch (e) {}
 
-    const isAdmin = userRole === "admin";
+    const isAdmin = userRole === "admin" && idToken && !isTokenExpired(idToken);
     const savedUnlock = sessionStorage.getItem("unlocked_trip_" + currentTripUuid);
 
     // 關鍵門禁：未解鎖時「絕對不渲染手冊內容」，直接顯示門禁鎖定畫面！
@@ -593,19 +629,50 @@ function updateAuthUI() {
   }
 }
 
-// 登入成功回呼
+// 登入成功回呼 (0.001 秒極速瞬間切換管理員，完全免乾等網路延遲！)
 function handleCredentialResponse(response) {
   closeGoogleLoginModal();
   idToken = response.credential;
   localStorage.setItem("google_id_token", idToken);
-  // 保留快取的管理員權限，避免在網路連線 GAS 期間被誤置為 guest
+
+  const userInfo = parseJwt(idToken);
+  const userEmail = userInfo?.email ? userInfo.email.toLowerCase().trim() : "";
+  const userName = userInfo?.name || userEmail.split("@")[0] || "使用者";
+
+  // 1. 本地身分智庫即時比對：若為已知管理員或曾授權之 admin
+  let knownAdminEmails = [];
+  try {
+    knownAdminEmails = JSON.parse(localStorage.getItem("known_admin_emails") || "[]");
+  } catch (e) {}
+
   const cachedRole = localStorage.getItem("cache_userRole");
-  if (cachedRole === "admin") {
+  const isKnownAdmin = knownAdminEmails.includes(userEmail) || cachedRole === "admin";
+
+  if (isKnownAdmin) {
+    // 0.001 秒瞬間點亮管理員身分！
     userRole = "admin";
+    localStorage.setItem("cache_userRole", "admin");
+    updateAuthUI();
+    const adminTabBtn = document.getElementById("btn-tab-admin");
+    if (adminTabBtn) adminTabBtn.style.display = "block";
+    showToast(`👑 歡迎管理員 ${userName}，已瞬間切換身分 ✓`);
+  } else {
+    updateAuthUI();
+    showToast(`歡迎 ${userName}，正在同步權限...`);
   }
-  updateAuthUI();
-  showToast("登入成功，驗證權限中...");
-  fetchTrips();
+
+  // 背景向 GAS 靜默同步並確保存檔
+  fetchTrips().then(() => {
+    if (userRole === "admin" && userEmail) {
+      try {
+        const list = JSON.parse(localStorage.getItem("known_admin_emails") || "[]");
+        if (!list.includes(userEmail)) {
+          list.push(userEmail);
+          localStorage.setItem("known_admin_emails", JSON.stringify(list));
+        }
+      } catch (e) {}
+    }
+  });
 }
 
 function logout() {
@@ -806,6 +873,25 @@ async function fetchTrips() {
         }
       }
       tripsList = result.trips || [];
+      tripsList.forEach((t) => {
+        if (t && t.uuid && t.password) {
+          markTripHasPassword(t.uuid, t.password);
+        }
+      });
+
+      if (result.role === "admin" && idToken) {
+        const info = parseJwt(idToken);
+        if (info && info.email) {
+          try {
+            const list = JSON.parse(localStorage.getItem("known_admin_emails") || "[]");
+            const clean = info.email.toLowerCase().trim();
+            if (!list.includes(clean)) {
+              list.push(clean);
+              localStorage.setItem("known_admin_emails", JSON.stringify(list));
+            }
+          } catch (e) {}
+        }
+      }
 
       // 儲存至本地快取
       try {
@@ -857,8 +943,9 @@ function renderHubTripsGrid() {
       const safeName = escapeHtml(t.name);
       const safeUuid = escapeHtml(t.uuid);
       const coverInfo = getAutoCoverInfo(t.name, t.uuid, t.coverUrl);
-      const hasPassword = Boolean(t.password && String(t.password).trim());
-      const isUnlocked = isTripUnlocked(t.uuid, t.password);
+      const tripPassword = (t.password && String(t.password).trim()) || getKnownTripPassword(t.uuid) || "";
+      const hasPassword = Boolean(tripPassword || t.hasPassword);
+      const isUnlocked = isTripUnlocked(t.uuid, tripPassword);
 
       let lockBadge = "";
       if (hasPassword) {
@@ -1083,6 +1170,10 @@ async function fetchTripData() {
         } else {
           userRole = result.role;
         }
+      }
+
+      if (tripData && tripData.password) {
+        markTripHasPassword(currentTripUuid, tripData.password);
       }
 
       // 前端二次安全確認：若資料含密碼且尚未解鎖，立即切換為鎖定門禁
