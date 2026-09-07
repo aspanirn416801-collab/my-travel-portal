@@ -702,7 +702,7 @@ function loadTripDetails(sheetId) {
   // 向下相容單筆物件
   result.hotel = result.hotels.length > 0 ? result.hotels[0] : {};
   
-  // 5. Days (使用 getDisplayValues 直接讀取純文字，包含 link 欄位)
+  // 5. Days (使用 getDisplayValues 直接讀取純文字，包含 link 欄位與景點自動去重防護)
   result.days = [];
   const dySheet = ss.getSheetByName("Days");
   if (dySheet) {
@@ -724,40 +724,73 @@ function loadTripDetails(sheetId) {
           id: dayId,
           date: date,
           title: dayTitle,
-          items: []
+          items: [],
+          _seenKeys: {}
         };
         result.days.push(dayMap[dayId]);
       }
       
       if (place) {
-        dayMap[dayId].items.push({
-          time: time,
-          place: place,
-          desc: desc,
-          imgUrl: imgUrl,
-          link: link
-        });
+        // 景點唯一性防重保護：同一天內以「時段 + 地點」為鍵值，避免試算表重複行造成前端重複渲染
+        const itemKey = (time || "").trim().toLowerCase() + "___" + (place || "").trim().toLowerCase();
+        if (!dayMap[dayId]._seenKeys[itemKey]) {
+          const itemObj = {
+            time: time,
+            place: place,
+            desc: desc,
+            imgUrl: imgUrl,
+            link: link
+          };
+          dayMap[dayId]._seenKeys[itemKey] = itemObj;
+          dayMap[dayId].items.push(itemObj);
+        } else {
+          // 若有重複列，自動保留備註或圖片更齊全的資料
+          const exist = dayMap[dayId]._seenKeys[itemKey];
+          if (!exist.desc && desc) exist.desc = desc;
+          if (!exist.imgUrl && imgUrl) exist.imgUrl = imgUrl;
+          if (!exist.link && link) exist.link = link;
+        }
       }
     }
+    // 清理內部輔助鍵
+    result.days.forEach(d => { delete d._seenKeys; });
   }
   
-  // 6. Food (美食口袋清單，支援圖片與地圖)
+  // 6. Food (美食口袋清單，支援圖片與店名去重合併)
   result.food = [];
   const fdSheet = ss.getSheetByName("Food");
   if (fdSheet) {
     const fdRows = fdSheet.getDataRange().getValues();
+    const foodMap = {};
     for (let i = 1; i < fdRows.length; i++) {
-      if (!fdRows[i][0] && !fdRows[i][2]) continue;
-      result.food.push({
-        id: fdRows[i][0],
+      const name = (fdRows[i][2] || "").toString().trim();
+      if (!name && !fdRows[i][0]) continue;
+      const key = name.toLowerCase();
+      const foodItem = {
+        id: fdRows[i][0] || ("f" + i),
         emoji: fdRows[i][1] || "🍴",
-        name: fdRows[i][2] || "",
+        name: name,
         area: fdRows[i][3] || "",
         desc: fdRows[i][4] || "",
         must: (fdRows[i][5] || "").toString().toUpperCase() === "TRUE",
         done: (fdRows[i][6] || "").toString().toUpperCase() === "TRUE",
         imgUrl: fdRows[i][7] || ""
-      });
+      };
+      if (key) {
+        if (!foodMap[key]) {
+          foodMap[key] = foodItem;
+          result.food.push(foodItem);
+        } else {
+          const exist = foodMap[key];
+          if (foodItem.must) exist.must = true;
+          if (foodItem.done) exist.done = true;
+          if (!exist.desc && foodItem.desc) exist.desc = foodItem.desc;
+          if (!exist.imgUrl && foodItem.imgUrl) exist.imgUrl = foodItem.imgUrl;
+          if (!exist.area && foodItem.area) exist.area = foodItem.area;
+        }
+      } else {
+        result.food.push(foodItem);
+      }
     }
   }
   
@@ -820,10 +853,12 @@ function loadTripDetails(sheetId) {
         const colG = (trRows[i][6] || "").toString().trim();
         const colH = (trRows[i][7] || "").toString().trim();
 
-        if (!colA && !colB) continue;
+        // 嚴格防呆：過濾全空行或無效路線
+        if (!colA && !colB && !colC && !colD) continue;
 
         // 若 A 欄為「地圖」或「MAP」，則讀取為路線地圖相簿項目
         if (colA === "地圖" || colA === "MAP" || colA.toLowerCase() === "map") {
+          if (!colB) continue;
           const mapTitle = colC || `路線圖 ${result.transport.maps.length + 1}`;
           const mapUrl = colB;
           const mapNote = colH || colC || "";
@@ -842,6 +877,7 @@ function loadTripDetails(sheetId) {
 
         // 周遊券判定：精準比對 A 欄是否為「周遊券」或「PASS」
         if (colA === "周遊券" || colA === "PASS" || colA === "Pass") {
+          if (!colB) continue;
           result.transport.passes.push({
             id: "p" + i,
             name: colB,
@@ -852,19 +888,29 @@ function loadTripDetails(sheetId) {
           continue;
         }
 
-        // 一般乘車行程
-        result.transport.routes.push({
-          id: "t" + i,
-          dayTag: colA || "主要交通",
-          fromTo: colB,
-          time: colD || colC,
-          cost: colE,
-          currency: colF,
-          trainInfo: colG || colC,
-          seatInfo: colG,
-          note: colH
-        });
+        // 一般乘車行程：若起訖點為空且無車次備註，視為無效幽靈空行予以過濾
+        if (!colB && !colG && !colH) continue;
+
+        // 一般乘車行程唯一性防重保護
+        const routeKey = (colA || "主要交通") + "___" + colB + "___" + (colD || colC);
+        if (!result.transport._seenRoutes) result.transport._seenRoutes = {};
+        if (!result.transport._seenRoutes[routeKey]) {
+          const routeObj = {
+            id: "t" + i,
+            dayTag: colA || "主要交通",
+            fromTo: colB,
+            time: colD || colC,
+            cost: colE,
+            currency: colF,
+            trainInfo: colG || colC,
+            seatInfo: colG,
+            note: colH
+          };
+          result.transport._seenRoutes[routeKey] = routeObj;
+          result.transport.routes.push(routeObj);
+        }
       }
+      delete result.transport._seenRoutes;
     }
   }
   
@@ -945,23 +991,31 @@ function saveTripDetails(sheetId, data) {
     batchWriteSheetRows(hotelSheet, rows);
   }
   
-  // 5. Days (每日行程景點與活動)
+  // 5. Days (每日行程景點與活動，寫入前自動去重保護)
   const daysSheet = ss.getSheetByName("Days");
   if (daysSheet) {
     const rows = [["dayId", "date", "title", "time", "place", "desc", "imgUrl", "link"]];
     (data.days || []).forEach(d => {
       if (d.items && d.items.length > 0) {
+        const seenDayItems = new Set();
         d.items.forEach(item => {
-          rows.push([
-            d.id || "",
-            d.date || "",
-            d.title || "",
-            item.time || "",
-            item.place || "",
-            item.desc || "",
-            item.imgUrl || "",
-            item.link || ""
-          ]);
+          const p = (item.place || "").trim();
+          if (!p) return;
+          const t = (item.time || "").trim();
+          const itemKey = t.toLowerCase() + "___" + p.toLowerCase();
+          if (!seenDayItems.has(itemKey)) {
+            seenDayItems.add(itemKey);
+            rows.push([
+              d.id || "",
+              d.date || "",
+              d.title || "",
+              t,
+              p,
+              item.desc || "",
+              item.imgUrl || "",
+              item.link || ""
+            ]);
+          }
         });
       } else {
         rows.push([d.id || "", d.date || "", d.title || "", "", "", "", "", ""]);
@@ -970,21 +1024,28 @@ function saveTripDetails(sheetId, data) {
     batchWriteSheetRows(daysSheet, rows);
   }
   
-  // 6. Food (美食口袋清單，支援圖片與地圖)
+  // 6. Food (美食口袋清單，寫入前店名唯一性防重)
   let foodSheet = ss.getSheetByName("Food");
   if (!foodSheet) foodSheet = ss.insertSheet("Food");
   const foodRows = [["id", "emoji", "name", "area", "desc", "must", "done", "imgUrl"]];
+  const seenFood = new Set();
   (data.food || []).forEach(item => {
-    foodRows.push([
-      item.id || "",
-      item.emoji || "🍴",
-      item.name || "",
-      item.area || "",
-      item.desc || "",
-      item.must ? "TRUE" : "FALSE",
-      item.done ? "TRUE" : "FALSE",
-      item.imgUrl || ""
-    ]);
+    const name = (item.name || "").trim();
+    if (!name) return;
+    const k = name.toLowerCase();
+    if (!seenFood.has(k)) {
+      seenFood.add(k);
+      foodRows.push([
+        item.id || "",
+        item.emoji || "🍴",
+        name,
+        item.area || "",
+        item.desc || "",
+        item.must ? "TRUE" : "FALSE",
+        item.done ? "TRUE" : "FALSE",
+        item.imgUrl || ""
+      ]);
+    }
   });
   batchWriteSheetRows(foodSheet, foodRows);
 
@@ -1032,18 +1093,27 @@ function saveTripDetails(sheetId, data) {
       transRows.push(["周遊券", p.name || "", "", "", p.cost || "", p.currency || "日円", "", p.note || ""]);
     });
 
-    // 寫入乘車行程
+    // 寫入乘車行程 (過濾幽靈空行並防止重複寫入)
+    const seenRoutes = new Set();
     (data.transport.routes || []).forEach(r => {
-      transRows.push([
-        r.dayTag || "",
-        r.fromTo || "",
-        r.trainInfo || "",
-        r.time || "",
-        r.cost || "",
-        r.currency || "日円",
-        r.seatInfo || "",
-        r.note || ""
-      ]);
+      const ft = (r.fromTo || "").trim();
+      const ti = (r.trainInfo || "").trim();
+      const nt = (r.note || "").trim();
+      if (!ft && !ti && !nt) return; // 略過全空假資料
+      const rKey = (r.dayTag || "") + "___" + ft + "___" + (r.time || "");
+      if (!seenRoutes.has(rKey)) {
+        seenRoutes.add(rKey);
+        transRows.push([
+          r.dayTag || "",
+          ft,
+          ti,
+          r.time || "",
+          r.cost || "",
+          r.currency || "日円",
+          r.seatInfo || "",
+          nt
+        ]);
+      }
     });
 
     batchWriteSheetRows(transSheet, transRows);

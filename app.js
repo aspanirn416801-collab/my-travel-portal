@@ -220,7 +220,7 @@ async function handleTripUnlockSubmit(e) {
       markTripHasPassword(currentTripUuid, inputPwd);
       showToast("密碼驗證成功，手冊已解鎖 ✓");
 
-      tripData = result.data;
+      tripData = sanitizeAndDeduplicateTrip(result.data);
       if (tripData && tripData.days) {
         sortTripDays(tripData.days);
       }
@@ -1118,7 +1118,7 @@ async function fetchTripData() {
       const parsedData = JSON.parse(cached);
       const cachedPwd = parsedData.password ? String(parsedData.password).trim() : "";
       if (isAdmin || !cachedPwd || savedUnlockPwd === cachedPwd) {
-        tripData = parsedData;
+        tripData = sanitizeAndDeduplicateTrip(parsedData);
         if (tripData && tripData.days) {
           sortTripDays(tripData.days);
         }
@@ -1162,7 +1162,7 @@ async function fetchTripData() {
     }
 
     if (result.status === "success") {
-      tripData = result.data;
+      tripData = sanitizeAndDeduplicateTrip(result.data);
       // 權限穩固保護機制：若本地為 admin 且 Token 有效，絕不輕易降級為 guest
       if (result.role) {
         if (userRole === "admin" && result.role === "guest" && !isTokenExpired(idToken)) {
@@ -1268,8 +1268,86 @@ function hideLoading() {
   if (loader) loader.style.display = "none";
 }
 
-// 即時單筆同步儲存至 Google 試算表（並立即更新本地快取確保 0 秒秒開）
+// 全局資料安全清洗與去重函式 (防止重複景點、重複美食、幽靈空白路線污染畫面或被二次寫入試算表)
+function sanitizeAndDeduplicateTrip(data) {
+  if (!data || typeof data !== "object") return data;
+
+  // 1. 行程景點去重與防呆
+  if (Array.isArray(data.days)) {
+    data.days.forEach((d) => {
+      if (!Array.isArray(d.items) || d.items.length === 0) return;
+      const seen = new Map();
+      d.items.forEach((item) => {
+        const p = (item.place || "").trim();
+        if (!p) return;
+        const t = (item.time || "").trim();
+        const key = t.toLowerCase() + "___" + p.toLowerCase();
+        if (!seen.has(key)) {
+          seen.set(key, item);
+        } else {
+          // 若有重複項目，合併保留較豐富的內容
+          const existing = seen.get(key);
+          if (!existing.desc && item.desc) existing.desc = item.desc;
+          if (!existing.imgUrl && item.imgUrl) existing.imgUrl = item.imgUrl;
+          if (!existing.link && item.link) existing.link = item.link;
+        }
+      });
+      d.items = Array.from(seen.values());
+    });
+  }
+
+  // 2. 美食口袋清單去重
+  if (Array.isArray(data.food)) {
+    const seenFood = new Map();
+    data.food.forEach((f) => {
+      const name = (f.name || "").trim();
+      if (!name) return;
+      const key = name.toLowerCase();
+      if (!seenFood.has(key)) {
+        seenFood.set(key, f);
+      } else {
+        const existing = seenFood.get(key);
+        if (f.must) existing.must = true;
+        if (f.done) existing.done = true;
+        if (!existing.desc && f.desc) existing.desc = f.desc;
+        if (!existing.imgUrl && f.imgUrl) existing.imgUrl = f.imgUrl;
+        if (!existing.area && f.area) existing.area = f.area;
+      }
+    });
+    data.food = Array.from(seenFood.values());
+  }
+
+  // 3. 交通乘車行程去重與過濾空白幽靈列
+  if (data.transport && Array.isArray(data.transport.routes)) {
+    const validRoutes = [];
+    const seenRoutes = new Set();
+    data.transport.routes.forEach((r) => {
+      const ft = (r.fromTo || "").trim();
+      const ti = (r.trainInfo || "").trim();
+      const nt = (r.note || "").trim();
+      if (!ft && !ti && !nt) return; // 移除空白幽靈列
+      const key = (r.dayTag || "") + "___" + ft + "___" + (r.time || "");
+      if (!seenRoutes.has(key)) {
+        seenRoutes.add(key);
+        validRoutes.push(r);
+      }
+    });
+    data.transport.routes = validRoutes;
+  }
+
+  return data;
+}
+
+// 即時單筆同步儲存至 Google 試算表（嚴格防呆防覆蓋與防重複保護）
 async function save() {
+  if (!tripData || !Array.isArray(tripData.days) || tripData.days.length === 0) {
+    console.error("tripData 結構不完整或為空，已攔截危險全量覆蓋！");
+    return false;
+  }
+
+  // 寫入前執行去重與清洗
+  tripData = sanitizeAndDeduplicateTrip(tripData);
+
   // 立即寫入本地快取，保證下次開啟瞬間秒開
   try {
     if (currentTripUuid && tripData) {
@@ -2117,7 +2195,7 @@ function renderItinerary() {
   const day = tripData.days[selectedDay] || tripData.days[0];
   if (!day) return;
 
-  // 自動檢測並校正當前天數景點時段順序 (若有上午排在下午後面的情況，自動重新排序)
+  // 自動檢測並校正當前天數景點時段順序 (純畫面展示排序，絕不自動呼叫 save() 覆蓋雲端行程)
   if (Array.isArray(day.items) && day.items.length > 1) {
     let needsSort = false;
     for (let k = 0; k < day.items.length - 1; k++) {
@@ -2128,7 +2206,6 @@ function renderItinerary() {
     }
     if (needsSort) {
       sortDayItems(day.items);
-      save(); // 靜默同步正確排序至試算表與本地快取
     }
   }
 
@@ -3056,18 +3133,9 @@ function renderFood() {
   if (!tripData) return;
   if (!Array.isArray(tripData.food)) tripData.food = [];
 
-  // 自動智慧去重偵測：若發現重複項目，自動清洗並在管理員狀態下同步雲端試算表
-  const beforeLen = tripData.food.length;
-  const deduped = deduplicateFoodList(tripData.food);
-  if (deduped.length !== beforeLen) {
-    console.log(`[Food Deduplication] 偵測到重複美食，已由 ${beforeLen} 筆去重為 ${deduped.length} 筆`);
-    tripData.food = deduped;
-    if (userRole === "admin") {
-      save(); // 自動將乾淨唯一的名單同步回雲端試算表
-    }
-  }
-
-  const list = tripData.food;
+  // 安全去重顯示：僅在畫面渲染時智慧過濾重複店家，絕不自動觸發全量 save() 覆蓋雲端行程
+  const list = deduplicateFoodList(tripData.food);
+  tripData.food = list;
   const isAdmin = userRole === "admin";
 
   const totalCount = list.length;
