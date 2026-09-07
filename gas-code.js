@@ -175,9 +175,14 @@ function getUserAccess(email) {
 
 // 處理 GET 請求 (支援已登入管理員/團員，以及未登入訪客唯讀瀏覽)
 function doGet(e) {
-  const action = e.parameter.action;
-  const authHeader = e.parameter.token || "";
-  let token = authHeader;
+  try {
+    if (!e || !e.parameter) {
+      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "缺少請求參數" }))
+                           .setMimeType(ContentService.MimeType.JSON);
+    }
+    const action = e.parameter.action;
+    const authHeader = e.parameter.token || "";
+    let token = authHeader;
   
   // 身份驗證 (未提供 token 或驗證失敗則為 guest 訪客)
   let email = null;
@@ -286,8 +291,12 @@ function doGet(e) {
     }
   }
   
-  return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "無效的操作指令" }))
-                       .setMimeType(ContentService.MimeType.JSON);
+    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "無效的操作指令" }))
+                         .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "後端讀取異常: " + err.message }))
+                         .setMimeType(ContentService.MimeType.JSON);
+  }
 }
 
 // 處理 POST 請求 (建立、修改、上傳)
