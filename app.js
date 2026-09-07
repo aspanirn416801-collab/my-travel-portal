@@ -1275,9 +1275,12 @@ function sanitizeAndDeduplicateTrip(data) {
   // 1. 行程景點去重與防呆
   if (Array.isArray(data.days)) {
     data.days.forEach((d) => {
-      if (!Array.isArray(d.items) || d.items.length === 0) return;
+      if (!d || typeof d !== "object") return;
+      if (!Array.isArray(d.items)) { d.items = []; return; }
+      if (d.items.length === 0) return;
       const seen = new Map();
       d.items.forEach((item) => {
+        if (!item || typeof item !== "object") return;
         const p = (item.place || "").trim();
         if (!p) return;
         const t = (item.time || "").trim();
@@ -1300,6 +1303,7 @@ function sanitizeAndDeduplicateTrip(data) {
   if (Array.isArray(data.food)) {
     const seenFood = new Map();
     data.food.forEach((f) => {
+      if (!f || typeof f !== "object") return;
       const name = (f.name || "").trim();
       if (!name) return;
       const key = name.toLowerCase();
@@ -1318,10 +1322,15 @@ function sanitizeAndDeduplicateTrip(data) {
   }
 
   // 3. 交通乘車行程去重與過濾空白幽靈列
-  if (data.transport && Array.isArray(data.transport.routes)) {
+  if (data.transport) {
+    if (!Array.isArray(data.transport.passes)) data.transport.passes = [];
+    if (!Array.isArray(data.transport.maps)) data.transport.maps = [];
+    if (!Array.isArray(data.transport.routes)) data.transport.routes = [];
+
     const validRoutes = [];
     const seenRoutes = new Set();
     data.transport.routes.forEach((r) => {
+      if (!r || typeof r !== "object") return;
       const ft = (r.fromTo || "").trim();
       const ti = (r.trainInfo || "").trim();
       const nt = (r.note || "").trim();
