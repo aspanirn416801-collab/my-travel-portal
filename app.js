@@ -2100,11 +2100,7 @@ function renderItinerary() {
   // 天數切換按鈕列表
   const dayBtns = tripData.days
     .map((d, i) => {
-      const dateText = (d.date || "")
-        .split("（")[0]
-        .replace("月", "/")
-        .replace("日", "")
-        .trim();
+      const dateText = extractMonthDayText(d.date);
       return `
         <button class="day-btn ${i === selectedDay ? "active" : ""}" onclick="selectedDay=${i};renderItinerary()">
           <span class="day-btn-date">${dateText || `第 ${i + 1} 天`}</span>
@@ -2308,8 +2304,8 @@ function resequenceAllDays() {
         }
 
         const oldDayNumMatch = (oldId || "").match(/Day\s*(\d+)/i);
-        const oldRawDate = (oldDate || "").split("（")[0].replace("月", "/").replace("日", "").trim();
-        const newRawDate = (newDate || "").split("（")[0].replace("月", "/").replace("日", "").trim();
+        const oldRawDate = extractMonthDayText(oldDate);
+        const newRawDate = extractMonthDayText(newDate);
 
         const oldPrefix = oldDayNumMatch ? `D${oldDayNumMatch[1]}` : "";
         const newPrefix = `D${newDayNum}`;
@@ -2355,6 +2351,16 @@ function resequenceAllDays() {
 // 行程天數與日期星期智能換算輔助函式
 // =========================================================================
 
+// 輔助函式：自繁中日期文字中安全提取月/日純文字 (同時相容全形與半形括號，例如 "2月16日（二）" 或 "2/16(二)" -> "2/16")
+function extractMonthDayText(dateStr) {
+  if (!dateStr) return "";
+  return String(dateStr)
+    .replace(/[\(（].*?[\)）]/g, "")
+    .replace("月", "/")
+    .replace("日", "")
+    .trim();
+}
+
 // 將 ISO 日期 (YYYY-MM-DD) 轉換為繁體中文格式「X月X日（星期幾）」
 function formatDateToDisplayWithWeekday(isoDateStr) {
   if (!isoDateStr) return "";
@@ -2367,6 +2373,28 @@ function formatDateToDisplayWithWeekday(isoDateStr) {
   if (isNaN(dt.getTime())) return "";
   const weekDays = ["日", "一", "二", "三", "四", "五", "六"];
   return `${m}月${d}日（${weekDays[dt.getDay()]}）`;
+}
+
+// 從繁中日期文字（例如 "2月16日（二）" 或 "2/16"）與參考出發日期推算精確的 ISO 日期 (YYYY-MM-DD)
+function parseDateStringToIso(dateText, referenceIsoDate) {
+  if (!dateText) return "";
+  const trimmed = String(dateText).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return trimmed;
+  }
+  const m = trimmed.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日?/) || trimmed.match(/(\d{1,2})\s*[\/\-]\s*(\d{1,2})/);
+  if (m) {
+    const month = parseInt(m[1], 10);
+    const day = parseInt(m[2], 10);
+    let year = 2027; // 預設年度
+    if (referenceIsoDate && /^\d{4}/.test(referenceIsoDate)) {
+      year = parseInt(referenceIsoDate.substring(0, 4), 10);
+    }
+    const mm = String(month).padStart(2, "0");
+    const dd = String(day).padStart(2, "0");
+    return `${year}-${mm}-${dd}`;
+  }
+  return "";
 }
 
 // 根據行程出發日期與第 N 天計算對應的 YYYY-MM-DD
@@ -2406,12 +2434,12 @@ function getSuggestedNextDayNum(days) {
   return days.length + 1;
 }
 
-// 全域彈窗連動回呼：新增天數時由日曆選取器同步天數與星期文字
+// 全域彈窗連動回呼：新增天數時由日曆選取器同步天數與預覽標籤
 window.onAddDayPickerChange = function (newDateStr) {
   if (!newDateStr) return;
   const chineseDate = formatDateToDisplayWithWeekday(newDateStr);
-  const dateInput = document.getElementById("addDayDate");
-  if (dateInput) dateInput.value = chineseDate;
+  const preview = document.getElementById("addDayPreview");
+  if (preview) preview.innerHTML = `📅 自動顯示：${chineseDate}`;
 
   // 若有出發日期，自動反推並同步選取天數下拉選單
   if (tripData && tripData.startDate) {
@@ -2423,7 +2451,7 @@ window.onAddDayPickerChange = function (newDateStr) {
   }
 };
 
-// 全域彈窗連動回呼：新增天數時由下拉選單同步日曆與星期文字
+// 全域彈窗連動回呼：新增天數時由下拉選單同步日曆與預覽標籤
 window.onAddDaySelectChange = function (val) {
   if (!val) return;
   const m = val.match(/Day\s*(\d+)/i) || val.match(/^(\d+)$/);
@@ -2434,21 +2462,21 @@ window.onAddDaySelectChange = function (val) {
       const picker = document.getElementById("addDayPicker");
       if (picker) picker.value = isoDate;
       const chineseDate = formatDateToDisplayWithWeekday(isoDate);
-      const dateInput = document.getElementById("addDayDate");
-      if (dateInput) dateInput.value = chineseDate;
+      const preview = document.getElementById("addDayPreview");
+      if (preview) preview.innerHTML = `📅 自動顯示：${chineseDate}`;
     }
   }
 };
 
-// 全域彈窗連動回呼：編輯天數時由日曆選取器同步星期文字
+// 全域彈窗連動回呼：編輯天數時由日曆選取器同步預覽標籤
 window.onEditDayPickerChange = function (newDateStr) {
   if (!newDateStr) return;
   const chineseDate = formatDateToDisplayWithWeekday(newDateStr);
-  const dateInput = document.getElementById("editDayDate");
-  if (dateInput) dateInput.value = chineseDate;
+  const preview = document.getElementById("editDayPreview");
+  if (preview) preview.innerHTML = `📅 自動顯示：${chineseDate}`;
 };
 
-// 新增行程天數對話框
+// 新增行程天數對話框 (全自動計算日期與星期，免手動輸入)
 function openAddDayModal() {
   if (!tripData.days) tripData.days = [];
   const nextDayNum = Math.min(getSuggestedNextDayNum(tripData.days), 14);
@@ -2476,12 +2504,9 @@ function openAddDayModal() {
       </select>
     </div>
     <div class="ef-wrap">
-      <div class="ef-label">選擇日期 (點選日曆，系統自動計算日期與星期)</div>
+      <div class="ef-label">選擇日期 (點選日曆，系統全自動重算星期) <span style="color:var(--red);">*</span></div>
       <input type="date" id="addDayPicker" class="ef-input" value="${defaultIsoDate}" onchange="window.onAddDayPickerChange(this.value)">
-    </div>
-    <div class="ef-wrap">
-      <div class="ef-label">日期文字說明 (依日曆自動生成，可自由微調)</div>
-      <input type="text" id="addDayDate" class="ef-input" value="${defaultDateText}" placeholder="例如: 2月16日（一）">
+      <div id="addDayPreview" class="ef-preview-tag">📅 自動顯示：${defaultDateText || "請點選上方日曆選擇日期"}</div>
     </div>
     <div class="ef-wrap">
       <div class="ef-label">當日行程主題名稱 <span style="color:var(--red);">*</span></div>
@@ -2497,7 +2522,8 @@ function openAddDayModal() {
       const dayId =
         document.getElementById("addDayId").value.trim() || nextDayId;
       const title = document.getElementById("addDayTitle").value.trim();
-      const date = document.getElementById("addDayDate").value.trim();
+      const pickerVal = document.getElementById("addDayPicker").value;
+      const date = pickerVal ? formatDateToDisplayWithWeekday(pickerVal) : "";
 
       if (!title) {
         alert("請輸入當日行程主題名稱！");
@@ -2546,12 +2572,18 @@ function deleteCurrentDay(dayIdx) {
 function openEditDayTitleModal(dayIdx) {
   const day = tripData.days[dayIdx];
   
-  // 嘗試從現有日期文字反推 ISO 日期
-  let currentIsoDate = "";
-  const m = (day.id || "").match(/Day\s*(\d+)/i);
-  if (m && tripData.startDate) {
-    currentIsoDate = calculateIsoDateForDayNum(tripData.startDate, parseInt(m[1], 10));
+  // 優先從現有日期文字精準反推 ISO 日期，若無文字再以出發日期推算
+  let currentIsoDate = parseDateStringToIso(day.date, tripData.startDate);
+  if (!currentIsoDate) {
+    const m = (day.id || "").match(/Day\s*(\d+)/i);
+    if (m && tripData.startDate) {
+      currentIsoDate = calculateIsoDateForDayNum(tripData.startDate, parseInt(m[1], 10));
+    }
   }
+
+  const currentDateDisplay = currentIsoDate
+    ? formatDateToDisplayWithWeekday(currentIsoDate)
+    : (day.date || "尚未設定日期");
 
   let editPresetOptions = "";
   for (let d = 1; d <= 14; d++) {
@@ -2562,17 +2594,14 @@ function openEditDayTitleModal(dayIdx) {
   const formHtml = `
     <div class="ef-wrap">
       <div class="ef-label">天數識別 (內建 14 天) <span style="color:var(--red);">*</span></div>
-      <select id="editDayId" class="ef-select" onchange="window.onAddDaySelectChange ? window.onAddDaySelectChange(this.value) : null">
+      <select id="editDayId" class="ef-select">
         ${editPresetOptions}
       </select>
     </div>
     <div class="ef-wrap">
-      <div class="ef-label">選擇日期 (更換日期自動重算星期)</div>
+      <div class="ef-label">選擇日期 (更換日曆自動重算星期) <span style="color:var(--red);">*</span></div>
       <input type="date" id="editDayPicker" class="ef-input" value="${currentIsoDate}" onchange="window.onEditDayPickerChange(this.value)">
-    </div>
-    <div class="ef-wrap">
-      <div class="ef-label">日期文字 (依日曆自動更新，例如: 2月13日（五）)</div>
-      <input type="text" id="editDayDate" class="ef-input" value="${day.date || ""}">
+      <div id="editDayPreview" class="ef-preview-tag">📅 自動顯示：${currentDateDisplay}</div>
     </div>
     <div class="ef-wrap">
       <div class="ef-label">當日主題名稱 <span style="color:var(--red);">*</span></div>
@@ -2587,7 +2616,8 @@ function openEditDayTitleModal(dayIdx) {
     onConfirm: () => {
       const id = document.getElementById("editDayId").value.trim() || day.id;
       const title = document.getElementById("editDayTitle").value.trim();
-      const date = document.getElementById("editDayDate").value.trim();
+      const pickerVal = document.getElementById("editDayPicker").value;
+      const date = pickerVal ? formatDateToDisplayWithWeekday(pickerVal) : (day.date || "");
 
       if (!title) {
         alert("主題名稱不得為空！");
@@ -2604,8 +2634,8 @@ function openEditDayTitleModal(dayIdx) {
       // 智慧連動：當天數序號或日期變更時，自動批次更新交通路線中的對應天數標籤
       const oldDayNumMatch = (oldId || "").match(/Day\s*(\d+)/i);
       const newDayNumMatch = (id || "").match(/Day\s*(\d+)/i);
-      const oldRawDate = (oldDate || "").split("（")[0].replace("月", "/").replace("日", "").trim();
-      const newRawDate = (date || "").split("（")[0].replace("月", "/").replace("日", "").trim();
+      const oldRawDate = extractMonthDayText(oldDate);
+      const newRawDate = extractMonthDayText(date);
 
       const oldPrefix = oldDayNumMatch ? `D${oldDayNumMatch[1]}` : "";
       const newPrefix = newDayNumMatch ? `D${newDayNumMatch[1]}` : "";
@@ -2979,6 +3009,28 @@ function openAddItineraryModal(dayIdx) {
 // =========================================================================
 // 4. 美食清單 (Food) - 地區/必吃快速分類標籤、微編輯、地圖導航、照片上傳與即時同步
 // =========================================================================
+// 智慧美食去重函式 (依店家名稱為唯一 Key，智慧合併描述、圖片、已品嚐與必吃標記)
+function deduplicateFoodList(list) {
+  if (!Array.isArray(list) || list.length === 0) return [];
+  const map = new Map();
+  list.forEach((item) => {
+    const name = (item.name || "").trim();
+    if (!name) return;
+    if (!map.has(name)) {
+      map.set(name, { ...item, name });
+    } else {
+      const existing = map.get(name);
+      if (!existing.desc && item.desc) existing.desc = item.desc;
+      if (!existing.area && item.area) existing.area = item.area;
+      if (!existing.imgUrl && item.imgUrl) existing.imgUrl = item.imgUrl;
+      if (!existing.emoji && item.emoji) existing.emoji = item.emoji;
+      if (item.must) existing.must = true;
+      if (item.done) existing.done = true;
+    }
+  });
+  return Array.from(map.values());
+}
+
 // 智慧提取或辨識美食所屬地區 (優先使用自訂 area，次之從名稱或說明辨識常見地區關鍵字)
 function extractFoodArea(item) {
   if (!item) return "";
@@ -3002,7 +3054,20 @@ function setFoodFilter(filterId) {
 
 function renderFood() {
   if (!tripData) return;
-  const list = tripData.food || [];
+  if (!Array.isArray(tripData.food)) tripData.food = [];
+
+  // 自動智慧去重偵測：若發現重複項目，自動清洗並在管理員狀態下同步雲端試算表
+  const beforeLen = tripData.food.length;
+  const deduped = deduplicateFoodList(tripData.food);
+  if (deduped.length !== beforeLen) {
+    console.log(`[Food Deduplication] 偵測到重複美食，已由 ${beforeLen} 筆去重為 ${deduped.length} 筆`);
+    tripData.food = deduped;
+    if (userRole === "admin") {
+      save(); // 自動將乾淨唯一的名單同步回雲端試算表
+    }
+  }
+
+  const list = tripData.food;
   const isAdmin = userRole === "admin";
 
   const totalCount = list.length;
@@ -3293,6 +3358,16 @@ function openAddFoodModal() {
       }
 
       if (!tripData.food) tripData.food = [];
+
+      // 重複店家名稱防呆檢查
+      const isDuplicate = tripData.food.some(
+        (f) => (f.name || "").trim().toLowerCase() === name.toLowerCase()
+      );
+      if (isDuplicate) {
+        alert(`「${name}」已經在您的美食口袋名單中囉！請勿重複新增。`);
+        return false;
+      }
+
       tripData.food.push({
         id: uid(),
         emoji: emoji,
@@ -4566,7 +4641,7 @@ function openAddTransportModal() {
   const dayOptions = (tripData.days || []).map((d, i) => {
     const m = (d.id || "").match(/Day\s*(\d+)/i);
     const dayPrefix = m ? `D${m[1]}` : `D${i + 1}`;
-    const rawDate = (d.date || "").split("（")[0].replace("月", "/").replace("日", "").trim();
+    const rawDate = extractMonthDayText(d.date);
     const tag = `${dayPrefix}${rawDate ? `-${rawDate}` : ""}`;
     const label = `${tag}（${d.id}：${d.date || ""} ｜ ${d.title || "未設定主題"}）`;
     return { tag, label };
@@ -4694,7 +4769,7 @@ function openEditTransportModal(idx) {
   const dayOptions = (tripData.days || []).map((d, i) => {
     const m = (d.id || "").match(/Day\s*(\d+)/i);
     const dayPrefix = m ? `D${m[1]}` : `D${i + 1}`;
-    const rawDate = (d.date || "").split("（")[0].replace("月", "/").replace("日", "").trim();
+    const rawDate = extractMonthDayText(d.date);
     const tag = `${dayPrefix}${rawDate ? `-${rawDate}` : ""}`;
     const label = `${tag}（${d.id}：${d.date || ""} ｜ ${d.title || "未設定主題"}）`;
     return { tag, label };
