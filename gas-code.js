@@ -927,12 +927,22 @@ function loadTripDetails(sheetId) {
   return result;
 }
 
-// 批次寫入工作表輔助函式 (一律一次性 setValues，儲存速度比逐行 appendRow 快 10 倍以上，防止 GAS 逾時)
+// 批次寫入工作表輔助函式 (一律一次性 setValues，自動補齊不足行數與欄數，儲存速度比逐行 appendRow 快 10 倍以上，防止 GAS 逾時與 Range 溢出錯誤)
 function batchWriteSheetRows(sheet, rows) {
   if (!sheet) return;
   sheet.clearContents();
   if (rows && rows.length > 0) {
-    sheet.getRange(1, 1, rows.length, rows[0].length).setValues(rows);
+    const requiredRows = rows.length;
+    const requiredCols = rows[0].length;
+    const currentRows = sheet.getMaxRows();
+    if (currentRows < requiredRows) {
+      sheet.insertRowsAfter(currentRows, requiredRows - currentRows);
+    }
+    const currentCols = sheet.getMaxColumns();
+    if (currentCols < requiredCols) {
+      sheet.insertColumnsAfter(currentCols, requiredCols - currentCols);
+    }
+    sheet.getRange(1, 1, requiredRows, requiredCols).setValues(rows);
   }
 }
 
@@ -940,13 +950,15 @@ function batchWriteSheetRows(sheet, rows) {
 function saveTripDetails(sheetId, data) {
   const ss = SpreadsheetApp.openById(sheetId);
   
-  // 1. Info (基本手冊資訊)
-  const infoSheet = ss.getSheetByName("Info");
-  if (infoSheet) {
-    infoSheet.getRange(2, 2).setValue(data.name || "");
-    infoSheet.getRange(3, 2).setValue(data.startDate || "");
-    infoSheet.getRange(4, 2).setValue(data.endDate || "");
-    infoSheet.getRange(5, 2).setValue(data.duration || "");
+  // 1. Info (基本手冊資訊與密碼同步)
+  let infoSheet = ss.getSheetByName("Info");
+  if (!infoSheet) infoSheet = ss.insertSheet("Info");
+  infoSheet.getRange(2, 2).setValue(data.name || "");
+  infoSheet.getRange(3, 2).setValue(data.startDate || "");
+  infoSheet.getRange(4, 2).setValue(data.endDate || "");
+  infoSheet.getRange(5, 2).setValue(data.duration || "");
+  if (data.password !== undefined) {
+    infoSheet.getRange(6, 2).setValue(data.password || "");
   }
   
   // 2. Checklist (行前準備與行李清單)
@@ -954,6 +966,7 @@ function saveTripDetails(sheetId, data) {
   if (!checklistSheet) checklistSheet = ss.insertSheet("Checklist");
   const rowsChecklist = [["id", "cat", "title", "note", "link", "done"]];
   (data.checklist || []).forEach(item => {
+    if (!item || (!item.title && !item.id)) return;
     rowsChecklist.push([
       item.id || "",
       item.cat || "",
@@ -1060,6 +1073,7 @@ function saveTripDetails(sheetId, data) {
   if (!shoppingSheet) shoppingSheet = ss.insertSheet("Shopping");
   const shopRows = [["id", "buyer", "name", "location", "price", "qty", "link", "imgUrl", "note", "done"]];
   (data.shopping || []).forEach(item => {
+    if (!item || (!item.name && !item.id)) return;
     shopRows.push([
       item.id || "",
       item.buyer || "",
