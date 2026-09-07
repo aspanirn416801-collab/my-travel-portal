@@ -292,8 +292,13 @@ function doGet(e) {
 
 // 處理 POST 請求 (建立、修改、上傳)
 function doPost(e) {
-  const postData = JSON.parse(e.postData.contents);
-  const action = postData.action;
+  try {
+    if (!e || !e.postData || !e.postData.contents) {
+      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "缺少請求內文 (Empty payload)" }))
+                           .setMimeType(ContentService.MimeType.JSON);
+    }
+    const postData = JSON.parse(e.postData.contents);
+    const action = postData.action;
   
   // 取得 Authorization Token
   // 處理 headers 驗證
@@ -521,8 +526,12 @@ function doPost(e) {
     }
   }
   
-  return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Action handler not found" }))
-                       .setMimeType(ContentService.MimeType.JSON);
+    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Action handler not found" }))
+                         .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "後端處理失敗: " + err.message }))
+                         .setMimeType(ContentService.MimeType.JSON);
+  }
 }
 
 // 初始化關聯試算表結構
@@ -877,13 +886,14 @@ function loadTripDetails(sheetId) {
 
         // 周遊券判定：精準比對 A 欄是否為「周遊券」或「PASS」
         if (colA === "周遊券" || colA === "PASS" || colA === "Pass") {
-          if (!colB) continue;
+          const passName = colB || colC;
+          if (!passName) continue;
           result.transport.passes.push({
             id: "p" + i,
-            name: colB,
+            name: passName,
             cost: colE,
             currency: colF,
-            note: colH || colC
+            note: colH || (colB ? colC : "")
           });
           continue;
         }
@@ -940,60 +950,57 @@ function saveTripDetails(sheetId, data) {
   }
   
   // 2. Checklist (行前準備與行李清單)
-  const checklistSheet = ss.getSheetByName("Checklist");
-  if (checklistSheet) {
-    const rows = [["id", "cat", "title", "note", "link", "done"]];
-    (data.checklist || []).forEach(item => {
-      rows.push([
-        item.id || "",
-        item.cat || "",
-        item.title || "",
-        item.note || "",
-        item.link || "",
-        item.done ? "TRUE" : "FALSE"
-      ]);
-    });
-    batchWriteSheetRows(checklistSheet, rows);
-  }
+  let checklistSheet = ss.getSheetByName("Checklist");
+  if (!checklistSheet) checklistSheet = ss.insertSheet("Checklist");
+  const rowsChecklist = [["id", "cat", "title", "note", "link", "done"]];
+  (data.checklist || []).forEach(item => {
+    rowsChecklist.push([
+      item.id || "",
+      item.cat || "",
+      item.title || "",
+      item.note || "",
+      item.link || "",
+      item.done ? "TRUE" : "FALSE"
+    ]);
+  });
+  batchWriteSheetRows(checklistSheet, rowsChecklist);
   
   // 3. Flights (航班資訊)
-  const flightsSheet = ss.getSheetByName("Flights");
-  if (flightsSheet) {
-    const rows = [["Type", "airline", "no", "from", "to", "date", "dep", "arr", "note"]];
-    if (data.flights && data.flights.out) {
-      const f = data.flights.out;
-      rows.push(["out", f.airline || "", f.no || "", f.from || "", f.to || "", f.date || "", f.dep || "", f.arr || "", f.note || ""]);
-    }
-    if (data.flights && data.flights.in) {
-      const f = data.flights.in;
-      rows.push(["in", f.airline || "", f.no || "", f.from || "", f.to || "", f.date || "", f.dep || "", f.arr || "", f.note || ""]);
-    }
-    batchWriteSheetRows(flightsSheet, rows);
+  let flightsSheet = ss.getSheetByName("Flights");
+  if (!flightsSheet) flightsSheet = ss.insertSheet("Flights");
+  const rowsFlights = [["Type", "airline", "no", "from", "to", "date", "dep", "arr", "note"]];
+  if (data.flights && data.flights.out) {
+    const f = data.flights.out;
+    rowsFlights.push(["out", f.airline || "", f.no || "", f.from || "", f.to || "", f.date || "", f.dep || "", f.arr || "", f.note || ""]);
   }
+  if (data.flights && data.flights.in) {
+    const f = data.flights.in;
+    rowsFlights.push(["in", f.airline || "", f.no || "", f.from || "", f.to || "", f.date || "", f.dep || "", f.arr || "", f.note || ""]);
+  }
+  batchWriteSheetRows(flightsSheet, rowsFlights);
   
   // 4. Hotel (支援多筆飯店住宿)
-  const hotelSheet = ss.getSheetByName("Hotel");
-  if (hotelSheet) {
-    const rows = [["name", "addr", "checkin", "checkout", "nights", "note"]];
-    const hotelList = data.hotels || (data.hotel ? [data.hotel] : []);
-    hotelList.forEach(h => {
-      if (h && (h.name || h.addr)) {
-        rows.push([
-          h.name || "",
-          h.addr || "",
-          h.checkin || "",
-          h.checkout || "",
-          h.nights || "",
-          h.note || ""
-        ]);
-      }
-    });
-    batchWriteSheetRows(hotelSheet, rows);
-  }
+  let hotelSheet = ss.getSheetByName("Hotel");
+  if (!hotelSheet) hotelSheet = ss.insertSheet("Hotel");
+  const rowsHotel = [["name", "addr", "checkin", "checkout", "nights", "note"]];
+  const hotelList = data.hotels || (data.hotel ? [data.hotel] : []);
+  hotelList.forEach(h => {
+    if (h && (h.name || h.addr)) {
+      rowsHotel.push([
+        h.name || "",
+        h.addr || "",
+        h.checkin || "",
+        h.checkout || "",
+        h.nights || "",
+        h.note || ""
+      ]);
+    }
+  });
+  batchWriteSheetRows(hotelSheet, rowsHotel);
   
   // 5. Days (每日行程景點與活動，寫入前自動去重保護)
-  const daysSheet = ss.getSheetByName("Days");
-  if (daysSheet) {
+  let daysSheet = ss.getSheetByName("Days");
+  if (!daysSheet) daysSheet = ss.insertSheet("Days");
     const rows = [["dayId", "date", "title", "time", "place", "desc", "imgUrl", "link"]];
     (data.days || []).forEach(d => {
       if (d.items && d.items.length > 0) {
@@ -1022,7 +1029,6 @@ function saveTripDetails(sheetId, data) {
       }
     });
     batchWriteSheetRows(daysSheet, rows);
-  }
   
   // 6. Food (美食口袋清單，寫入前店名唯一性防重)
   let foodSheet = ss.getSheetByName("Food");
