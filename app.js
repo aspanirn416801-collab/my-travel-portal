@@ -799,7 +799,17 @@ function navigateTo(tripUuid) {
     return;
   }
 
-  currentTripUuid = (tripUuid || "").trim();
+  const targetUuid = (tripUuid || "").trim();
+
+  // 若切換至不同行程手冊，徹底清空舊行程之記憶體資料與頁面 DOM，杜絕內容混淆！
+  if (targetUuid && targetUuid !== currentTripUuid) {
+    tripData = null;
+    document.querySelectorAll(".page").forEach((p) => {
+      p.innerHTML = '<div style="text-align:center;padding:60px 10px;color:var(--moss);font-size:13px;font-weight:700;">⏳ 正在載入旅程手冊內容...</div>';
+    });
+  }
+
+  currentTripUuid = targetUuid;
   const newUrl = currentTripUuid
     ? `${currentPath}?trip=${encodeURIComponent(currentTripUuid)}`
     : currentPath;
@@ -1690,6 +1700,17 @@ async function fetchTripData() {
         localStorage.setItem("cache_trip_" + currentTripUuid, JSON.stringify(tripData));
         localStorage.setItem("cache_userRole", userRole);
       } catch (e) {}
+
+      // 自動同步日期與天數回 tripsList 與快取
+      const tripObj = tripsList.find((t) => t.uuid === currentTripUuid);
+      if (tripObj) {
+        if (tripData.startDate) tripObj.startDate = tripData.startDate;
+        if (tripData.endDate) tripObj.endDate = tripData.endDate;
+        if (tripData.duration) tripObj.duration = tripData.duration;
+        try {
+          localStorage.setItem("cache_tripsList", JSON.stringify(tripsList));
+        } catch (e) {}
+      }
 
       updateAuthUI();
 
@@ -4380,8 +4401,24 @@ function renderAdminView() {
     .map((t) => {
       const safeName = escapeHtml(t.name);
       const safeUuid = escapeHtml(t.uuid);
-      const duration = t.duration ? escapeHtml(t.duration) : "未註記天數";
-      const dateRange = (t.startDate && t.endDate) ? `${escapeHtml(t.startDate)} ~ ${escapeHtml(t.endDate)}` : (t.startDate ? escapeHtml(t.startDate) : "未設日期");
+
+      // 深度提取日期與天數 (優先讀取屬性，次讀取本地快取或當前 tripData)
+      let cachedData = null;
+      try {
+        const c = localStorage.getItem("cache_trip_" + t.uuid);
+        if (c) cachedData = JSON.parse(c);
+      } catch (e) {}
+
+      const sDate = t.startDate || (cachedData ? cachedData.startDate : "") || (tripData && currentTripUuid === t.uuid ? tripData.startDate : "");
+      const eDate = t.endDate || (cachedData ? cachedData.endDate : "") || (tripData && currentTripUuid === t.uuid ? tripData.endDate : "");
+      const dur = t.duration || (cachedData ? cachedData.duration : "") || (tripData && currentTripUuid === t.uuid ? tripData.duration : "") || "未註記天數";
+      const dateRange = (sDate && eDate) ? `${escapeHtml(sDate)} ~ ${escapeHtml(eDate)}` : (sDate ? escapeHtml(sDate) : "未設日期");
+
+      // 補齊物件屬性供全域使用
+      if (sDate) t.startDate = sDate;
+      if (eDate) t.endDate = eDate;
+      if (dur && dur !== "未註記天數") t.duration = dur;
+
       const sheetUrl = t.sheet_id ? `https://docs.google.com/spreadsheets/d/${encodeURIComponent(t.sheet_id)}` : "";
       const folderUrl = t.folder_id ? `https://drive.google.com/drive/folders/${encodeURIComponent(t.folder_id)}` : "";
       const pwdDisplay = t.password ? `<span style="font-family:monospace;background:#FEF3C7;color:#92400E;padding:2px 8px;border-radius:6px;font-weight:bold;">${escapeHtml(t.password)}</span>` : '<span style="color:#059669;font-weight:bold;">公開無密碼</span>';
@@ -4396,7 +4433,7 @@ function renderAdminView() {
                 <span style="font-size:11px;color:#666;background:#F1F5F9;padding:2px 8px;border-radius:6px;font-family:monospace;">${safeUuid}</span>
               </div>
               <div style="font-size:12px;color:#666;margin-top:4px;">
-                🗓️ <b>${dateRange}</b> ｜ ⏱️ ${duration}
+                🗓️ <b>${dateRange}</b> ｜ ⏱️ ${dur}
               </div>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
@@ -4584,19 +4621,40 @@ function autoSyncTripDuration() {
   }
 }
 
+function autoSyncEditTripDuration() {
+  const s = document.getElementById("editTripStartDate")?.value;
+  const e = document.getElementById("editTripEndDate")?.value;
+  if (s && e) {
+    const d1 = new Date(s + "T00:00:00");
+    const d2 = new Date(e + "T00:00:00");
+    const diffDays = Math.round((d2 - d1) / (1000 * 60 * 60 * 24)) + 1;
+    if (diffDays > 0) {
+      const nights = diffDays - 1;
+      const durationInput = document.getElementById("editTripDuration");
+      if (durationInput) {
+        durationInput.value = `${diffDays}天${nights > 0 ? nights + "夜" : ""}`;
+      }
+    }
+  }
+}
+
 // 編輯現有行程基本設定對話框
 function openEditTripMetaModal(uuid) {
   const trip = tripsList.find((t) => t.uuid === uuid);
   if (!trip) return;
 
-  const currentStartDate =
-    tripData && currentTripUuid === uuid ? tripData.startDate : "";
-  const currentEndDate =
-    tripData && currentTripUuid === uuid ? tripData.endDate : "";
-  const currentDuration =
-    tripData && currentTripUuid === uuid ? tripData.duration : "";
+  // 深度優先從行程物件、本地快取或當前 tripData 中取出原本設定的日期與天數
+  let cachedData = null;
+  try {
+    const c = localStorage.getItem("cache_trip_" + uuid);
+    if (c) cachedData = JSON.parse(c);
+  } catch (e) {}
+
+  const currentStartDate = trip.startDate || (cachedData ? cachedData.startDate : "") || (tripData && currentTripUuid === uuid ? tripData.startDate : "");
+  const currentEndDate = trip.endDate || (cachedData ? cachedData.endDate : "") || (tripData && currentTripUuid === uuid ? tripData.endDate : "");
+  const currentDuration = trip.duration || (cachedData ? cachedData.duration : "") || (tripData && currentTripUuid === uuid ? tripData.duration : "");
   const currentTheme =
-    trip.theme || (tripData && currentTripUuid === uuid ? tripData.theme : "") || getAutoThemeKeyForTrip(trip.name, trip.uuid);
+    trip.theme || (cachedData ? cachedData.theme : "") || (tripData && currentTripUuid === uuid ? tripData.theme : "") || getAutoThemeKeyForTrip(trip.name, trip.uuid);
 
   const formHtml = `
     <div class="ef-wrap">
@@ -4610,16 +4668,16 @@ function openEditTripMetaModal(uuid) {
     <div style="display:flex;gap:10px;">
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">出發日期</div>
-        <input type="date" id="editTripStartDate" class="ef-input" value="${currentStartDate}">
+        <input type="date" id="editTripStartDate" class="ef-input" value="${currentStartDate}" onchange="autoSyncEditTripDuration()">
       </div>
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">結束日期</div>
-        <input type="date" id="editTripEndDate" class="ef-input" value="${currentEndDate}">
+        <input type="date" id="editTripEndDate" class="ef-input" value="${currentEndDate}" onchange="autoSyncEditTripDuration()">
       </div>
     </div>
     <div class="ef-wrap">
-      <div class="ef-label">天數說明 (例如: 8天7夜)</div>
-      <input type="text" id="editTripDuration" class="ef-input" value="${currentDuration}">
+      <div class="ef-label">天數說明 (自動依日期計算，亦可微調)</div>
+      <input type="text" id="editTripDuration" class="ef-input" value="${currentDuration}" placeholder="例如: 8天7夜">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">🎨 專案主題色彩</div>
@@ -4695,8 +4753,30 @@ function openEditTripMetaModal(uuid) {
         const result = await res.json();
         if (result.status === "success") {
           showToast("行程設定更新成功 ✓");
+          trip.name = name;
+          trip.startDate = startDate;
+          trip.endDate = endDate;
+          trip.duration = duration;
           trip.password = password;
           trip.theme = theme;
+          trip.allowed_users = allowedUsers;
+
+          // 同步更新本地快取
+          try {
+            const c = localStorage.getItem("cache_trip_" + uuid);
+            if (c) {
+              const d = JSON.parse(c);
+              d.name = name;
+              d.startDate = startDate;
+              d.endDate = endDate;
+              d.duration = duration;
+              d.password = password;
+              d.theme = theme;
+              localStorage.setItem("cache_trip_" + uuid, JSON.stringify(d));
+            }
+            localStorage.setItem("cache_tripsList", JSON.stringify(tripsList));
+          } catch(e) {}
+
           // 若修改的是當前行程，同步更新記憶體資料並即時變換主題色
           if (currentTripUuid === uuid && tripData) {
             tripData.name = name;
@@ -4706,8 +4786,10 @@ function openEditTripMetaModal(uuid) {
             tripData.password = password;
             tripData.theme = theme;
             initCountdown();
-            applyTripTheme(theme, name, uuid);
+            applyTripTheme(theme, name, uuid, startDate);
           }
+          
+          renderAdminView();
           fetchTrips();
         } else {
           alert("更新失敗：" + (result.message || "未知錯誤"));
