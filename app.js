@@ -56,152 +56,151 @@ try {
 } catch (e) {}
 
 // =========================================================================
-// 專案主題色彩管理系統 (支援每個行程不同主題顏色，如夢幻紫羅蘭、經典苔綠、海洋藍等)
+// 專案主題色彩管理系統 (因應四季時令與旅行目的地之高階奢華色彩引擎)
 // =========================================================================
 const TRIP_THEMES = {
-  violet: {
-    name: "💜 夢幻紫羅蘭 (Lavender Violet)",
+  winter: {
+    id: "winter",
+    name: "❄️ 冬季 • 霜雪冰晶藍 (12~2月冬季旅程)",
     vars: {
-      "--moss": "#583A85",
-      "--moss-light": "#7B55B3",
-      "--moss-gradient": "linear-gradient(135deg, #52347E 0%, #764BA2 100%)",
-      "--washi": "#F3EFF8",
-      "--bg-gradient": "linear-gradient(135deg, #EFE8F6 0%, #E5DCF2 50%, #F6F2FA 100%)",
-      "--gold": "#8E6ABF",
-      "--gold-soft": "rgba(142, 106, 191, 0.22)",
-      "--mist": "#DDD3E8",
+      "--moss": "#1E3A5F",
+      "--moss-light": "#2E5688",
+      "--moss-gradient": "linear-gradient(135deg, #183153 0%, #2E5888 100%)",
+      "--washi": "#F4F7FB",
+      "--bg-gradient": "linear-gradient(135deg, #F5F8FB 0%, #E9F0F7 50%, #F8FAFC 100%)",
+      "--gold": "#3B82F6",
+      "--gold-soft": "rgba(59, 130, 246, 0.16)",
+      "--mist": "#CFDAE6",
     },
   },
-  moss: {
-    name: "🌿 經典苔綠 (Classic Moss)",
+  spring: {
+    id: "spring",
+    name: "🌸 春季 • 霞櫻緋粉 (3~5月賞櫻春旅)",
+    vars: {
+      "--moss": "#82354F",
+      "--moss-light": "#9E4765",
+      "--moss-gradient": "linear-gradient(135deg, #742D43 0%, #A24B68 100%)",
+      "--washi": "#FBF6F8",
+      "--bg-gradient": "linear-gradient(135deg, #FAF4F6 0%, #F4E8EC 50%, #FCF8FA 100%)",
+      "--gold": "#D9779F",
+      "--gold-soft": "rgba(217, 119, 159, 0.16)",
+      "--mist": "#EAD3DC",
+    },
+  },
+  summer: {
+    id: "summer",
+    name: "🌊 夏季 • 碧海琉璃 (6~8月海島夏日)",
+    vars: {
+      "--moss": "#0E4F5D",
+      "--moss-light": "#186E80",
+      "--moss-gradient": "linear-gradient(135deg, #0A3E4A 0%, #19788D 100%)",
+      "--washi": "#F2F8F9",
+      "--bg-gradient": "linear-gradient(135deg, #F1F7F8 0%, #E3EFF2 50%, #F7FAFA 100%)",
+      "--gold": "#2596BE",
+      "--gold-soft": "rgba(37, 150, 190, 0.16)",
+      "--mist": "#C7DFE5",
+    },
+  },
+  autumn: {
+    id: "autumn",
+    name: "🍁 秋季 • 丹楓琥珀 (9~11月賞楓金秋)",
+    vars: {
+      "--moss": "#763B20",
+      "--moss-light": "#954E2E",
+      "--moss-gradient": "linear-gradient(135deg, #683017 0%, #9C512F 100%)",
+      "--washi": "#FAF4F0",
+      "--bg-gradient": "linear-gradient(135deg, #F9F3EE 0%, #F1E6DC 50%, #FAF5F1 100%)",
+      "--gold": "#C2713F",
+      "--gold-soft": "rgba(194, 113, 63, 0.18)",
+      "--mist": "#E5D3C7",
+    },
+  },
+  classic: {
+    id: "classic",
+    name: "🌿 經典 • 常磐和風 (日系文青苔綠)",
     vars: {
       "--moss": "#1A3822",
       "--moss-light": "#2D5A37",
       "--moss-gradient": "linear-gradient(135deg, #1A3822 0%, #2D5A37 100%)",
-      "--washi": "#F4EFE6",
-      "--bg-gradient": "linear-gradient(135deg, #F0EAE1 0%, #E8DFD3 50%, #F5F0E8 100%)",
+      "--washi": "#F6F3EE",
+      "--bg-gradient": "linear-gradient(135deg, #F5F1EB 0%, #EAE4D9 50%, #FAF7F3 100%)",
       "--gold": "#C5A059",
       "--gold-soft": "rgba(197, 160, 89, 0.2)",
       "--mist": "#D5CFC5",
     },
   },
-  ocean: {
-    name: "🌊 琉璃海洋藍 (Ocean Sapphire)",
+  lavender: {
+    id: "lavender",
+    name: "🪻 特色 • 輕奢薰衣草 (高雅霧灰紫)",
     vars: {
-      "--moss": "#1C3F60",
-      "--moss-light": "#2A5B8A",
-      "--moss-gradient": "linear-gradient(135deg, #163654 0%, #2B6294 100%)",
-      "--washi": "#EEF4F8",
-      "--bg-gradient": "linear-gradient(135deg, #E6EFF6 0%, #DCE8F2 50%, #F0F6FA 100%)",
-      "--gold": "#3E84B8",
-      "--gold-soft": "rgba(62, 132, 184, 0.22)",
-      "--mist": "#CFDFEB",
-    },
-  },
-  sunset: {
-    name: "🌅 夕陽珊瑚橙 (Sunset Coral)",
-    vars: {
-      "--moss": "#7A3326",
-      "--moss-light": "#A04A39",
-      "--moss-gradient": "linear-gradient(135deg, #7A3326 0%, #B85945 100%)",
-      "--washi": "#FAF1EE",
-      "--bg-gradient": "linear-gradient(135deg, #F7EAE5 0%, #F2DFD7 50%, #FAF2EE 100%)",
-      "--gold": "#D4775E",
-      "--gold-soft": "rgba(212, 119, 94, 0.22)",
-      "--mist": "#E8D5CE",
-    },
-  },
-  sakura: {
-    name: "🌸 霞櫻柔粉 (Sakura Pink)",
-    vars: {
-      "--moss": "#733348",
-      "--moss-light": "#964B63",
-      "--moss-gradient": "linear-gradient(135deg, #6C2B40 0%, #A55470 100%)",
-      "--washi": "#FAF0F3",
-      "--bg-gradient": "linear-gradient(135deg, #F8E9EE 0%, #F1DDE5 50%, #FAF3F6 100%)",
-      "--gold": "#BA6B85",
-      "--gold-soft": "rgba(186, 107, 133, 0.22)",
-      "--mist": "#E8D3DC",
-    },
-  },
-  amber: {
-    name: "🍂 琥珀秋金 (Amber Gold)",
-    vars: {
-      "--moss": "#63471D",
-      "--moss-light": "#876229",
-      "--moss-gradient": "linear-gradient(135deg, #5B4018 0%, #9C7232 100%)",
-      "--washi": "#F7F3EB",
-      "--bg-gradient": "linear-gradient(135deg, #F4EEE2 0%, #ECE3D1 50%, #F9F6EE 100%)",
-      "--gold": "#B88A3E",
-      "--gold-soft": "rgba(184, 138, 62, 0.25)",
-      "--mist": "#DFD6C3",
-    },
-  },
-  midnight: {
-    name: "🌌 曜石夜灰 (Midnight Slate)",
-    vars: {
-      "--moss": "#242A36",
-      "--moss-light": "#394254",
-      "--moss-gradient": "linear-gradient(135deg, #1E232E 0%, #3D485C 100%)",
-      "--washi": "#F0F2F5",
-      "--bg-gradient": "linear-gradient(135deg, #E9ECF1 0%, #DFE4EC 50%, #F2F5F8 100%)",
-      "--gold": "#556784",
-      "--gold-soft": "rgba(85, 103, 132, 0.22)",
-      "--mist": "#D1D7E0",
+      "--moss": "#4B406B",
+      "--moss-light": "#65578E",
+      "--moss-gradient": "linear-gradient(135deg, #3F345E 0%, #6B5D96 100%)",
+      "--washi": "#F6F4FA",
+      "--bg-gradient": "linear-gradient(135deg, #F6F4FA 0%, #EBE7F4 50%, #F9F8FC 100%)",
+      "--gold": "#8371B2",
+      "--gold-soft": "rgba(131, 113, 178, 0.16)",
+      "--mist": "#D8D2E6",
     },
   },
 };
 
-// 依行程名稱與識別碼智能預設合適的主題色
-function getAutoThemeKeyForTrip(tripName = "", tripUuid = "") {
+// 舊版與別名相容映射
+TRIP_THEMES.violet = TRIP_THEMES.winter; // 岡山冬日自動升級為純淨雪晶藍
+TRIP_THEMES.moss = TRIP_THEMES.classic;
+TRIP_THEMES.ocean = TRIP_THEMES.summer;
+TRIP_THEMES.sunset = TRIP_THEMES.autumn;
+TRIP_THEMES.sakura = TRIP_THEMES.spring;
+TRIP_THEMES.amber = TRIP_THEMES.autumn;
+TRIP_THEMES.midnight = TRIP_THEMES.winter;
+
+// 依出發季節與月份自然智能適配四季色彩
+function getAutoThemeKeyForTrip(tripName = "", tripUuid = "", startDate = "") {
+  let dateStr = startDate;
+  if (!dateStr && tripData && tripData.startDate) {
+    dateStr = tripData.startDate;
+  }
+  if (!dateStr) {
+    // 從 uuid 或行程名稱嘗試萃取月份 (例如 2027-02okayama -> 02 月 -> 冬季)
+    const mMatch = (String(tripUuid) + " " + String(tripName)).match(/(?:20\d{2}[-_/])?0?(\d{1,2})[-_/]?/);
+    if (mMatch && mMatch[1]) {
+      const m = parseInt(mMatch[1], 10);
+      if (m >= 3 && m <= 5) return "spring";
+      if (m >= 6 && m <= 8) return "summer";
+      if (m >= 9 && m <= 11) return "autumn";
+      if (m === 12 || m === 1 || m === 2) return "winter";
+    }
+  }
+
+  if (dateStr) {
+    const match = String(dateStr).match(/-0?(\d{1,2})-/);
+    if (match) {
+      const month = parseInt(match[1], 10);
+      if (month >= 3 && month <= 5) return "spring";
+      if (month >= 6 && month <= 8) return "summer";
+      if (month >= 9 && month <= 11) return "autumn";
+      return "winter";
+    }
+  }
+
+  // 關鍵字檢測
   const combined = (String(tripName) + " " + String(tripUuid)).toLowerCase();
-  if (
-    combined.includes("紫") ||
-    combined.includes("薰衣草") ||
-    combined.includes("lavender") ||
-    combined.includes("okayama") ||
-    combined.includes("岡山") ||
-    combined.includes("桃")
-  ) {
-    return "violet";
-  }
-  if (combined.includes("櫻") || combined.includes("sakura") || combined.includes("粉")) {
-    return "sakura";
-  }
-  if (
-    combined.includes("海") ||
-    combined.includes("沖繩") ||
-    combined.includes("okinawa") ||
-    combined.includes("藍")
-  ) {
-    return "ocean";
-  }
-  if (combined.includes("夕") || combined.includes("珊瑚") || combined.includes("日落")) {
-    return "sunset";
-  }
-  if (
-    combined.includes("楓") ||
-    combined.includes("秋") ||
-    combined.includes("銀杏") ||
-    combined.includes("金") ||
-    combined.includes("京都") ||
-    combined.includes("kyoto")
-  ) {
-    return "amber";
-  }
-  if (combined.includes("夜") || combined.includes("星") || combined.includes("黑")) {
-    return "midnight";
-  }
-  return "moss";
+  if (combined.includes("櫻") || combined.includes("sakura") || combined.includes("春")) return "spring";
+  if (combined.includes("海") || combined.includes("沖繩") || combined.includes("夏")) return "summer";
+  if (combined.includes("楓") || combined.includes("秋") || combined.includes("銀杏")) return "autumn";
+  if (combined.includes("雪") || combined.includes("冬") || combined.includes("滑雪")) return "winter";
+  if (combined.includes("薰衣草") || combined.includes("lavender")) return "lavender";
+
+  return "classic";
 }
 
 // 套用主題色彩至全域 CSS 變數
-function applyTripTheme(themeKey, tripName = "", tripUuid = "") {
+function applyTripTheme(themeKey, tripName = "", tripUuid = "", startDate = "") {
   let key = themeKey;
   if (!key || !TRIP_THEMES[key]) {
-    key = getAutoThemeKeyForTrip(tripName, tripUuid);
+    key = getAutoThemeKeyForTrip(tripName, tripUuid, startDate);
   }
-  const theme = TRIP_THEMES[key] || TRIP_THEMES["moss"];
+  const theme = TRIP_THEMES[key] || TRIP_THEMES["winter"];
   const root = document.documentElement;
   Object.entries(theme.vars).forEach(([prop, val]) => {
     root.style.setProperty(prop, val);
@@ -209,7 +208,7 @@ function applyTripTheme(themeKey, tripName = "", tripUuid = "") {
 }
 
 function resetToDefaultTheme() {
-  applyTripTheme("moss");
+  applyTripTheme("classic");
 }
 
 // =========================================================================
@@ -231,18 +230,18 @@ const WEATHER_CITY_PRESETS = [
 let currentWeatherPeriod = "3day"; // '3day' | '7day'
 
 function getWmoWeatherInfo(code) {
-  if (code === 0) return { icon: "☀️", text: "晴朗" };
-  if (code === 1) return { icon: "🌤️", text: "大致晴朗" };
+  if (code === 0) return { icon: "☀️", text: "晴朗無雲" };
+  if (code === 1) return { icon: "🌤️", text: "晴時多雲" };
   if (code === 2) return { icon: "⛅", text: "多雲時晴" };
-  if (code === 3) return { icon: "☁️", text: "多雲陰天" };
-  if ([45, 48].includes(code)) return { icon: "🌫️", text: "薄霧晨靄" };
-  if ([51, 53, 55].includes(code)) return { icon: "🌦️", text: "毛毛陣雨" };
-  if ([61, 63, 65].includes(code)) return { icon: "🌧️", text: "短暫陣雨" };
-  if ([71, 73, 75, 77].includes(code)) return { icon: "❄️", text: "降雪" };
-  if ([80, 81, 82].includes(code)) return { icon: "🌧️", text: "局部豪雨" };
+  if (code === 3) return { icon: "☁️", text: "陰天多雲" };
+  if ([45, 48].includes(code)) return { icon: "🌫️", text: "晨間薄霧" };
+  if ([51, 53, 55].includes(code)) return { icon: "🌦️", text: "毛毛細雨" };
+  if ([61, 63, 65].includes(code)) return { icon: "🌧️", text: "陣雨綿綿" };
+  if ([71, 73, 75, 77].includes(code)) return { icon: "❄️", text: "降雪紛飛" };
+  if ([80, 81, 82].includes(code)) return { icon: "🌧️", text: "局部大雨" };
   if ([85, 86].includes(code)) return { icon: "🌨️", text: "飄雪陣雪" };
-  if ([95, 96, 99].includes(code)) return { icon: "⛈️", text: "雷雨交加" };
-  return { icon: "🌤️", text: "舒適宜人" };
+  if ([95, 96, 99].includes(code)) return { icon: "⛈️", text: "雷陣雨" };
+  return { icon: "🌤️", text: "氣候舒適" };
 }
 
 function detectDefaultWeatherCity(tripName = "", tripUuid = "") {
@@ -303,24 +302,29 @@ async function renderWeatherCard(forceRefresh = false) {
 
   container.innerHTML = `
     <div class="weather-card">
-      <div class="weather-card-header">
-        <div class="weather-card-title">
-          <span>⛅ 旅程氣象預報</span>
-          <span style="font-size:11px;font-weight:normal;opacity:0.75;">(${activeCity.name.split(" ")[1]})</span>
+      <div class="weather-header">
+        <div class="weather-title-area">
+          <div class="weather-icon-badge">⛅</div>
+          <div>
+            <div class="weather-title-text">
+              <span>旅程天氣預報</span>
+              <span class="weather-location-pill">📍 ${activeCity.name.split(" ")[1]}</span>
+            </div>
+          </div>
         </div>
-        <div style="display:flex;align-items:center;gap:6px;">
+        <div class="weather-controls">
           <select class="weather-city-select" onchange="onWeatherCitySelectChange(this.value)">
             ${WEATHER_CITY_PRESETS.map((c) => `<option value="${c.id}" ${c.id === activeCityId ? "selected" : ""}>${c.name}</option>`).join("")}
           </select>
-          <button type="button" class="weather-refresh-btn" onclick="renderWeatherCard(true)" title="重新整理天氣">🔄</button>
+          <div class="weather-tab-switch">
+            <button type="button" class="weather-tab-btn ${currentWeatherPeriod === "3day" ? "active" : ""}" onclick="switchWeatherTab('3day')">未來 3 天</button>
+            <button type="button" class="weather-tab-btn ${currentWeatherPeriod === "7day" ? "active" : ""}" onclick="switchWeatherTab('7day')">一週預報</button>
+          </div>
+          <button type="button" class="weather-refresh-btn" onclick="renderWeatherCard(true)" title="重新整理即時氣象">🔄</button>
         </div>
       </div>
-      <div style="display:flex;gap:6px;margin-bottom:12px;">
-        <button type="button" class="weather-period-pill ${currentWeatherPeriod === "3day" ? "active" : ""}" onclick="switchWeatherTab('3day')">未來 3 天</button>
-        <button type="button" class="weather-period-pill ${currentWeatherPeriod === "7day" ? "active" : ""}" onclick="switchWeatherTab('7day')">一週預報</button>
-      </div>
-      <div id="weatherDaysList" style="text-align:center;padding:16px 0;color:var(--moss);font-size:12px;">
-        ⏳ 正在載入即時衛星氣象...
+      <div id="weatherDaysList" style="text-align:center;padding:18px 0;color:var(--moss);font-size:12px;font-weight:700;">
+        ⏳ 正在連線高解析衛星氣象雷達...
       </div>
     </div>
   `;
@@ -344,20 +348,23 @@ async function renderWeatherCard(forceRefresh = false) {
       const isToday = i === 0;
       const maxTemp = Math.round(data.daily.temperature_2m_max[i]);
       const minTemp = Math.round(data.daily.temperature_2m_min[i]);
-      const rainProb = data.daily.precipitation_probability_max ? data.daily.precipitation_probability_max[i] : null;
+      const rainProb = data.daily.precipitation_probability_max ? data.daily.precipitation_probability_max[i] : 0;
       const weatherCode = data.daily.weathercode ? data.daily.weathercode[i] : 0;
       const weatherInfo = getWmoWeatherInfo(weatherCode);
 
       html += `
-        <div class="weather-day-card">
-          <div class="weather-day-date">${isToday ? "今日" : `${m}/${dayNum}`} <span style="opacity:0.75;">(${wd})</span></div>
-          <div class="weather-day-icon">${weatherInfo.icon}</div>
+        <div class="weather-day-col ${isToday ? "is-today" : ""}">
+          ${isToday ? '<span class="weather-today-badge">今日</span>' : ""}
+          <div class="weather-day-date">${m}/${dayNum}</div>
+          <div class="weather-day-sub">(${wd})</div>
+          <div class="weather-day-emoji">${weatherInfo.icon}</div>
           <div class="weather-day-desc">${weatherInfo.text}</div>
           <div class="weather-day-temp">
             <span class="weather-temp-max">${maxTemp}°</span>
+            <span style="opacity:0.35;font-weight:normal;margin:0 2px;">/</span>
             <span class="weather-temp-min">${minTemp}°</span>
           </div>
-          <div class="weather-day-rain">💧 ${rainProb !== null ? rainProb + "%" : "--"}</div>
+          <div class="weather-day-rain ${rainProb >= 50 ? "high-rain" : ""}">💧 ${rainProb}%</div>
         </div>
       `;
     }
@@ -372,7 +379,7 @@ async function renderWeatherCard(forceRefresh = false) {
     const listContainer = document.getElementById("weatherDaysList");
     if (listContainer) {
       listContainer.innerHTML = `
-        <div style="padding:10px;background:rgba(255,255,255,0.6);border-radius:10px;font-size:12px;color:#888;">
+        <div style="padding:14px;background:rgba(255,255,255,0.6);border-radius:12px;font-size:12px;color:#888;border:1px dashed var(--mist);">
           ⛅ 暫時無法取得即時天氣預報（可點擊右上角 🔄 重新整理）
         </div>
       `;
@@ -691,10 +698,11 @@ function showTripView() {
     indicator.innerText = `📍 ${(trip && trip.name) || currentTripUuid}`;
   }
 
-  // 套用專屬主題色彩 (支援每個行程不同色系：紫羅蘭、經典苔綠、海洋藍等)
+  // 套用四季與專案主題色彩 (優先以出發季節智能適配：春櫻、夏海、秋楓、冬雪)
   const themeKey = (trip && trip.theme) || (tripData && tripData.theme) || "";
   const tripTitle = (trip && trip.name) || (tripData && tripData.name) || "";
-  applyTripTheme(themeKey, tripTitle, currentTripUuid);
+  const tripStartDate = (trip && trip.startDate) || (tripData && tripData.startDate) || "";
+  applyTripTheme(themeKey, tripTitle, currentTripUuid, tripStartDate);
 
   // 渲染未來 3 天 / 一週氣象預報卡片
   renderWeatherCard();
@@ -940,6 +948,11 @@ function updateAuthUI() {
     headerLoginBtn.style.display = !isAdmin ? "inline-flex" : "none";
   }
 
+  // 徹底杜絕「兩個登出」：管理員已有 adminCapsule 內的登出按鈕，獨立 logoutBtn 強制隱藏！
+  if (logoutBtn) {
+    logoutBtn.style.display = (!isAdmin && idToken) ? "inline-flex" : "none";
+  }
+
   if (!badge) return;
 
   if (idToken) {
@@ -948,7 +961,6 @@ function updateAuthUI() {
     const expired = isTokenExpired(idToken);
 
     if (loginBtn) loginBtn.style.display = "none";
-    if (logoutBtn) logoutBtn.style.display = "inline-flex";
 
     if (userRole === "admin") {
       badge.className = "user-badge badge-admin";
@@ -4333,13 +4345,13 @@ function openCreateTripModal() {
     <div class="ef-wrap">
       <div class="ef-label">🎨 專案主題色彩</div>
       <select id="newTripTheme" class="ef-input" style="background:#fff;">
-        <option value="violet">💜 夢幻紫羅蘭 (Lavender Violet - 典雅浪漫)</option>
-        <option value="moss">🌿 經典苔綠 (Classic Moss - 和風文青)</option>
-        <option value="ocean">🌊 琉璃海洋藍 (Ocean Blue - 清新海島)</option>
-        <option value="sunset">🌅 夕陽珊瑚橙 (Sunset Coral - 溫暖日落)</option>
-        <option value="sakura">🌸 霞櫻柔粉 (Sakura Pink - 浪漫賞櫻)</option>
-        <option value="amber">🍂 琥珀秋金 (Amber Gold - 賞楓銀杏)</option>
-        <option value="midnight">🌌 曜石夜灰 (Midnight Slate - 極簡都會)</option>
+        <option value="" selected>🔄 依出發季節自動智能適配 (春櫻 / 夏海 / 秋楓 / 冬雪)</option>
+        <option value="winter">❄️ 冬季 • 霜雪冰晶藍 (12~2月冬季與雪景)</option>
+        <option value="spring">🌸 春季 • 霞櫻緋粉 (3~5月賞櫻春旅)</option>
+        <option value="summer">🌊 夏季 • 碧海琉璃 (6~8月海島渡假)</option>
+        <option value="autumn">🍁 秋季 • 丹楓琥珀 (9~11月賞楓金秋)</option>
+        <option value="classic">🌿 經典 • 常磐和風 (日系文青苔綠)</option>
+        <option value="lavender">🪻 特色 • 輕奢薰衣草 (高雅霧灰紫)</option>
       </select>
     </div>
     <div class="ef-wrap">
@@ -4481,13 +4493,13 @@ function openEditTripMetaModal(uuid) {
     <div class="ef-wrap">
       <div class="ef-label">🎨 專案主題色彩</div>
       <select id="editTripTheme" class="ef-input" style="background:#fff;">
-        <option value="violet" ${currentTheme === "violet" ? "selected" : ""}>💜 夢幻紫羅蘭 (Lavender Violet - 典雅浪漫)</option>
-        <option value="moss" ${currentTheme === "moss" ? "selected" : ""}>🌿 經典苔綠 (Classic Moss - 和風文青)</option>
-        <option value="ocean" ${currentTheme === "ocean" ? "selected" : ""}>🌊 琉璃海洋藍 (Ocean Blue - 清新海島)</option>
-        <option value="sunset" ${currentTheme === "sunset" ? "selected" : ""}>🌅 夕陽珊瑚橙 (Sunset Coral - 溫暖日落)</option>
-        <option value="sakura" ${currentTheme === "sakura" ? "selected" : ""}>🌸 霞櫻柔粉 (Sakura Pink - 浪漫賞櫻)</option>
-        <option value="amber" ${currentTheme === "amber" ? "selected" : ""}>🍂 琥珀秋金 (Amber Gold - 賞楓銀杏)</option>
-        <option value="midnight" ${currentTheme === "midnight" ? "selected" : ""}>🌌 曜石夜灰 (Midnight Slate - 極簡都會)</option>
+        <option value="" ${!currentTheme ? "selected" : ""}>🔄 依出發季節自動智能適配 (春櫻 / 夏海 / 秋楓 / 冬雪)</option>
+        <option value="winter" ${currentTheme === "winter" ? "selected" : ""}>❄️ 冬季 • 霜雪冰晶藍 (12~2月冬季與雪景)</option>
+        <option value="spring" ${currentTheme === "spring" ? "selected" : ""}>🌸 春季 • 霞櫻緋粉 (3~5月賞櫻春旅)</option>
+        <option value="summer" ${currentTheme === "summer" ? "selected" : ""}>🌊 夏季 • 碧海琉璃 (6~8月海島渡假)</option>
+        <option value="autumn" ${currentTheme === "autumn" ? "selected" : ""}>🍁 秋季 • 丹楓琥珀 (9~11月賞楓金秋)</option>
+        <option value="classic" ${currentTheme === "classic" ? "selected" : ""}>🌿 經典 • 常磐和風 (日系文青苔綠)</option>
+        <option value="lavender" ${currentTheme === "lavender" ? "selected" : ""}>🪻 特色 • 輕奢薰衣草 (高雅霧灰紫)</option>
       </select>
     </div>
     <div class="ef-wrap">

@@ -1938,16 +1938,16 @@ body.large { font-size: 16px; }
   white-space: nowrap;
 }
 
-/* 旅程天氣預報卡片 (比照參考截圖 2 設計) */
+/* 旅程天氣預報卡片 (比照參考截圖 2 頂級輕奢質感設計) */
 .weather-card {
   background: var(--glass-bg);
-  border: var(--glass-border);
-  border-radius: 24px;
-  padding: 16px 16px 14px;
-  margin-bottom: 18px;
+  border: 1px solid var(--glass-border);
+  border-radius: 22px;
+  padding: 16px 18px 14px;
+  margin-bottom: 20px;
   box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   transition: all 0.3s ease;
 }
 .weather-header {
@@ -1955,8 +1955,10 @@ body.large { font-size: 16px; }
   justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 12px;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
 }
 .weather-title-area {
   display: flex;
@@ -1964,22 +1966,25 @@ body.large { font-size: 16px; }
   gap: 10px;
 }
 .weather-icon-badge {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, rgba(255,220,100,0.35), rgba(255,180,50,0.2));
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.25), rgba(255, 140, 0, 0.15));
+  border: 1px solid rgba(255, 200, 0, 0.3);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 22px;
-  box-shadow: 0 4px 12px rgba(255,180,50,0.15);
+  font-size: 20px;
+  box-shadow: 0 3px 10px rgba(255, 180, 50, 0.15);
   flex-shrink: 0;
 }
 .weather-title-text {
-  font-family: 'Noto Serif TC', serif;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 800;
   color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .weather-location-pill {
   display: inline-flex;
@@ -1989,106 +1994,189 @@ body.large { font-size: 16px; }
   font-weight: 700;
   background: var(--gold-soft);
   color: var(--moss);
-  padding: 2px 8px;
-  border-radius: 12px;
-  margin-top: 2px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
 }
 .weather-controls {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
+}
+.weather-city-select {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 14px;
+  border: 1px solid var(--mist);
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--ink);
+  outline: none;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+  transition: all 0.2s;
+}
+.weather-city-select:focus {
+  border-color: var(--moss);
 }
 .weather-tab-switch {
   display: inline-flex;
-  background: rgba(0,0,0,0.05);
-  padding: 2px;
-  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.06);
+  padding: 3px;
+  border-radius: 14px;
 }
 .weather-tab-btn {
   border: none;
   background: transparent;
-  padding: 4px 10px;
+  padding: 5px 12px;
   font-size: 11px;
-  font-weight: 700;
-  border-radius: 10px;
+  font-weight: 800;
+  border-radius: 11px;
   cursor: pointer;
   color: #666;
-  transition: all 0.2s;
+  transition: all 0.2s ease;
 }
 .weather-tab-btn.active {
   background: #FFF;
   color: var(--moss);
-  box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
-.weather-city-select {
-  padding: 4px 8px;
-  font-size: 11px;
-  border-radius: 10px;
+.weather-refresh-btn {
   border: 1px solid var(--mist);
-  background: var(--glass-bg);
-  color: var(--ink);
-  font-weight: 600;
-  outline: none;
+  background: rgba(255, 255, 255, 0.9);
+  width: 32px;
+  height: 32px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
+  font-size: 13px;
+  color: var(--moss);
+  transition: all 0.25s ease;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+}
+.weather-refresh-btn:hover {
+  background: #FFF;
+  transform: rotate(180deg);
+  border-color: var(--moss);
 }
 .weather-days-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
   gap: 10px;
-  overflow-x: auto;
-  padding: 4px 2px 6px;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
+  padding: 4px 0 6px;
 }
-.weather-days-row::-webkit-scrollbar {
-  display: none;
+@media (max-width: 600px) {
+  .weather-days-row {
+    display: flex;
+    overflow-x: auto;
+    gap: 8px;
+    padding-bottom: 8px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .weather-days-row::-webkit-scrollbar {
+    display: none;
+  }
+  .weather-day-col {
+    min-width: 100px;
+    flex-shrink: 0;
+  }
 }
 .weather-day-col {
-  flex: 1;
-  min-width: 92px;
-  background: rgba(255, 255, 255, 0.7);
-  border: 1px solid var(--mist);
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.9);
   border-radius: 18px;
-  padding: 12px 6px;
+  padding: 12px 8px;
   text-align: center;
-  transition: all 0.2s;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+  transition: all 0.25s ease;
+  position: relative;
+  overflow: hidden;
+}
+.weather-day-col.is-today {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1.5px solid var(--gold);
+  box-shadow: 0 4px 14px var(--gold-soft);
 }
 .weather-day-col:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(0,0,0,0.06);
-  border-color: var(--gold);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+}
+.weather-today-badge {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  font-size: 9px;
+  font-weight: 800;
+  color: var(--moss);
+  background: var(--gold-soft);
+  padding: 1px 5px;
+  border-radius: 6px;
 }
 .weather-day-date {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 800;
   color: var(--ink);
 }
 .weather-day-sub {
-  font-size: 10px;
+  font-size: 11px;
   color: #777;
+  font-weight: 600;
   margin-top: 1px;
 }
 .weather-day-emoji {
-  font-size: 26px;
+  font-size: 30px;
   margin: 6px 0;
   line-height: 1;
+  filter: drop-shadow(0 3px 6px rgba(0,0,0,0.1));
 }
 .weather-day-desc {
   font-size: 11px;
   font-weight: 700;
   color: var(--ink);
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 .weather-day-temp {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   color: var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.weather-temp-max {
+  color: var(--ink);
+  font-weight: 800;
+}
+.weather-temp-min {
+  color: #888;
+  font-weight: 600;
 }
 .weather-day-rain {
-  font-size: 10px;
-  color: #2563EB;
-  margin-top: 3px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 700;
+  color: #1D4ED8;
+  background: rgba(29, 78, 216, 0.08);
+  padding: 2px 6px;
+  border-radius: 8px;
+  display: inline-block;
+  margin-top: 6px;
+}
+.weather-day-rain.high-rain {
+  color: #DC2626;
+  background: rgba(220, 38, 38, 0.08);
+}
+.weather-footer-note {
+  font-size: 11px;
+  color: #999;
+  text-align: center;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(0, 0, 0, 0.06);
 }
 </style>
 </head>
@@ -2290,6 +2378,6 @@ body.large { font-size: 16px; }
   <!-- Google Identity Services SDK -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- 前端核心邏輯 (加入版本號防快取) -->
-  <script src="app.js?v=20260908_01"></script>
+  <script src="app.js?v=20260908_02"></script>
 </body>
 </html>
