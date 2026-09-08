@@ -90,10 +90,29 @@ function verifyIdToken(token) {
   return null;
 }
 
+// 自動根據出發與結束日期推算天數晚數 (例如: 8天7夜)
+function calcTripDurationInGas(startDate, endDate) {
+  if (!startDate || !endDate) return "";
+  try {
+    const s = String(startDate).split("T")[0].trim();
+    const e = String(endDate).split("T")[0].trim();
+    const d1 = new Date(s + "T00:00:00");
+    const d2 = new Date(e + "T00:00:00");
+    if (isNaN(d1.getTime()) || isNaN(d2.getTime())) return "";
+    const diffDays = Math.round((d2.getTime() - d1.getTime()) / 86400000) + 1;
+    if (diffDays > 0) {
+      const nights = diffDays - 1;
+      return diffDays + "天" + (nights > 0 ? nights + "夜" : "");
+    }
+  } catch (err) {}
+  return "";
+}
+
 // 取得使用者角色與可存取行程列表
 function getUserAccess(email) {
   const masterSpreadsheet = SpreadsheetApp.openById(MASTER_SHEET_ID);
   const cleanEmail = normalizeEmail(email);
+  const allowedTrips = [];
   
   let isAdmin = false;
 
@@ -141,26 +160,6 @@ function getUserAccess(email) {
   // 2. 檢索可存取行程
   const tripSheet = masterSpreadsheet.getSheetByName("Trips");
   const tripRows = tripSheet.getDataRange().getValues();
-  const allowedTrips = [];
-  
-// 自動根據出發與結束日期推算天數晚數 (例如: 8天7夜)
-function calcTripDurationInGas(startDate, endDate) {
-  if (!startDate || !endDate) return "";
-  try {
-    const s = String(startDate).split("T")[0].trim();
-    const e = String(endDate).split("T")[0].trim();
-    const d1 = new Date(s + "T00:00:00");
-    const d2 = new Date(e + "T00:00:00");
-    if (isNaN(d1.getTime()) || isNaN(d2.getTime())) return "";
-    const diffDays = Math.round((d2.getTime() - d1.getTime()) / 86400000) + 1;
-    if (diffDays > 0) {
-      const nights = diffDays - 1;
-      return diffDays + "天" + (nights > 0 ? nights + "夜" : "");
-    }
-  } catch (err) {}
-  return "";
-}
-
   for (let i = 1; i < tripRows.length; i++) {
     const uuid = tripRows[i][0];
     const name = tripRows[i][1];
@@ -285,14 +284,20 @@ function doGet(e) {
     let allowedUsersStr = "";
     let tripPassword = "";
     let tripName = "";
+    let tripStartDate = "";
+    let tripEndDate = "";
+    let tripDuration = "";
     
-    // 搜尋對應的 Sheet ID、授權名單與專屬密碼
+    // 搜尋對應的 Sheet ID、授權名單與專屬密碼及 Meta
     for (let i = 1; i < tripRows.length; i++) {
       if (tripRows[i][0] === tripUuid) {
         tripName = tripRows[i][1];
         targetSheetId = tripRows[i][2];
         allowedUsersStr = tripRows[i][4] || "";
         tripPassword = tripRows[i][5] ? String(tripRows[i][5]).trim() : "";
+        tripStartDate = tripRows[i][6] ? String(tripRows[i][6]).trim() : "";
+        tripEndDate = tripRows[i][7] ? String(tripRows[i][7]).trim() : "";
+        tripDuration = tripRows[i][8] ? String(tripRows[i][8]).trim() : "";
         break;
       }
     }
@@ -333,6 +338,14 @@ function doGet(e) {
     // 讀取該旅遊專屬試算表的資料
     try {
       const data = loadTripDetails(targetSheetId);
+      // 雙向防呆對齊：若子表 Info 的 Name、日期或天數為空，自動以 Trips 總表登記資料作為強健備援
+      if (!data.name && tripName) data.name = tripName;
+      if (!data.startDate && tripStartDate) data.startDate = tripStartDate;
+      if (!data.endDate && tripEndDate) data.endDate = tripEndDate;
+      if (!data.duration && tripDuration) data.duration = tripDuration;
+      if (!data.duration && data.startDate && data.endDate) {
+        data.duration = calcTripDurationInGas(data.startDate, data.endDate);
+      }
       return ContentService.createTextOutput(JSON.stringify({ status: "success", role: access.role, data: data }))
                            .setMimeType(ContentService.MimeType.JSON);
     } catch (err) {
@@ -514,44 +527,33 @@ function doPost(e) {
       if (endDate !== undefined) tripSheet.getRange(targetRowIndex, 8).setValue(endDate);
       if (duration !== undefined) tripSheet.getRange(targetRowIndex, 9).setValue(duration);
       
-      // 2. 更新個別試算表 Info 分頁
+      // 2. 更新個別試算表 Info 分頁 (使用動態 Key-Value 寫入，徹底杜絕欄位錯位)
       try {
         const subSs = SpreadsheetApp.openById(targetSheetId);
-        const infoSheet = subSs.getSheetByName("Info");
-        if (infoSheet) {
-          infoSheet.getRange(2, 2).setValue(name);
-          infoSheet.getRange(3, 2).setValue(startDate);
-          infoSheet.getRange(4, 2).setValue(endDate);
-          infoSheet.getRange(5, 2).setValue(duration);
-          if (password !== null) {
-            let hasPwdRow = false;
-            const infoData = infoSheet.getDataRange().getValues();
-            for (let r = 0; r < infoData.length; r++) {
-              if (String(infoData[r][0]).toLowerCase() === "password") {
-                infoSheet.getRange(r + 1, 2).setValue(password);
-                hasPwdRow = true;
-                break;
-              }
-            }
-            if (!hasPwdRow) {
-              infoSheet.appendRow(["Password", password]);
-            }
-          }
-          if (theme !== null) {
-            let hasThemeRow = false;
-            const infoData = infoSheet.getDataRange().getValues();
-            for (let r = 0; r < infoData.length; r++) {
-              if (String(infoData[r][0]).toLowerCase() === "theme") {
-                infoSheet.getRange(r + 1, 2).setValue(theme);
-                hasThemeRow = true;
-                break;
-              }
-            }
-            if (!hasThemeRow) {
-              infoSheet.appendRow(["Theme", theme]);
-            }
-          }
+        let infoSheet = subSs.getSheetByName("Info");
+        if (!infoSheet) {
+          infoSheet = subSs.insertSheet("Info");
+          infoSheet.appendRow(["Key", "Value"]);
         }
+        
+        let finalDuration = duration;
+        if (!finalDuration && startDate && endDate) {
+          finalDuration = calcTripDurationInGas(startDate, endDate);
+        }
+
+        const metaMap = {
+          "Name": name,
+          "StartDate": startDate,
+          "EndDate": endDate,
+          "Duration": finalDuration
+        };
+        if (password !== null) {
+          metaMap["Password"] = password;
+        }
+        if (theme !== null) {
+          metaMap["Theme"] = theme;
+        }
+        setInfoSheetMap(infoSheet, metaMap);
         return ContentService.createTextOutput(JSON.stringify({ status: "success", message: "Trip meta updated successfully" }))
                              .setMimeType(ContentService.MimeType.JSON);
       } catch (err) {
@@ -724,30 +726,39 @@ function loadTripDetails(sheetId) {
   const ss = SpreadsheetApp.openById(sheetId);
   const result = {};
   
-  // 1. Info (基本資料與密碼)
+  // 1. Info (基本資料與密碼：採用動態 Key-Value 鍵值映射，徹底免疫試算表列順序變更或手動插行造成的錯位)
+  result.name = "";
+  result.startDate = "";
+  result.endDate = "";
+  result.duration = "";
+  result.password = "";
+  result.theme = "";
+
   const infoSheet = ss.getSheetByName("Info");
   if (infoSheet) {
     const infoRows = infoSheet.getDataRange().getDisplayValues();
-    result.name = (infoRows[1] && infoRows[1][1]) || "";
-    result.startDate = (infoRows[2] && infoRows[2][1]) || "";
-    result.endDate = (infoRows[3] && infoRows[3][1]) || "";
-    result.duration = (infoRows[4] && infoRows[4][1]) || "";
-    for (let r = 1; r < infoRows.length; r++) {
-      const rowKey = String(infoRows[r][0]).toLowerCase();
-      if (rowKey === "password") {
-        result.password = infoRows[r][1] || "";
-      }
-      if (rowKey === "theme") {
-        result.theme = infoRows[r][1] || "";
+    for (let r = 0; r < infoRows.length; r++) {
+      const rowKey = String(infoRows[r][0] || "").trim().toLowerCase();
+      const rowVal = infoRows[r][1] !== undefined ? String(infoRows[r][1]).trim() : "";
+      if (!rowKey) continue;
+      if (rowKey === "name" || rowKey === "行程名稱" || rowKey === "手冊名稱") {
+        result.name = rowVal;
+      } else if (rowKey === "startdate" || rowKey === "出發日期" || rowKey === "開始日期") {
+        result.startDate = rowVal;
+      } else if (rowKey === "enddate" || rowKey === "結束日期" || rowKey === "回程日期") {
+        result.endDate = rowVal;
+      } else if (rowKey === "duration" || rowKey === "天數" || rowKey === "旅遊天數") {
+        result.duration = rowVal;
+      } else if (rowKey === "password" || rowKey === "密碼") {
+        result.password = rowVal;
+      } else if (rowKey === "theme" || rowKey === "主題" || rowKey === "顏色風格") {
+        result.theme = rowVal;
       }
     }
-  } else {
-    result.name = "";
-    result.startDate = "";
-    result.endDate = "";
-    result.duration = "";
-    result.password = "";
-    result.theme = "";
+    // 天數防呆：若試算表未明確填寫 duration，但有出發與回程日期，全自動即時精算並補齊 (例如: 8天7夜)
+    if (!result.duration && result.startDate && result.endDate) {
+      result.duration = calcTripDurationInGas(result.startDate, result.endDate);
+    }
   }
   
   // 2. Checklist (行前準備與必備清單)
@@ -1046,34 +1057,76 @@ function batchWriteSheetRows(sheet, rows) {
   }
 }
 
+// 輔助函式：動態設定 Info 工作表中的鍵值（依據第一欄 Key 尋找對應行寫入，若不存在則新增，徹底杜絕寫死行號造成的錯位）
+function setInfoSheetKeyValue(infoSheet, key, value) {
+  if (!infoSheet || !key) return;
+  const targetKey = String(key).trim().toLowerCase();
+  const data = infoSheet.getDataRange().getValues();
+  for (let r = 0; r < data.length; r++) {
+    const rowKey = String(data[r][0] || "").trim().toLowerCase();
+    if (rowKey === targetKey) {
+      infoSheet.getRange(r + 1, 2).setValue(value !== undefined && value !== null ? value : "");
+      return;
+    }
+  }
+  // 若該 Key 尚不存在，自動追加新行
+  infoSheet.appendRow([key, value !== undefined && value !== null ? value : ""]);
+}
+
+// 輔助函式：批次設定 Info 表多個鍵值
+function setInfoSheetMap(infoSheet, keyValueMap) {
+  if (!infoSheet || !keyValueMap) return;
+  const existingData = infoSheet.getDataRange().getValues();
+  const keyToRowIndex = {};
+  for (let r = 0; r < existingData.length; r++) {
+    const rowKey = String(existingData[r][0] || "").trim().toLowerCase();
+    if (rowKey) {
+      keyToRowIndex[rowKey] = r + 1; // 1-indexed
+    }
+  }
+
+  for (let [k, val] of Object.entries(keyValueMap)) {
+    if (val === undefined) continue;
+    const lk = String(k).trim().toLowerCase();
+    if (keyToRowIndex[lk]) {
+      infoSheet.getRange(keyToRowIndex[lk], 2).setValue(val !== null ? val : "");
+    } else {
+      infoSheet.appendRow([k, val !== null ? val : ""]);
+      keyToRowIndex[lk] = infoSheet.getLastRow();
+    }
+  }
+}
+
 // 儲存前端修改後的完整資料回 Google 試算表 (全面採用高效能批次寫入架構)
 function saveTripDetails(sheetId, data) {
   const ss = SpreadsheetApp.openById(sheetId);
   
-  // 1. Info (基本手冊資訊與密碼同步)
+  // 1. Info (基本手冊資訊與密碼同步，採用動態 Key 比對寫入)
   let infoSheet = ss.getSheetByName("Info");
-  if (!infoSheet) infoSheet = ss.insertSheet("Info");
-  infoSheet.getRange(2, 2).setValue(data.name || "");
-  infoSheet.getRange(3, 2).setValue(data.startDate || "");
-  infoSheet.getRange(4, 2).setValue(data.endDate || "");
-  infoSheet.getRange(5, 2).setValue(data.duration || "");
+  if (!infoSheet) {
+    infoSheet = ss.insertSheet("Info");
+    infoSheet.appendRow(["Key", "Value"]);
+  }
+  
+  // 計算天數防呆
+  let tripDuration = data.duration || "";
+  if (!tripDuration && data.startDate && data.endDate) {
+    tripDuration = calcTripDurationInGas(data.startDate, data.endDate);
+  }
+
+  const infoMap = {
+    "Name": data.name || "",
+    "StartDate": data.startDate || "",
+    "EndDate": data.endDate || "",
+    "Duration": tripDuration
+  };
   if (data.password !== undefined) {
-    infoSheet.getRange(6, 2).setValue(data.password || "");
+    infoMap["Password"] = data.password || "";
   }
   if (data.theme !== undefined) {
-    let hasThemeRow = false;
-    const infoData = infoSheet.getDataRange().getValues();
-    for (let r = 0; r < infoData.length; r++) {
-      if (String(infoData[r][0]).toLowerCase() === "theme") {
-        infoSheet.getRange(r + 1, 2).setValue(data.theme || "");
-        hasThemeRow = true;
-        break;
-      }
-    }
-    if (!hasThemeRow) {
-      infoSheet.appendRow(["Theme", data.theme || ""]);
-    }
+    infoMap["Theme"] = data.theme || "";
   }
+  setInfoSheetMap(infoSheet, infoMap);
   
   // 2. Checklist (行前準備與行李清單)
   let checklistSheet = ss.getSheetByName("Checklist");
