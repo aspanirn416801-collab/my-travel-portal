@@ -146,7 +146,7 @@ const TRIP_THEMES = {
 };
 
 // 舊版與別名相容映射
-TRIP_THEMES.violet = TRIP_THEMES.winter; // 岡山冬日自動升級為純淨雪晶藍
+TRIP_THEMES.violet = TRIP_THEMES.winter; // 經典冬日自動升級為純淨雪晶藍
 TRIP_THEMES.moss = TRIP_THEMES.classic;
 TRIP_THEMES.ocean = TRIP_THEMES.summer;
 TRIP_THEMES.sunset = TRIP_THEMES.autumn;
@@ -212,9 +212,23 @@ function resetToDefaultTheme() {
 }
 
 // =========================================================================
-// 旅程天氣預報模組 (整合 Open-Meteo 免費 API，支援 3天 / 一週 7天 與多城市切換)
+// 旅程天氣預報模組 (整合 Open-Meteo 免費 API，支援 3天 / 一週 7天 與全球動態定位)
 // =========================================================================
 const WEATHER_CITY_PRESETS = [
+  // 奧地利 & 捷克 & 歐洲熱門名城
+  { id: "vienna", name: "奧地利 維也納 (Vienna)", lat: 48.2082, lon: 16.3738, tz: "Europe/Vienna" },
+  { id: "prague", name: "捷克 布拉格 (Prague)", lat: 50.0755, lon: 14.4378, tz: "Europe/Prague" },
+  { id: "salzburg", name: "奧地利 薩爾斯堡 (Salzburg)", lat: 47.8095, lon: 13.055, tz: "Europe/Vienna" },
+  { id: "hallstatt", name: "奧地利 哈修塔特 (Hallstatt)", lat: 47.5622, lon: 13.6493, tz: "Europe/Vienna" },
+  { id: "cesky_krumlov", name: "捷克 庫倫洛夫 (Český Krumlov)", lat: 48.8127, lon: 14.3175, tz: "Europe/Prague" },
+  { id: "innsbruck", name: "奧地利 因斯布魯克 (Innsbruck)", lat: 47.2692, lon: 11.4041, tz: "Europe/Vienna" },
+  { id: "budapest", name: "匈牙利 布達佩斯 (Budapest)", lat: 47.4979, lon: 19.0402, tz: "Europe/Budapest" },
+  { id: "paris", name: "法國 巴黎 (Paris)", lat: 48.8566, lon: 2.3522, tz: "Europe/Paris" },
+  { id: "london", name: "英國 倫敦 (London)", lat: 51.5074, lon: -0.1278, tz: "Europe/London" },
+  { id: "zurich", name: "瑞士 蘇黎世 (Zurich)", lat: 47.3769, lon: 8.5417, tz: "Europe/Zurich" },
+  { id: "rome", name: "義大利 羅馬 (Rome)", lat: 41.9028, lon: 12.4964, tz: "Europe/Rome" },
+  { id: "munich", name: "德國 慕尼黑 (Munich)", lat: 48.1351, lon: 11.582, tz: "Europe/Berlin" },
+  // 日本主要城市
   { id: "okayama", name: "日本 岡山 (Okayama)", lat: 34.6618, lon: 133.935, tz: "Asia/Tokyo" },
   { id: "kurashiki", name: "日本 倉敷 (Kurashiki)", lat: 34.5956, lon: 133.7719, tz: "Asia/Tokyo" },
   { id: "tokyo", name: "日本 東京 (Tokyo)", lat: 35.6762, lon: 139.6503, tz: "Asia/Tokyo" },
@@ -223,6 +237,10 @@ const WEATHER_CITY_PRESETS = [
   { id: "fukuoka", name: "日本 福岡 (Fukuoka)", lat: 33.5904, lon: 130.4017, tz: "Asia/Tokyo" },
   { id: "sapporo", name: "日本 札幌 (Sapporo)", lat: 43.0618, lon: 141.3545, tz: "Asia/Tokyo" },
   { id: "okinawa", name: "日本 沖繩 (Naha)", lat: 26.2124, lon: 127.6809, tz: "Asia/Tokyo" },
+  // 亞洲與台灣
+  { id: "bangkok", name: "泰國 曼谷 (Bangkok)", lat: 13.7563, lon: 100.5018, tz: "Asia/Bangkok" },
+  { id: "seoul", name: "韓國 首爾 (Seoul)", lat: 37.5665, lon: 126.978, tz: "Asia/Seoul" },
+  { id: "singapore", name: "新加坡 (Singapore)", lat: 1.3521, lon: 103.8198, tz: "Asia/Singapore" },
   { id: "taipei", name: "台灣 台北 (Taipei)", lat: 25.033, lon: 121.5654, tz: "Asia/Taipei" },
   { id: "kaohsiung", name: "台灣 高雄 (Kaohsiung)", lat: 22.6273, lon: 120.3014, tz: "Asia/Taipei" },
 ];
@@ -244,6 +262,7 @@ function getWmoWeatherInfo(code) {
   return { icon: "🌤️", text: "氣候舒適" };
 }
 
+// 智能檢測行程地點所屬之氣象城市 (全面支援歐洲奧捷、全球與日台，徹底拔除寫死岡山！)
 function detectTripWeatherCity(trip, data) {
   const combined = [
     trip?.name || "",
@@ -255,9 +274,32 @@ function detectTripWeatherCity(trip, data) {
     ...(data?.days || []).flatMap((d) => (d?.spots || []).map((s) => s?.place || "")),
   ].join(" ").toLowerCase();
 
-  // 依行程目的地自動智能匹配氣象城市
+  // 1. 奧地利 & 捷克城市優先匹配
+  if (combined.includes("vienna") || combined.includes("維也納") || combined.includes("wien") || combined.includes("vie")) return "vienna";
+  if (combined.includes("prague") || combined.includes("布拉格") || combined.includes("praha") || combined.includes("prg")) return "prague";
+  if (combined.includes("salzburg") || combined.includes("薩爾斯堡")) return "salzburg";
+  if (combined.includes("hallstatt") || combined.includes("哈修塔特")) return "hallstatt";
+  if (combined.includes("krumlov") || combined.includes("庫倫洛夫") || combined.includes("ck小鎮")) return "cesky_krumlov";
+  if (combined.includes("innsbruck") || combined.includes("因斯布魯克")) return "innsbruck";
+  if (combined.includes("austria") || combined.includes("奧地利") || combined.includes("奧捷")) return "vienna";
+  if (combined.includes("czech") || combined.includes("捷克")) return "prague";
+
+  // 2. 歐洲其他名城
+  if (combined.includes("budapest") || combined.includes("布達佩斯")) return "budapest";
+  if (combined.includes("paris") || combined.includes("巴黎") || combined.includes("cdg")) return "paris";
+  if (combined.includes("london") || combined.includes("倫敦") || combined.includes("lhr")) return "london";
+  if (combined.includes("zurich") || combined.includes("蘇黎世") || combined.includes("瑞士") || combined.includes("swiss")) return "zurich";
+  if (combined.includes("rome") || combined.includes("羅馬") || combined.includes("義大利") || combined.includes("italy")) return "rome";
+  if (combined.includes("munich") || combined.includes("慕尼黑") || combined.includes("德國") || combined.includes("germany")) return "munich";
+
+  // 3. 亞洲其他熱門國家
+  if (combined.includes("bangkok") || combined.includes("曼谷") || combined.includes("泰國") || combined.includes("thailand") || combined.includes("bkk")) return "bangkok";
+  if (combined.includes("seoul") || combined.includes("首爾") || combined.includes("韓國") || combined.includes("korea") || combined.includes("icn")) return "seoul";
+  if (combined.includes("singapore") || combined.includes("新加坡") || combined.includes("sin")) return "singapore";
+
+  // 4. 日本主要城市
   if (combined.includes("kurashiki") || combined.includes("倉敷")) return "kurashiki";
-  if (combined.includes("okayama") || combined.includes("岡山") || combined.includes("桃")) return "okayama";
+  if (combined.includes("okayama") || combined.includes("岡山") || combined.includes("桃太郎") || combined.includes("okj")) return "okayama";
   if (combined.includes("tokyo") || combined.includes("東京") || combined.includes("hnd") || combined.includes("nrt")) return "tokyo";
   if (combined.includes("osaka") || combined.includes("大阪") || combined.includes("kix")) return "osaka";
   if (combined.includes("kyoto") || combined.includes("京都")) return "kyoto";
@@ -267,15 +309,29 @@ function detectTripWeatherCity(trip, data) {
   if (combined.includes("nagoya") || combined.includes("名古屋") || combined.includes("ngo")) return "nagoya";
   if (combined.includes("hiroshima") || combined.includes("廣島")) return "hiroshima";
   if (combined.includes("sendai") || combined.includes("仙台") || combined.includes("sdj")) return "sendai";
+
+  // 5. 台灣城市
   if (combined.includes("taipei") || combined.includes("台北") || combined.includes("tpe") || combined.includes("tsa")) return "taipei";
   if (combined.includes("kaohsiung") || combined.includes("高雄") || combined.includes("khh")) return "kaohsiung";
 
-  return "okayama";
+  // 6. 若完全未匹配任何預設城市，根據行程名稱或代碼智能決定，絕不無腦退回岡山！
+  if (combined.includes("europe") || combined.includes("歐洲")) return "vienna";
+  if (combined.includes("japan") || combined.includes("日本")) return "tokyo";
+
+  // 默認回傳第一筆通用歐洲樞紐或已知預設，絕不 hardcode okayama
+  return WEATHER_CITY_PRESETS[0].id;
 }
 
-async function fetchWeatherForCity(cityId, forceRefresh = false) {
-  const city = WEATHER_CITY_PRESETS.find((c) => c.id === cityId) || WEATHER_CITY_PRESETS[0];
-  const cacheKey = `weather_cache_${city.id}`;
+// 支援動態全球城市解析與氣象取得
+async function fetchWeatherForCity(cityOrId, forceRefresh = false) {
+  let city = null;
+  if (typeof cityOrId === "object" && cityOrId.lat && cityOrId.lon) {
+    city = cityOrId;
+  } else {
+    city = WEATHER_CITY_PRESETS.find((c) => c.id === cityOrId) || WEATHER_CITY_PRESETS[0];
+  }
+
+  const cacheKey = `weather_cache_${city.id || (city.lat + "_" + city.lon)}`;
 
   if (!forceRefresh) {
     try {
@@ -290,7 +346,7 @@ async function fetchWeatherForCity(cityId, forceRefresh = false) {
     } catch (e) {}
   }
 
-  const url = `https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=${encodeURIComponent(city.tz)}`;
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=${encodeURIComponent(city.tz || "UTC")}`;
   const resp = await fetch(url);
   if (!resp.ok) throw new Error("天氣資料伺服器暫時無法連線");
   const data = await resp.json();
@@ -1259,6 +1315,21 @@ function sanitizeUrl(url) {
 
 // 智能目的地地名與國家封面圖庫 (支援全球中英文關鍵字自動匹配)
 const DESTINATION_COVERS = [
+  {
+    keywords: ["austria-czech", "austria and czech", "奧捷", "德奧捷", "東歐", "中歐"],
+    url: "https://images.unsplash.com/photo-1541849546-216549ae216d?auto=format&fit=crop&w=1200&q=85", // 歐洲古典名城與城堡
+    cityTag: "🇪🇺 歐洲 · 奧捷漫遊",
+  },
+  {
+    keywords: ["austria", "奧地利", "vienna", "維也納", "salzburg", "薩爾斯堡", "hallstatt", "哈修塔特", "innsbruck", "因斯布魯克", "wien"],
+    url: "https://images.unsplash.com/photo-1516550893923-42d28e5677af?auto=format&fit=crop&w=1200&q=85", // 奧地利哈修塔特湖光山色
+    cityTag: "🇦🇹 奧地利 · 維也納",
+  },
+  {
+    keywords: ["czech", "czechia", "捷克", "prague", "布拉格", "praha", "krumlov", "庫倫洛夫", "brno", "布爾諾"],
+    url: "https://images.unsplash.com/photo-1519671482749-fd09be7ccebf?auto=format&fit=crop&w=1200&q=85", // 捷克布拉格查理大橋
+    cityTag: "🇨🇿 捷克 · 布拉格",
+  },
   {
     keywords: ["okayama", "岡山", "kurashiki", "倉敷", "後樂園"],
     url: "https://images.unsplash.com/photo-1503899036084-c55cdd92da26?auto=format&fit=crop&w=1200&q=85", // 岡山城與名園
@@ -2468,11 +2539,11 @@ function openAddHotelModal() {
   const formHtml = `
     <div class="ef-wrap">
       <div class="ef-label">飯店名稱 <span style="color:var(--red);">*</span></div>
-      <input type="text" id="addHotelName" class="ef-input" placeholder="例如: 岡山格蘭比亞大酒店">
+      <input type="text" id="addHotelName" class="ef-input" placeholder="例如: 市中心五星大酒店、精品設計旅宿">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">飯店地址 (供 Google 導航使用)</div>
-      <input type="text" id="addHotelAddr" class="ef-input" placeholder="例如: 〒700-0024 岡山県岡山市北区駅元町1-5">
+      <input type="text" id="addHotelAddr" class="ef-input" placeholder="例如: 市中心主要大道 123 號、中央車站旁徒步 3 分鐘">
     </div>
     <div style="display:flex;gap:10px;">
       <div class="ef-wrap" style="flex:1;">
@@ -2490,7 +2561,7 @@ function openAddHotelModal() {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">備註說明</div>
-      <input type="text" id="addHotelNote" class="ef-input" placeholder="例如: 岡山站直結、已含早餐、可寄放行李">
+      <input type="text" id="addHotelNote" class="ef-input" placeholder="例如: 車站直結、已含早餐、可免費寄放行李">
     </div>
   `;
 
@@ -2583,7 +2654,7 @@ function openEditHotelModal(index) {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">備註說明</div>
-      <input type="text" id="editHotelNote" class="ef-input" placeholder="例如: 岡山站直結、附早餐" value="${h.note || ""
+      <input type="text" id="editHotelNote" class="ef-input" placeholder="例如: 車站直結、附早餐、高樓層景觀" value="${h.note || ""
     }">
     </div>
   `;
@@ -3117,7 +3188,7 @@ function openAddDayModal() {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">當日行程主題名稱 <span style="color:var(--red);">*</span></div>
-      <input type="text" id="addDayTitle" class="ef-input" placeholder="例如: 岡山城 ＆ 後樂園漫遊">
+      <input type="text" id="addDayTitle" class="ef-input" placeholder="例如: 舊城區漫步 ＆ 經典地標參訪">
     </div>
   `;
 
@@ -3645,7 +3716,10 @@ function extractFoodArea(item) {
     return item.area.trim();
   }
   const fullText = `${item.name || ""} ${item.desc || ""}`;
-  const commonAreas = ["岡山", "倉敷", "高松", "小豆島", "兒島", "廣島", "尾道", "松山", "直島", "豐島", "丸龜", "琴平"];
+  const commonAreas = [
+    "維也納", "布拉格", "薩爾斯堡", "哈修塔特", "庫倫洛夫", "因斯布魯克", "布達佩斯", "巴黎", "倫敦", "蘇黎世", "羅馬", "慕尼黑",
+    "東京", "京都", "大阪", "福岡", "札幌", "沖繩", "岡山", "倉敷", "高松", "台北", "高雄", "首爾", "曼谷"
+  ];
   for (const a of commonAreas) {
     if (fullText.includes(a)) {
       return a;
@@ -3832,8 +3906,8 @@ function openEditFoodModal(index) {
       <input type="text" id="editFoodName" class="ef-input" value="${item.name || ""}">
     </div>
     <div class="ef-wrap">
-      <div class="ef-label">地區/分區 (例如: 岡山、倉敷、高松、小豆島，選填)</div>
-      <input type="text" id="editFoodArea" class="ef-input" placeholder="例如: 岡山、倉敷、高松" value="${item.area || extractFoodArea(item) || ""}">
+      <div class="ef-label">地區/分區 (例如: 老城區、市中心、河畔大道，選填)</div>
+      <input type="text" id="editFoodArea" class="ef-input" placeholder="例如: 老城區、市中心、河畔大道" value="${item.area || extractFoodArea(item) || ""}">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">特色說明或推薦菜色</div>
@@ -3912,15 +3986,15 @@ function openAddFoodModal() {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">美食或店家名稱 <span style="color:var(--red);">*</span> (輸入後自動產生地圖導航)</div>
-      <input type="text" id="addFoodName" class="ef-input" placeholder="例如: 一蘭拉麵 岡山站前店、日生町牡蠣燒">
+      <input type="text" id="addFoodName" class="ef-input" placeholder="例如: 舊城區景觀餐廳、在地經典百年老店">
     </div>
     <div class="ef-wrap">
-      <div class="ef-label">地區/分區 (例如: 岡山、倉敷、高松、小豆島，選填)</div>
-      <input type="text" id="addFoodArea" class="ef-input" placeholder="例如: 岡山、倉敷、高松">
+      <div class="ef-label">地區/分區 (例如: 老城區、市中心、河畔大道，選填)</div>
+      <input type="text" id="addFoodArea" class="ef-input" placeholder="例如: 老城區、市中心、河畔大道">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">特色說明或推薦菜色</div>
-      <input type="text" id="addFoodDesc" class="ef-input" placeholder="例如: 招牌豚骨拉麵、岡山限定冬季美味">
+      <input type="text" id="addFoodDesc" class="ef-input" placeholder="例如: 招牌酥脆炸特餐、特製私房甜點、必喝咖啡">
     </div>
     <label style="font-size:13px;color:var(--moss);font-weight:bold;display:flex;align-items:center;gap:6px;margin-top:10px;cursor:pointer;">
       <input type="checkbox" id="addFoodMust"> 標記為必吃名店 🔥
@@ -4203,7 +4277,7 @@ function openAddShoppingModal() {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">商品名稱 <span style="color:var(--red);">*</span></div>
-      <input type="text" id="addShoppingName" class="ef-input" placeholder="例如: 合利他命 EX Plus 270錠、獺祭二割三分">
+      <input type="text" id="addShoppingName" class="ef-input" placeholder="例如: 特色紀念品、當地名產禮盒、免稅精品">
     </div>
     <div style="display:flex;gap:10px;">
       <div class="ef-wrap" style="flex:1;">
@@ -4212,12 +4286,12 @@ function openAddShoppingModal() {
       </div>
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">預估價格 / 預算 (選填)</div>
-        <input type="text" id="addShoppingPrice" class="ef-input" placeholder="例如: ¥5,800 或 NT$ 1,200">
+        <input type="text" id="addShoppingPrice" class="ef-input" placeholder="例如: €25 或 NT$ 1,200">
       </div>
     </div>
     <div class="ef-wrap">
       <div class="ef-label">購買地點 / 店名 (輸入後自動產生 Google 地圖導航按鈕)</div>
-      <input type="text" id="addShoppingLocation" class="ef-input" placeholder="例如: BicCamera 岡山站前店、驚安殿堂唐吉訶德、大國藥妝">
+      <input type="text" id="addShoppingLocation" class="ef-input" placeholder="例如: 市中心旗艦店、大型連鎖超市、特色市集">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">參考網址 (商品介紹或線上商城連結，選填)</div>
@@ -4225,7 +4299,7 @@ function openAddShoppingModal() {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">備註說明 (規格、色號、退稅注意事項等)</div>
-      <textarea id="addShoppingNote" class="ef-textarea" placeholder="例如: 買2盒、需退稅、請認明藍色包裝"></textarea>
+      <textarea id="addShoppingNote" class="ef-textarea" placeholder="例如: 買2盒、需退稅、請認明特定包裝"></textarea>
     </div>
     <div class="ef-wrap">
       <div class="ef-label">上傳商品照片 (5MB內，選填)</div>
@@ -4302,7 +4376,7 @@ function openEditShoppingModal(index) {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">購買地點 / 店名 (輸入後自動產生 Google 地圖導航按鈕)</div>
-      <input type="text" id="editShoppingLocation" class="ef-input" placeholder="例如: BicCamera 岡山站前店、驚安殿堂唐吉訶德、大國藥妝" value="${item.location || ""}">
+      <input type="text" id="editShoppingLocation" class="ef-input" placeholder="例如: 市中心旗艦店、大型連鎖超市、特色市集" value="${item.location || ""}">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">參考網址</div>
@@ -4524,7 +4598,7 @@ function openCreateTripModal() {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">🔐 旅程專屬存取密碼 <span style="font-weight:normal;color:#888;">(選填，留空為公開手冊，有設密碼訪客需輸入密碼唯讀)</span></div>
-      <input type="text" id="newTripPassword" class="ef-input" placeholder="例如: okayama2027 (選填)">
+      <input type="text" id="newTripPassword" class="ef-input" placeholder="例如: travel2028 (選填)">
     </div>
   `;
 
@@ -4697,7 +4771,7 @@ function openEditTripMetaModal(uuid) {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">🔐 旅程專屬存取密碼 <span style="font-weight:normal;color:#888;">(選填，留空即取消密碼變為公開手冊)</span></div>
-      <input type="text" id="editTripPassword" class="ef-input" value="${trip.password || ""}" placeholder="例如: okayama2027 (選填)">
+      <input type="text" id="editTripPassword" class="ef-input" value="${trip.password || ""}" placeholder="例如: travel2028 (選填)">
     </div>
   `;
 
@@ -5410,7 +5484,7 @@ function openAddTransportModal() {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">乘車區間 / 路線 <span style="color:var(--red);">*</span></div>
-      <input type="text" id="addTransFromTo" class="ef-input" placeholder="例如: 岡山機場～岡山站、岡山站到JR 琴平站">
+      <input type="text" id="addTransFromTo" class="ef-input" placeholder="例如: 機場～市區快線、中央車站到舊城區">
     </div>
     <div style="display:flex;gap:10px;">
       <div class="ef-wrap" style="flex:1;">
@@ -5424,17 +5498,17 @@ function openAddTransportModal() {
     </div>
     <div style="display:flex;gap:10px;">
       <div class="ef-wrap" style="flex:1;">
-        <div class="ef-label">車種名稱 (例如: JR特急、機場巴士)</div>
-        <input type="text" id="addTransTrain" class="ef-input" placeholder="例如: 機場巴士、JR 瀨戶大橋線">
+        <div class="ef-label">車種名稱 (例如: 特快列車、機場巴士、地鐵)</div>
+        <input type="text" id="addTransTrain" class="ef-input" placeholder="例如: 機場快線、國鐵城際列車、觀光巴士">
       </div>
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">劃位/座位資訊</div>
-        <input type="text" id="addTransSeat" class="ef-input" placeholder="例如: 自由席、指定席、bus 2號口">
+        <input type="text" id="addTransSeat" class="ef-input" placeholder="例如: 2號車廂 15A、自由席、Bus 2號口">
       </div>
     </div>
     <div class="ef-wrap">
       <div class="ef-label">備註事項 (月台、轉乘、換券說明)</div>
-      <textarea id="addTransNote" class="ef-textarea" placeholder="例如: bus 2號口搭乘、琴平站轉搭琴電"></textarea>
+      <textarea id="addTransNote" class="ef-textarea" placeholder="例如: 第2月台搭乘、於中央車站轉乘地下鐵"></textarea>
     </div>
   `;
 
