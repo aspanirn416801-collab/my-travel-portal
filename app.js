@@ -244,23 +244,32 @@ function getWmoWeatherInfo(code) {
   return { icon: "🌤️", text: "氣候舒適" };
 }
 
-function detectDefaultWeatherCity(tripName = "", tripUuid = "") {
-  const combined = (String(tripName) + " " + String(tripUuid)).toLowerCase();
-  for (const city of WEATHER_CITY_PRESETS) {
-    if (combined.includes(city.id) || combined.includes(city.name.split(" ")[1])) {
-      return city.id;
-    }
-  }
-  if (combined.includes("倉敷")) return "kurashiki";
-  if (combined.includes("岡山")) return "okayama";
-  if (combined.includes("東京")) return "tokyo";
-  if (combined.includes("大阪")) return "osaka";
-  if (combined.includes("京都")) return "kyoto";
-  if (combined.includes("福岡") || combined.includes("九州")) return "fukuoka";
-  if (combined.includes("札幌") || combined.includes("北海道")) return "sapporo";
-  if (combined.includes("沖繩")) return "okinawa";
-  if (combined.includes("台北")) return "taipei";
-  if (combined.includes("高雄")) return "kaohsiung";
+function detectTripWeatherCity(trip, data) {
+  const combined = [
+    trip?.name || "",
+    trip?.uuid || "",
+    data?.name || "",
+    data?.flights?.out?.to || "",
+    data?.flights?.out?.note || "",
+    ...(data?.hotels || []).map((h) => (h?.name || "") + " " + (h?.addr || "")),
+    ...(data?.days || []).flatMap((d) => (d?.spots || []).map((s) => s?.place || "")),
+  ].join(" ").toLowerCase();
+
+  // 依行程目的地自動智能匹配氣象城市
+  if (combined.includes("kurashiki") || combined.includes("倉敷")) return "kurashiki";
+  if (combined.includes("okayama") || combined.includes("岡山") || combined.includes("桃")) return "okayama";
+  if (combined.includes("tokyo") || combined.includes("東京") || combined.includes("hnd") || combined.includes("nrt")) return "tokyo";
+  if (combined.includes("osaka") || combined.includes("大阪") || combined.includes("kix")) return "osaka";
+  if (combined.includes("kyoto") || combined.includes("京都")) return "kyoto";
+  if (combined.includes("fukuoka") || combined.includes("福岡") || combined.includes("九州") || combined.includes("fuk")) return "fukuoka";
+  if (combined.includes("sapporo") || combined.includes("札幌") || combined.includes("北海道") || combined.includes("cts")) return "sapporo";
+  if (combined.includes("okinawa") || combined.includes("沖繩") || combined.includes("那霸") || combined.includes("oka")) return "okinawa";
+  if (combined.includes("nagoya") || combined.includes("名古屋") || combined.includes("ngo")) return "nagoya";
+  if (combined.includes("hiroshima") || combined.includes("廣島")) return "hiroshima";
+  if (combined.includes("sendai") || combined.includes("仙台") || combined.includes("sdj")) return "sendai";
+  if (combined.includes("taipei") || combined.includes("台北") || combined.includes("tpe") || combined.includes("tsa")) return "taipei";
+  if (combined.includes("kaohsiung") || combined.includes("高雄") || combined.includes("khh")) return "kaohsiung";
+
   return "okayama";
 }
 
@@ -296,8 +305,8 @@ async function renderWeatherCard(forceRefresh = false) {
   if (!container) return;
 
   const trip = tripsList.find((t) => t.uuid === currentTripUuid) || tripData;
-  const savedCity = currentTripUuid ? localStorage.getItem("trip_weather_city_" + currentTripUuid) : null;
-  const activeCityId = savedCity || detectDefaultWeatherCity((trip && trip.name) || "", currentTripUuid);
+  // 依行程地點全自動切換城市，無需手動選擇
+  const activeCityId = detectTripWeatherCity(trip, tripData);
   const activeCity = WEATHER_CITY_PRESETS.find((c) => c.id === activeCityId) || WEATHER_CITY_PRESETS[0];
 
   container.innerHTML = `
@@ -308,14 +317,11 @@ async function renderWeatherCard(forceRefresh = false) {
           <div>
             <div class="weather-title-text">
               <span>旅程天氣預報</span>
-              <span class="weather-location-pill">📍 ${activeCity.name.split(" ")[1]}</span>
+              <span class="weather-location-pill">📍 ${activeCity.name}</span>
             </div>
           </div>
         </div>
         <div class="weather-controls">
-          <select class="weather-city-select" onchange="onWeatherCitySelectChange(this.value)">
-            ${WEATHER_CITY_PRESETS.map((c) => `<option value="${c.id}" ${c.id === activeCityId ? "selected" : ""}>${c.name}</option>`).join("")}
-          </select>
           <div class="weather-tab-switch">
             <button type="button" class="weather-tab-btn ${currentWeatherPeriod === "3day" ? "active" : ""}" onclick="switchWeatherTab('3day')">未來 3 天</button>
             <button type="button" class="weather-tab-btn ${currentWeatherPeriod === "7day" ? "active" : ""}" onclick="switchWeatherTab('7day')">一週預報</button>
@@ -324,7 +330,7 @@ async function renderWeatherCard(forceRefresh = false) {
         </div>
       </div>
       <div id="weatherDaysList" style="text-align:center;padding:18px 0;color:var(--moss);font-size:12px;font-weight:700;">
-        ⏳ 正在連線高解析衛星氣象雷達...
+        ⏳ 正在連線 ${activeCity.name} 即時衛星氣象...
       </div>
     </div>
   `;
@@ -999,22 +1005,84 @@ function updateAuthUI() {
   }
 }
 
-// 點擊頂部導覽列右上方「🛠️ 後台」按鈕
+// 點擊頂部導覽列右上方「🛠️ 後台」按鈕 (獨立後台，不在各旅遊行程中佔用分頁)
 function openAdminPanelFromHeader() {
   if (userRole !== "admin" || !idToken || isTokenExpired(idToken)) {
     showToast("請先登入管理員帳號");
     triggerGoogleLogin();
     return;
   }
-  if (currentTripUuid) {
-    const adminTabBtn = document.getElementById("btn-tab-admin");
-    if (adminTabBtn) {
-      switchTab("admin", adminTabBtn);
-      window.scrollTo({ top: 100, behavior: "smooth" });
-    }
-  } else {
-    openCreateTripModal();
+  openAdminCenterModal();
+}
+
+// 獨立管理中心 Modal (完全獨立於各旅遊行程之外)
+function openAdminCenterModal() {
+  if (userRole !== "admin" || !idToken || isTokenExpired(idToken)) {
+    showToast("請先登入管理員帳號");
+    triggerGoogleLogin();
+    return;
   }
+
+  const currentTrip = tripsList.find((t) => t.uuid === currentTripUuid);
+  const currentBanner = currentTrip
+    ? `
+      <div style="background:#F0F7FF;border:1px solid #BAE6FD;border-radius:12px;padding:12px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <div style="font-size:11px;color:#0369A1;font-weight:700;">📍 當前瀏覽手冊</div>
+          <div style="font-size:14px;font-weight:900;color:#0C4A6E;margin-top:2px;">${escapeHtml(currentTrip.name)} <span style="font-size:11px;color:#64748B;font-weight:normal;">(${escapeHtml(currentTrip.uuid)})</span></div>
+        </div>
+        <button class="btn-mini" onclick="closeModal();openEditTripMetaModal('${escapeHtml(currentTrip.uuid)}')" style="background:#0284C7;color:#fff;border:none;">✏️ 編輯此行程</button>
+      </div>
+    `
+    : "";
+
+  const tripsItems =
+    tripsList.length === 0
+      ? `<div style="text-align:center;padding:24px;color:#888;font-size:13px;">目前尚無行程，請點擊上方按鈕建立</div>`
+      : tripsList
+          .map(
+            (t) => `
+        <div style="background:#FFF;border-radius:12px;padding:12px 14px;margin-bottom:10px;border:1px solid #E2E8F0;box-shadow:0 1px 4px rgba(0,0,0,0.03);">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+              <span style="font-weight:800;font-size:14px;color:#1E293B;">${escapeHtml(t.name)}</span>
+              <span style="font-size:11px;color:#64748B;margin-left:6px;background:#F1F5F9;padding:2px 6px;border-radius:4px;">${escapeHtml(t.uuid)}</span>
+            </div>
+            <div style="display:flex;gap:6px;">
+              <button class="btn-mini" onclick="closeModal();navigateTo('${escapeHtml(t.uuid)}')">📖 開啟</button>
+              <button class="btn-mini" onclick="closeModal();openEditTripMetaModal('${escapeHtml(t.uuid)}')">✏️ 設定</button>
+            </div>
+          </div>
+          <div style="font-size:11px;color:#64748B;margin-top:6px;line-height:1.6;">
+            <div>🗓️ 期間：${escapeHtml(t.startDate || "")} ~ ${escapeHtml(t.endDate || "")} (${escapeHtml(t.duration || "")})</div>
+            <div>🔐 密碼：<span style="font-family:monospace;font-weight:700;color:#0F766E;">${escapeHtml(t.password || "未設密碼 (公開)")}</span> ｜ 👥 授權：${escapeHtml(t.allowed_users || "僅管理員")}</div>
+          </div>
+        </div>
+      `
+          )
+          .join("");
+
+  const modalHtml = `
+    <div style="max-height:68vh;overflow-y:auto;padding-right:2px;">
+      ${currentBanner}
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <span style="font-size:13px;font-weight:800;color:#334155;">📋 全站行程管理 (${tripsList.length})</span>
+        <div style="display:flex;gap:6px;">
+          <button class="glass-btn" style="background:#0F766E;color:#fff;padding:5px 10px;font-size:11px;border-radius:8px;" onclick="closeModal();openCreateTripModal()">➕ 建立新行程</button>
+        </div>
+      </div>
+      <div>
+        ${tripsItems}
+      </div>
+    </div>
+  `;
+
+  openFormModal({
+    title: "⚙️ 系統後台管理中心",
+    bodyHtml: modalHtml,
+    confirmText: "關閉後台",
+    onConfirm: () => true,
+  });
 }
 
 // 頂部膠囊登出按鈕
@@ -1046,8 +1114,6 @@ function handleCredentialResponse(response) {
     userRole = "admin";
     localStorage.setItem("cache_userRole", "admin");
     updateAuthUI();
-    const adminTabBtn = document.getElementById("btn-tab-admin");
-    if (adminTabBtn) adminTabBtn.style.display = "block";
     showToast(`👑 歡迎管理員 ${userName}，已瞬間切換身分 ✓`);
   } else {
     updateAuthUI();
@@ -1293,14 +1359,6 @@ async function fetchTrips() {
       } catch (e) {}
 
       updateAuthUI();
-
-      // 控制後台管理分頁是否顯示
-      const isAdmin = userRole === "admin";
-      const adminTabBtn = document.getElementById("btn-tab-admin");
-      if (adminTabBtn) {
-        adminTabBtn.style.display = isAdmin ? "block" : "none";
-      }
-
       renderHubTripsGrid();
 
       // 若當前有在特定行程手冊中，更新其資料
