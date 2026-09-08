@@ -1664,6 +1664,26 @@ function renderHubTripsGrid() {
         }
       }
 
+      // 大廳卡片日期天數呈現
+      let cachedData = null;
+      try {
+        const c = localStorage.getItem("cache_trip_" + t.uuid);
+        if (c) cachedData = JSON.parse(c);
+      } catch (e) {}
+      const sDate = t.startDate || (cachedData ? cachedData.startDate : "");
+      const eDate = t.endDate || (cachedData ? cachedData.endDate : "");
+      const calculatedDur = calculateTripDuration(sDate, eDate);
+      const rawDur = t.duration || (cachedData ? cachedData.duration : "");
+      const dur = (rawDur && rawDur.trim() && rawDur.trim() !== "未註記天數") ? rawDur.trim() : (calculatedDur || "");
+      let dateMetaHtml = "";
+      if (sDate && eDate) {
+        dateMetaHtml = `<div>🗓️ ${escapeHtml(sDate)} ~ ${escapeHtml(eDate)}${dur ? ` • <b>${escapeHtml(dur)}</b>` : ""}</div>`;
+      } else if (sDate) {
+        dateMetaHtml = `<div>🗓️ ${escapeHtml(sDate)} 啟程${dur ? ` • <b>${escapeHtml(dur)}</b>` : ""}</div>`;
+      } else if (dur) {
+        dateMetaHtml = `<div>⏱️ 行程天數：<b>${escapeHtml(dur)}</b></div>`;
+      }
+
       const btnText = hasPassword && !isUnlocked && userRole !== "admin" ? "輸入密碼解鎖 ➔" : "開啟手冊 ➔";
 
       return `
@@ -1680,6 +1700,7 @@ function renderHubTripsGrid() {
               </div>
               <div class="hub-card-uuid">ID: ${safeUuid}</div>
               <div class="hub-card-meta">
+                ${dateMetaHtml}
                 <div>📖 包含每日行程、航班住宿、美食口袋、代購清單</div>
               </div>
             </div>

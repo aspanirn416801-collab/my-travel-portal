@@ -447,12 +447,17 @@ function doPost(e) {
     
     const password = (postData.password || "").trim();
     
+    let finalDuration = duration;
+    if (!finalDuration && startDate && endDate) {
+      finalDuration = calcTripDurationInGas(startDate, endDate);
+    }
+    
     const tripSheet = masterSpreadsheet.getSheetByName("Trips");
-    tripSheet.appendRow([uuid, name, sheetId, folderId, allowedUsers, password, startDate, endDate, duration]);
+    tripSheet.appendRow([uuid, name, sheetId, folderId, allowedUsers, password, startDate, endDate, finalDuration]);
     
     // 初始化關聯試算表的結構與分頁
     try {
-      initializeSubSheet(sheetId, name, startDate, endDate, duration, password, theme);
+      initializeSubSheet(sheetId, name, startDate, endDate, finalDuration, password, theme);
       return ContentService.createTextOutput(JSON.stringify({ 
         status: "success", 
         sheetId: sheetId,
@@ -517,6 +522,11 @@ function doPost(e) {
     }
     
     if (targetRowIndex !== -1 && targetSheetId) {
+      let finalDuration = duration;
+      if (!finalDuration && startDate && endDate) {
+        finalDuration = calcTripDurationInGas(startDate, endDate);
+      }
+
       // 1. 更新主控表 Trips 分頁 (名稱、授權清單與密碼，以及出發日期、結束日期與天數)
       tripSheet.getRange(targetRowIndex, 2).setValue(name);
       tripSheet.getRange(targetRowIndex, 5).setValue(allowedUsers);
@@ -525,7 +535,7 @@ function doPost(e) {
       }
       if (startDate !== undefined) tripSheet.getRange(targetRowIndex, 7).setValue(startDate);
       if (endDate !== undefined) tripSheet.getRange(targetRowIndex, 8).setValue(endDate);
-      if (duration !== undefined) tripSheet.getRange(targetRowIndex, 9).setValue(duration);
+      if (finalDuration !== undefined) tripSheet.getRange(targetRowIndex, 9).setValue(finalDuration);
       
       // 2. 更新個別試算表 Info 分頁 (使用動態 Key-Value 寫入，徹底杜絕欄位錯位)
       try {
@@ -534,11 +544,6 @@ function doPost(e) {
         if (!infoSheet) {
           infoSheet = subSs.insertSheet("Info");
           infoSheet.appendRow(["Key", "Value"]);
-        }
-        
-        let finalDuration = duration;
-        if (!finalDuration && startDate && endDate) {
-          finalDuration = calcTripDurationInGas(startDate, endDate);
         }
 
         const metaMap = {
