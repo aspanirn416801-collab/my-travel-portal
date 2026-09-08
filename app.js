@@ -624,6 +624,8 @@ function showHubView() {
   document.getElementById("view-trip").style.display = "none";
   const lockedView = document.getElementById("view-locked");
   if (lockedView) lockedView.style.display = "none";
+  const adminView = document.getElementById("view-admin");
+  if (adminView) adminView.style.display = "none";
   document.getElementById("currentTripIndicator").style.display = "none";
 }
 
@@ -697,6 +699,8 @@ function showTripView() {
   document.getElementById("view-hub").style.display = "none";
   const lockedView = document.getElementById("view-locked");
   if (lockedView) lockedView.style.display = "none";
+  const adminView = document.getElementById("view-admin");
+  if (adminView) adminView.style.display = "none";
   document.getElementById("view-trip").style.display = "block";
   const indicator = document.getElementById("currentTripIndicator");
   if (indicator) {
@@ -714,6 +718,39 @@ function showTripView() {
   renderWeatherCard();
 }
 
+// 獨立專屬後台視圖 (完全獨立於所有旅遊行程之外)
+function showAdminView() {
+  const isAdmin = userRole === "admin" && idToken && !isTokenExpired(idToken);
+  if (!isAdmin) {
+    showToast("此管理專區僅限系統管理員存取");
+    triggerGoogleLogin();
+    showHubView();
+    return;
+  }
+
+  document.getElementById("view-hub").style.display = "none";
+  document.getElementById("view-trip").style.display = "none";
+  const lockedView = document.getElementById("view-locked");
+  if (lockedView) lockedView.style.display = "none";
+  const adminView = document.getElementById("view-admin");
+  if (adminView) adminView.style.display = "block";
+
+  const indicator = document.getElementById("currentTripIndicator");
+  if (indicator) {
+    indicator.style.display = "inline-block";
+    indicator.innerText = "⚙️ 系統管理後台";
+  }
+
+  const adminUserTag = document.getElementById("adminUserTag");
+  if (adminUserTag && idToken) {
+    const userInfo = parseJwt(idToken);
+    adminUserTag.innerText = userInfo?.name || userInfo?.email || "管理員已就緒";
+  }
+
+  resetToDefaultTheme();
+  renderAdminView();
+}
+
 // 解析 URL Query 參數取得行程 UUID (例如 ?trip=okayama-2027 或 ?okayama-2027)
 function getTripUuidFromUrl() {
   const urlParams = new URLSearchParams(window.location.search);
@@ -729,6 +766,13 @@ function getTripUuidFromUrl() {
 }
 
 function initRouter() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const isAdminRoute = urlParams.get("admin") === "1" || urlParams.get("trip") === "admin";
+  if (isAdminRoute) {
+    showAdminView();
+    return;
+  }
+
   currentTripUuid = getTripUuidFromUrl();
   if (currentTripUuid) {
     const trip = tripsList.find((t) => t.uuid === currentTripUuid);
@@ -745,8 +789,17 @@ function initRouter() {
 
 // 路由導航切換函式
 function navigateTo(tripUuid) {
-  currentTripUuid = (tripUuid || "").trim();
   const currentPath = window.location.pathname;
+
+  // 獨立後台中心
+  if (tripUuid === "admin") {
+    currentTripUuid = "";
+    history.pushState({ view: "admin" }, "", `${currentPath}?admin=1`);
+    showAdminView();
+    return;
+  }
+
+  currentTripUuid = (tripUuid || "").trim();
   const newUrl = currentTripUuid
     ? `${currentPath}?trip=${encodeURIComponent(currentTripUuid)}`
     : currentPath;
@@ -774,16 +827,8 @@ function navigateTo(tripUuid) {
 window.onpopstate = function () {
   initRouter();
   if (currentTripUuid) {
-    const trip = tripsList.find((t) => t.uuid === currentTripUuid);
-    const tripPassword = (trip && trip.password) || getKnownTripPassword(currentTripUuid) || "";
-    if (tripPassword && !isTripUnlocked(currentTripUuid, tripPassword)) {
-      showLockedView(trip || { uuid: currentTripUuid, name: (trip && trip.name) || currentTripUuid, password: tripPassword });
-    } else {
-      showTripView();
-      fetchTripData();
-    }
-  } else {
-    showHubView();
+    fetchTripData();
+  } else if (!window.location.search.includes("admin=1")) {
     renderHubTripsGrid();
   }
 };
@@ -1005,14 +1050,18 @@ function updateAuthUI() {
   }
 }
 
-// 點擊頂部導覽列右上方「🛠️ 後台」按鈕 (獨立後台，不在各旅遊行程中佔用分頁)
-function openAdminPanelFromHeader() {
+// 點擊頂部導覽列右上方「🛠️ 後台」按鈕 (獨立後台視圖，不在各旅遊行程中佔用分頁)
+function openAdminView() {
   if (userRole !== "admin" || !idToken || isTokenExpired(idToken)) {
     showToast("請先登入管理員帳號");
     triggerGoogleLogin();
     return;
   }
-  openAdminCenterModal();
+  navigateTo("admin");
+}
+
+function openAdminPanelFromHeader() {
+  openAdminView();
 }
 
 // 獨立管理中心 Modal (完全獨立於各旅遊行程之外)
@@ -4299,68 +4348,92 @@ function deleteShoppingItem(index) {
 }
 
 // =========================================================================
-// 6. 後台管理頁面 (Admin) - 行程建立、日期維護與授權清單管理
+// 6. 後台管理系統 (Admin Console) - 獨立視圖管理與即時同步
 // =========================================================================
 function renderAdmin() {
   if (userRole !== "admin") return;
-
-  const html = `
-    <div class="card">
-      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
-        <span class="card-title" style="color:var(--red);">⚙️ 系統管理員後台</span>
-        <button class="card-header-btn" onclick="openCreateTripModal()" style="background:var(--moss);color:#fff;">➕ 建立新行程</button>
-      </div>
-      
-      <div style="margin-top:10px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-          <h3 style="font-size:14px;font-weight:bold;color:var(--moss);margin:0;">📋 已綁定行程管理</h3>
-          <span style="font-size:11px;color:#888;">共 ${tripsList.length} 個行程</span>
-        </div>
-        <div id="adminTripsList">載入行程列表中...</div>
-      </div>
-    </div>
-  `;
-
-  document.getElementById("page-admin").innerHTML = html;
-  renderAdminTripsList();
+  renderAdminView();
 }
 
-function renderAdminTripsList() {
-  const container = document.getElementById("adminTripsList");
+function renderAdminView() {
+  const container = document.getElementById("adminTripsContainer");
+  const notice = document.getElementById("adminTripCountNotice");
   if (!container) return;
+
+  if (notice) {
+    notice.innerText = `目前共綁定 ${tripsList.length} 個旅遊行程`;
+  }
+
   if (tripsList.length === 0) {
     container.innerHTML = `
-      <div style="text-align:center;padding:30px 10px;background:#FAF8F5;border-radius:14px;border:1px dashed var(--gold);">
-        <p style="color:#888;font-size:13px;margin-bottom:12px;">目前尚未建立任何旅遊行程</p>
-        <button class="glass-btn" style="background:var(--moss);color:#fff;display:inline-flex;" onclick="openCreateTripModal()">＋ 立即建立第一筆行程</button>
+      <div style="text-align:center;padding:48px 16px;background:var(--card-bg, #fff);border-radius:20px;border:1.5px dashed var(--gold);box-shadow:var(--glass-shadow);">
+        <div style="font-size:42px;margin-bottom:12px;">🗺️</div>
+        <h3 style="font-size:16px;font-weight:bold;color:var(--moss);margin-bottom:6px;">尚未建立任何旅遊行程</h3>
+        <p style="color:#888;font-size:13px;margin-bottom:18px;">立即建立您的第一本專屬旅遊手冊，開始規劃雲端行程！</p>
+        <button class="glass-btn" style="background:var(--moss-gradient);color:#fff;display:inline-flex;padding:10px 20px;" onclick="openCreateTripModal()">＋ 立即建立第一筆行程</button>
       </div>
     `;
     return;
   }
 
-  const listHtml = tripsList
-    .map(
-      (t) => `
-    <div style="background:#FFF;border-radius:12px;padding:14px;margin-bottom:12px;border:1px solid var(--mist);font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,0.03);">
-      <div style="display:flex;justify-content:space-between;align-items:center;">
-        <div>
-          <span style="font-weight:900;font-size:15px;color:var(--moss);">${escapeHtml(t.name)}</span>
-          <span style="font-size:11px;color:#888;margin-left:6px;background:#F0EFEA;padding:2px 6px;border-radius:6px;">${escapeHtml(t.uuid)}</span>
+  const cardsHtml = tripsList
+    .map((t) => {
+      const safeName = escapeHtml(t.name);
+      const safeUuid = escapeHtml(t.uuid);
+      const duration = t.duration ? escapeHtml(t.duration) : "未註記天數";
+      const dateRange = (t.startDate && t.endDate) ? `${escapeHtml(t.startDate)} ~ ${escapeHtml(t.endDate)}` : (t.startDate ? escapeHtml(t.startDate) : "未設日期");
+      const sheetUrl = t.sheet_id ? `https://docs.google.com/spreadsheets/d/${encodeURIComponent(t.sheet_id)}` : "";
+      const folderUrl = t.folder_id ? `https://drive.google.com/drive/folders/${encodeURIComponent(t.folder_id)}` : "";
+      const pwdDisplay = t.password ? `<span style="font-family:monospace;background:#FEF3C7;color:#92400E;padding:2px 8px;border-radius:6px;font-weight:bold;">${escapeHtml(t.password)}</span>` : '<span style="color:#059669;font-weight:bold;">公開無密碼</span>';
+      const usersDisplay = t.allowed_users ? escapeHtml(t.allowed_users) : '<span style="color:#999;">僅限系統管理員</span>';
+
+      return `
+        <div style="background:var(--card-bg,#fff);border-radius:18px;padding:20px;margin-bottom:16px;border:1px solid var(--mist);box-shadow:0 4px 16px rgba(0,0,0,0.04);transition:all 0.2s ease;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;">
+            <div>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <span style="font-weight:900;font-size:17px;color:var(--moss);">${safeName}</span>
+                <span style="font-size:11px;color:#666;background:#F1F5F9;padding:2px 8px;border-radius:6px;font-family:monospace;">${safeUuid}</span>
+              </div>
+              <div style="font-size:12px;color:#666;margin-top:4px;">
+                🗓️ <b>${dateRange}</b> ｜ ⏱️ ${duration}
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn-mini" onclick="navigateTo('${safeUuid}')" style="background:var(--moss);color:#fff;padding:6px 12px;border-radius:8px;">📖 瀏覽手冊</button>
+              <button class="btn-mini" onclick="openEditTripMetaModal('${safeUuid}')" style="background:#0284C7;color:#fff;padding:6px 12px;border-radius:8px;">✏️ 編輯設定</button>
+            </div>
+          </div>
+
+          <div style="margin-top:14px;padding-top:12px;border-top:1px dashed #E2E8F0;font-size:12px;color:#555;line-height:1.8;">
+            <div style="display:flex;flex-wrap:wrap;gap:12px;">
+              <div>🔐 存取密碼：${pwdDisplay}</div>
+              <div>👥 授權人員：${usersDisplay}</div>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:4px;">
+              <div>📄 Google 試算表：${sheetUrl ? `<a href="${sheetUrl}" target="_blank" rel="noopener noreferrer" style="color:#2563EB;text-decoration:underline;font-weight:bold;">開啟雲端試算表 ↗</a>` : '<span style="color:#999;">尚未綁定</span>'}</div>
+              <div>📁 雲端圖片資料夾：${folderUrl ? `<a href="${folderUrl}" target="_blank" rel="noopener noreferrer" style="color:#2563EB;text-decoration:underline;font-weight:bold;">開啟雲端硬碟相簿 ↗</a>` : '<span style="color:#999;">尚未綁定</span>'}</div>
+            </div>
+          </div>
         </div>
-        <button class="btn-mini" onclick="openEditTripMetaModal('${escapeHtml(t.uuid)}')">✏️ 編輯設定</button>
-      </div>
-      <div style="color:#666;margin-top:8px;line-height:1.6;">
-        <div>📄 試算表 ID: <span style="font-family:monospace;font-size:11px;background:#F9F9F9;padding:1px 4px;border-radius:4px;">${escapeHtml(t.sheet_id || "")}</span></div>
-        <div>📁 圖片資料夾 ID: <span style="font-family:monospace;font-size:11px;background:#F9F9F9;padding:1px 4px;border-radius:4px;">${escapeHtml(t.folder_id || "")}</span></div>
-        <div>👥 授權團員: <span style="color:${t.allowed_users ? "#333" : "#999"};">${escapeHtml(t.allowed_users || "僅管理員")}</span></div>
-        <div>🔐 存取密碼: <span style="font-family:monospace;font-size:11px;background:#F9F9F9;padding:1px 6px;border-radius:4px;color:var(--moss);font-weight:bold;">${escapeHtml(t.password || "未設密碼 (公開手冊)")}</span></div>
-      </div>
-    </div>
-  `,
-    )
+      `;
+    })
     .join("");
 
-  container.innerHTML = listHtml;
+  container.innerHTML = cardsHtml;
+}
+
+async function refreshAdminData() {
+  showLoading("正在同步最新行程資訊...");
+  try {
+    await fetchTrips();
+    renderAdminView();
+    showToast("全站行程資料已最新同步 ✓");
+  } catch (e) {
+    showToast("同步失敗，請檢查網路連線");
+  } finally {
+    hideLoading();
+  }
 }
 
 // 彈出建立新行程表單對話框

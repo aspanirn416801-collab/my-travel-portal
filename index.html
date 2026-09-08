@@ -2193,7 +2193,7 @@ body.large { font-size: 16px; }
 
       <!-- 管理員雙功能膠囊按鈕 (參考截圖 2：🛠️ 後台 ｜ 登出) -->
       <div id="adminCapsule" class="admin-capsule" style="display:none;">
-        <button type="button" class="admin-capsule-btn" onclick="navigateTo('')" title="前往後台管理中心">🛠️ 後台</button>
+        <button type="button" class="admin-capsule-btn" onclick="openAdminView()" title="前往專屬後台管理中心">🛠️ 後台</button>
         <span class="admin-capsule-divider">｜</span>
         <button type="button" class="admin-capsule-btn danger" onclick="logout()" title="登出管理員身分">登出</button>
       </div>
@@ -2279,7 +2279,6 @@ body.large { font-size: 16px; }
         <div class="page" id="page-itinerary"></div>
         <div class="page" id="page-food"></div>
         <div class="page" id="page-shopping"></div>
-        <div class="page" id="page-admin"></div>
       </div>
     </div>
 
@@ -2307,6 +2306,38 @@ body.large { font-size: 16px; }
           <button type="submit" class="glass-btn" style="background: var(--moss-gradient); color: #fff; width: 100%; justify-content: center; font-size: 14px; padding: 12px; border-radius: 14px; font-weight: bold;">🔓 解鎖並進入手冊</button>
           <button type="button" class="glass-btn" style="background: rgba(0,0,0,0.06); color: #555; width: 100%; justify-content: center; font-size: 13px; margin-top: 10px; padding: 10px; border-radius: 14px;" onclick="navigateTo('')">🏠 返回行程大廳</button>
         </form>
+      </div>
+    </div>
+
+    <!-- ================================================================= -->
+    <!-- 視圖 4: 獨立系統管理員專屬後台中心 (Admin View) -->
+    <!-- ================================================================= -->
+    <div id="view-admin" style="display: none; padding-bottom: 60px;">
+      <div class="hero" style="padding-bottom: 26px;">
+        <div class="hero-badge-wrap">
+          <span class="hero-tag" style="background:var(--red);color:#fff;">ADMIN CONSOLE</span>
+          <span class="hero-countdown" id="adminUserTag">管理員控制台</span>
+        </div>
+        <div class="hero-content">
+          <h1 class="hero-title">⚙️ 系統管理後台中心</h1>
+          <p class="hero-subtitle">全站旅遊行程調度、權限名單維護與雲端試算表設定。</p>
+        </div>
+      </div>
+
+      <div class="main" style="max-width: 960px; margin: 0 auto; padding: 20px 16px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+          <div>
+            <h2 style="font-size:18px;font-weight:900;color:var(--moss);margin:0;letter-spacing:0.5px;">📋 全站行程管理</h2>
+            <span id="adminTripCountNotice" style="font-size:12px;color:#666;">載入行程列表中...</span>
+          </div>
+          <div style="display:flex;gap:10px;">
+            <button class="card-header-btn" onclick="openCreateTripModal()" style="background:var(--moss-gradient);color:#fff;">➕ 建立新行程</button>
+            <button class="glass-btn" onclick="refreshAdminData()" style="color:var(--moss);background:var(--glass-bg);">🔄 重新整理</button>
+          </div>
+        </div>
+        <div id="adminTripsContainer">
+          <div style="text-align:center;padding:40px 10px;color:#888;">正在載入行程清單...</div>
+        </div>
       </div>
     </div>
   </div>
@@ -2377,6 +2408,6 @@ body.large { font-size: 16px; }
   <!-- Google Identity Services SDK -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- 前端核心邏輯 (加入版本號防快取) -->
-  <script src="app.js?v=20260908_03"></script>
+  <script src="app.js?v=20260908_04"></script>
 </body>
 </html>
