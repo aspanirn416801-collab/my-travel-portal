@@ -143,6 +143,24 @@ function getUserAccess(email) {
   const tripRows = tripSheet.getDataRange().getValues();
   const allowedTrips = [];
   
+// 自動根據出發與結束日期推算天數晚數 (例如: 8天7夜)
+function calcTripDurationInGas(startDate, endDate) {
+  if (!startDate || !endDate) return "";
+  try {
+    const s = String(startDate).split("T")[0].trim();
+    const e = String(endDate).split("T")[0].trim();
+    const d1 = new Date(s + "T00:00:00");
+    const d2 = new Date(e + "T00:00:00");
+    if (isNaN(d1.getTime()) || isNaN(d2.getTime())) return "";
+    const diffDays = Math.round((d2.getTime() - d1.getTime()) / 86400000) + 1;
+    if (diffDays > 0) {
+      const nights = diffDays - 1;
+      return diffDays + "天" + (nights > 0 ? nights + "夜" : "");
+    }
+  } catch (err) {}
+  return "";
+}
+
   for (let i = 1; i < tripRows.length; i++) {
     const uuid = tripRows[i][0];
     const name = tripRows[i][1];
@@ -155,7 +173,10 @@ function getUserAccess(email) {
     const password = tripRows[i][5] ? String(tripRows[i][5]).trim() : "";
     const startDate = tripRows[i][6] ? String(tripRows[i][6]).trim() : "";
     const endDate = tripRows[i][7] ? String(tripRows[i][7]).trim() : "";
-    const duration = tripRows[i][8] ? String(tripRows[i][8]).trim() : "";
+    let duration = tripRows[i][8] ? String(tripRows[i][8]).trim() : "";
+    if (!duration && startDate && endDate) {
+      duration = calcTripDurationInGas(startDate, endDate);
+    }
 
     // 如果是管理員，可以看到所有行程
     // 如果是一般人，檢查其 Email 是否在 allowedUsersStr 清單內，或是公開行程
@@ -227,12 +248,21 @@ function doGet(e) {
       const allowedEmails = allowedUsersStr.toLowerCase().split(",").map(u => u.trim());
       const isPublic = !allowedUsersStr || allowedEmails.includes("*") || allowedEmails.includes("public");
       const password = tripRows[i][5] ? String(tripRows[i][5]).trim() : "";
+      const startDate = tripRows[i][6] ? String(tripRows[i][6]).trim() : "";
+      const endDate = tripRows[i][7] ? String(tripRows[i][7]).trim() : "";
+      let duration = tripRows[i][8] ? String(tripRows[i][8]).trim() : "";
+      if (!duration && startDate && endDate) {
+        duration = calcTripDurationInGas(startDate, endDate);
+      }
       if (uuid && isPublic) {
         publicTrips.push({
           uuid: uuid,
           name: name,
           hasPassword: !!password,
-          password: password // 供前端即時比對，後端亦進行實質雙重校驗
+          password: password,
+          startDate: startDate,
+          endDate: endDate,
+          duration: duration
         });
       }
     }

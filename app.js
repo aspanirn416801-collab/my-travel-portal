@@ -211,11 +211,31 @@ function resetToDefaultTheme() {
   applyTripTheme("classic");
 }
 
+// 全域通用旅程天數與晚數自動計算函式 (支援任何標準 ISO 日期或日期格式，徹底杜絕未註記天數！)
+function calculateTripDuration(startDate, endDate) {
+  if (!startDate || !endDate) return "";
+  try {
+    const sStr = String(startDate).split("T")[0].trim();
+    const eStr = String(endDate).split("T")[0].trim();
+    if (!sStr || !eStr) return "";
+    const d1 = new Date(sStr + "T00:00:00");
+    const d2 = new Date(eStr + "T00:00:00");
+    if (isNaN(d1.getTime()) || isNaN(d2.getTime())) return "";
+    const diffTime = d2.getTime() - d1.getTime();
+    const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24)) + 1;
+    if (diffDays > 0) {
+      const nights = diffDays - 1;
+      return `${diffDays}天${nights > 0 ? nights + "夜" : ""}`;
+    }
+  } catch (e) {}
+  return "";
+}
+
 // =========================================================================
-// 旅程天氣預報模組 (整合 Open-Meteo 免費 API，支援 3天 / 一週 7天 與全球動態定位)
+// 旅程天氣預報模組 (整合 Open-Meteo 免費 API，支援全球各大洲熱門城市與動態切換)
 // =========================================================================
 const WEATHER_CITY_PRESETS = [
-  // 奧地利 & 捷克 & 歐洲熱門名城
+  // 歐洲主要旅遊名城
   { id: "vienna", name: "奧地利 維也納 (Vienna)", lat: 48.2082, lon: 16.3738, tz: "Europe/Vienna" },
   { id: "prague", name: "捷克 布拉格 (Prague)", lat: 50.0755, lon: 14.4378, tz: "Europe/Prague" },
   { id: "salzburg", name: "奧地利 薩爾斯堡 (Salzburg)", lat: 47.8095, lon: 13.055, tz: "Europe/Vienna" },
@@ -227,22 +247,40 @@ const WEATHER_CITY_PRESETS = [
   { id: "london", name: "英國 倫敦 (London)", lat: 51.5074, lon: -0.1278, tz: "Europe/London" },
   { id: "zurich", name: "瑞士 蘇黎世 (Zurich)", lat: 47.3769, lon: 8.5417, tz: "Europe/Zurich" },
   { id: "rome", name: "義大利 羅馬 (Rome)", lat: 41.9028, lon: 12.4964, tz: "Europe/Rome" },
+  { id: "venice", name: "義大利 威尼斯 (Venice)", lat: 45.4408, lon: 12.3155, tz: "Europe/Rome" },
   { id: "munich", name: "德國 慕尼黑 (Munich)", lat: 48.1351, lon: 11.582, tz: "Europe/Berlin" },
-  // 日本主要城市
-  { id: "okayama", name: "日本 岡山 (Okayama)", lat: 34.6618, lon: 133.935, tz: "Asia/Tokyo" },
-  { id: "kurashiki", name: "日本 倉敷 (Kurashiki)", lat: 34.5956, lon: 133.7719, tz: "Asia/Tokyo" },
+  { id: "amsterdam", name: "荷蘭 阿姆斯特丹 (Amsterdam)", lat: 52.3676, lon: 4.9041, tz: "Europe/Amsterdam" },
+  { id: "reykjavik", name: "冰島 雷克雅維克 (Reykjavik)", lat: 64.1466, lon: -21.9426, tz: "Atlantic/Reykjavik" },
+  { id: "oslo", name: "挪威 奧斯陸 (Oslo)", lat: 59.9139, lon: 10.7522, tz: "Europe/Oslo" },
+  // 大洋洲 & 美洲
+  { id: "queenstown", name: "紐西蘭 皇后鎮 (Queenstown)", lat: -45.0312, lon: 168.6626, tz: "Pacific/Auckland" },
+  { id: "auckland", name: "紐西蘭 奧克蘭 (Auckland)", lat: -36.8485, lon: 174.7633, tz: "Pacific/Auckland" },
+  { id: "sydney", name: "澳洲 雪梨 (Sydney)", lat: -33.8688, lon: 151.2093, tz: "Australia/Sydney" },
+  { id: "melbourne", name: "澳洲 墨爾本 (Melbourne)", lat: -37.8136, lon: 144.9631, tz: "Australia/Melbourne" },
+  { id: "newyork", name: "美國 紐約 (New York)", lat: 40.7128, lon: -74.006, tz: "America/New_York" },
+  { id: "losangeles", name: "美國 洛杉磯 (Los Angeles)", lat: 34.0522, lon: -118.2437, tz: "America/Los_Angeles" },
+  { id: "honolulu", name: "美國 夏威夷檀香山 (Honolulu)", lat: 21.3069, lon: -157.8583, tz: "Pacific/Honolulu" },
+  // 中東 & 非洲
+  { id: "dubai", name: "阿聯 杜拜 (Dubai)", lat: 25.2048, lon: 55.2708, tz: "Asia/Dubai" },
+  { id: "cairo", name: "埃及 開羅 (Cairo)", lat: 30.0444, lon: 31.2357, tz: "Africa/Cairo" },
+  // 亞洲熱門國家與城市
+  { id: "bangkok", name: "泰國 曼谷 (Bangkok)", lat: 13.7563, lon: 100.5018, tz: "Asia/Bangkok" },
+  { id: "chiangmai", name: "泰國 清邁 (Chiang Mai)", lat: 18.7883, lon: 98.9853, tz: "Asia/Bangkok" },
+  { id: "seoul", name: "韓國 首爾 (Seoul)", lat: 37.5665, lon: 126.978, tz: "Asia/Seoul" },
+  { id: "busan", name: "韓國 釜山 (Busan)", lat: 35.1796, lon: 129.0756, tz: "Asia/Seoul" },
+  { id: "singapore", name: "新加坡 (Singapore)", lat: 1.3521, lon: 103.8198, tz: "Asia/Singapore" },
+  // 台灣代表城市
+  { id: "taipei", name: "台灣 台北 (Taipei)", lat: 25.033, lon: 121.5654, tz: "Asia/Taipei" },
+  { id: "kaohsiung", name: "台灣 高雄 (Kaohsiung)", lat: 22.6273, lon: 120.3014, tz: "Asia/Taipei" },
+  // 日本代表城市
   { id: "tokyo", name: "日本 東京 (Tokyo)", lat: 35.6762, lon: 139.6503, tz: "Asia/Tokyo" },
   { id: "osaka", name: "日本 大阪 (Osaka)", lat: 34.6937, lon: 135.5023, tz: "Asia/Tokyo" },
   { id: "kyoto", name: "日本 京都 (Kyoto)", lat: 35.0116, lon: 135.7681, tz: "Asia/Tokyo" },
   { id: "fukuoka", name: "日本 福岡 (Fukuoka)", lat: 33.5904, lon: 130.4017, tz: "Asia/Tokyo" },
   { id: "sapporo", name: "日本 札幌 (Sapporo)", lat: 43.0618, lon: 141.3545, tz: "Asia/Tokyo" },
   { id: "okinawa", name: "日本 沖繩 (Naha)", lat: 26.2124, lon: 127.6809, tz: "Asia/Tokyo" },
-  // 亞洲與台灣
-  { id: "bangkok", name: "泰國 曼谷 (Bangkok)", lat: 13.7563, lon: 100.5018, tz: "Asia/Bangkok" },
-  { id: "seoul", name: "韓國 首爾 (Seoul)", lat: 37.5665, lon: 126.978, tz: "Asia/Seoul" },
-  { id: "singapore", name: "新加坡 (Singapore)", lat: 1.3521, lon: 103.8198, tz: "Asia/Singapore" },
-  { id: "taipei", name: "台灣 台北 (Taipei)", lat: 25.033, lon: 121.5654, tz: "Asia/Taipei" },
-  { id: "kaohsiung", name: "台灣 高雄 (Kaohsiung)", lat: 22.6273, lon: 120.3014, tz: "Asia/Taipei" },
+  { id: "okayama", name: "日本 岡山 (Okayama)", lat: 34.6618, lon: 133.935, tz: "Asia/Tokyo" },
+  { id: "kurashiki", name: "日本 倉敷 (Kurashiki)", lat: 34.5956, lon: 133.7719, tz: "Asia/Tokyo" },
 ];
 
 let currentWeatherPeriod = "3day"; // '3day' | '7day'
@@ -262,11 +300,12 @@ function getWmoWeatherInfo(code) {
   return { icon: "🌤️", text: "氣候舒適" };
 }
 
-// 智能檢測行程地點所屬之氣象城市 (全面支援歐洲奧捷、全球與日台，徹底拔除寫死岡山！)
+// 智能檢測行程地點所屬之氣象城市 (全面支援歐洲奧捷、全球各大洲與日台，徹底拔除寫死岡山！)
 function detectTripWeatherCity(trip, data) {
   const combined = [
     trip?.name || "",
     trip?.uuid || "",
+    trip?.weatherCity || "",
     data?.name || "",
     data?.flights?.out?.to || "",
     data?.flights?.out?.note || "",
@@ -284,20 +323,37 @@ function detectTripWeatherCity(trip, data) {
   if (combined.includes("austria") || combined.includes("奧地利") || combined.includes("奧捷")) return "vienna";
   if (combined.includes("czech") || combined.includes("捷克")) return "prague";
 
-  // 2. 歐洲其他名城
+  // 2. 歐洲其他名城 & 北歐 & 冰島
+  if (combined.includes("iceland") || combined.includes("冰島") || combined.includes("reykjavik") || combined.includes("雷克雅維克")) return "reykjavik";
+  if (combined.includes("norway") || combined.includes("挪威") || combined.includes("oslo") || combined.includes("奧斯陸")) return "oslo";
   if (combined.includes("budapest") || combined.includes("布達佩斯")) return "budapest";
   if (combined.includes("paris") || combined.includes("巴黎") || combined.includes("cdg")) return "paris";
   if (combined.includes("london") || combined.includes("倫敦") || combined.includes("lhr")) return "london";
   if (combined.includes("zurich") || combined.includes("蘇黎世") || combined.includes("瑞士") || combined.includes("swiss")) return "zurich";
   if (combined.includes("rome") || combined.includes("羅馬") || combined.includes("義大利") || combined.includes("italy")) return "rome";
+  if (combined.includes("venice") || combined.includes("威尼斯")) return "venice";
   if (combined.includes("munich") || combined.includes("慕尼黑") || combined.includes("德國") || combined.includes("germany")) return "munich";
+  if (combined.includes("amsterdam") || combined.includes("阿姆斯特丹") || combined.includes("荷蘭")) return "amsterdam";
 
-  // 3. 亞洲其他熱門國家
+  // 3. 大洋洲 & 美洲 & 中東非洲
+  if (combined.includes("new zealand") || combined.includes("紐西蘭") || combined.includes("queenstown") || combined.includes("皇后鎮")) return "queenstown";
+  if (combined.includes("auckland") || combined.includes("奧克蘭")) return "auckland";
+  if (combined.includes("sydney") || combined.includes("雪梨") || combined.includes("澳洲") || combined.includes("australia")) return "sydney";
+  if (combined.includes("melbourne") || combined.includes("墨爾本")) return "melbourne";
+  if (combined.includes("new york") || combined.includes("紐約") || combined.includes("nyc")) return "newyork";
+  if (combined.includes("los angeles") || combined.includes("洛杉磯") || combined.includes("la")) return "losangeles";
+  if (combined.includes("hawaii") || combined.includes("夏威夷") || combined.includes("honolulu")) return "honolulu";
+  if (combined.includes("dubai") || combined.includes("杜拜") || combined.includes("阿聯")) return "dubai";
+  if (combined.includes("egypt") || combined.includes("埃及") || combined.includes("cairo") || combined.includes("開羅")) return "cairo";
+
+  // 4. 亞洲熱門城市
   if (combined.includes("bangkok") || combined.includes("曼谷") || combined.includes("泰國") || combined.includes("thailand") || combined.includes("bkk")) return "bangkok";
+  if (combined.includes("chiang mai") || combined.includes("清邁")) return "chiangmai";
   if (combined.includes("seoul") || combined.includes("首爾") || combined.includes("韓國") || combined.includes("korea") || combined.includes("icn")) return "seoul";
+  if (combined.includes("busan") || combined.includes("釜山")) return "busan";
   if (combined.includes("singapore") || combined.includes("新加坡") || combined.includes("sin")) return "singapore";
 
-  // 4. 日本主要城市
+  // 5. 日本主要城市
   if (combined.includes("kurashiki") || combined.includes("倉敷")) return "kurashiki";
   if (combined.includes("okayama") || combined.includes("岡山") || combined.includes("桃太郎") || combined.includes("okj")) return "okayama";
   if (combined.includes("tokyo") || combined.includes("東京") || combined.includes("hnd") || combined.includes("nrt")) return "tokyo";
@@ -306,26 +362,23 @@ function detectTripWeatherCity(trip, data) {
   if (combined.includes("fukuoka") || combined.includes("福岡") || combined.includes("九州") || combined.includes("fuk")) return "fukuoka";
   if (combined.includes("sapporo") || combined.includes("札幌") || combined.includes("北海道") || combined.includes("cts")) return "sapporo";
   if (combined.includes("okinawa") || combined.includes("沖繩") || combined.includes("那霸") || combined.includes("oka")) return "okinawa";
-  if (combined.includes("nagoya") || combined.includes("名古屋") || combined.includes("ngo")) return "nagoya";
-  if (combined.includes("hiroshima") || combined.includes("廣島")) return "hiroshima";
-  if (combined.includes("sendai") || combined.includes("仙台") || combined.includes("sdj")) return "sendai";
 
-  // 5. 台灣城市
+  // 6. 台灣城市
   if (combined.includes("taipei") || combined.includes("台北") || combined.includes("tpe") || combined.includes("tsa")) return "taipei";
   if (combined.includes("kaohsiung") || combined.includes("高雄") || combined.includes("khh")) return "kaohsiung";
 
-  // 6. 若完全未匹配任何預設城市，根據行程名稱或代碼智能決定，絕不無腦退回岡山！
+  // 7. 大洲中性兜底 (絕不無腦退回岡山！)
   if (combined.includes("europe") || combined.includes("歐洲")) return "vienna";
   if (combined.includes("japan") || combined.includes("日本")) return "tokyo";
+  if (combined.includes("america") || combined.includes("美洲")) return "newyork";
 
-  // 默認回傳第一筆通用歐洲樞紐或已知預設，絕不 hardcode okayama
   return WEATHER_CITY_PRESETS[0].id;
 }
 
 // 支援動態全球城市解析與氣象取得
 async function fetchWeatherForCity(cityOrId, forceRefresh = false) {
   let city = null;
-  if (typeof cityOrId === "object" && cityOrId.lat && cityOrId.lon) {
+  if (typeof cityOrId === "object" && cityOrId && cityOrId.lat && cityOrId.lon) {
     city = cityOrId;
   } else {
     city = WEATHER_CITY_PRESETS.find((c) => c.id === cityOrId) || WEATHER_CITY_PRESETS[0];
@@ -356,13 +409,54 @@ async function fetchWeatherForCity(cityOrId, forceRefresh = false) {
   return data;
 }
 
+// 彈出更換/搜尋氣象城市對話框 (支援全域任何世界名城即時切換)
+function openCustomWeatherCityModal() {
+  const trip = tripsList.find((t) => t.uuid === currentTripUuid) || tripData;
+  const currentCityId = localStorage.getItem("trip_weather_city_" + currentTripUuid) || detectTripWeatherCity(trip, tripData);
+  const currentCity = WEATHER_CITY_PRESETS.find((c) => c.id === currentCityId) || WEATHER_CITY_PRESETS[0];
+
+  const cityOptions = WEATHER_CITY_PRESETS.map(
+    (c) => `<option value="${c.id}" ${c.id === currentCity.id ? "selected" : ""}>${c.name}</option>`
+  ).join("");
+
+  const modalHtml = `
+    <div class="ef-wrap">
+      <div class="ef-label">當前顯示城市</div>
+      <div style="font-weight:bold;color:var(--moss);font-size:14px;padding:6px 0;">📍 ${currentCity.name}</div>
+    </div>
+    <div class="ef-wrap">
+      <div class="ef-label">選擇全球熱門城市 (即選即看)</div>
+      <select id="selectWeatherCityDropdown" class="ef-select" style="background:#fff;">
+        ${cityOptions}
+      </select>
+    </div>
+  `;
+
+  openFormModal({
+    title: "🌍 切換旅程氣象城市",
+    bodyHtml: modalHtml,
+    confirmText: "套用並更新天氣",
+    onConfirm: () => {
+      const selectedId = document.getElementById("selectWeatherCityDropdown").value;
+      if (selectedId && currentTripUuid) {
+        localStorage.setItem("trip_weather_city_" + currentTripUuid, selectedId);
+      }
+      renderWeatherCard(true);
+      showToast("已成功更新氣象城市 ✓");
+      return true;
+    },
+  });
+}
+
 async function renderWeatherCard(forceRefresh = false) {
   const container = document.getElementById("tripWeatherContainer");
   if (!container) return;
 
   const trip = tripsList.find((t) => t.uuid === currentTripUuid) || tripData;
-  // 依行程地點全自動切換城市，無需手動選擇
-  const activeCityId = detectTripWeatherCity(trip, tripData);
+  
+  // 優先順序：1. 手動自訂偏好 2. 行程設定 3. 自動偵測
+  const manualCityId = currentTripUuid ? localStorage.getItem("trip_weather_city_" + currentTripUuid) : null;
+  const activeCityId = manualCityId || detectTripWeatherCity(trip, tripData);
   const activeCity = WEATHER_CITY_PRESETS.find((c) => c.id === activeCityId) || WEATHER_CITY_PRESETS[0];
 
   container.innerHTML = `
@@ -371,9 +465,9 @@ async function renderWeatherCard(forceRefresh = false) {
         <div class="weather-title-area">
           <div class="weather-icon-badge">⛅</div>
           <div>
-            <div class="weather-title-text">
+            <div class="weather-title-text" style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;">
               <span>旅程天氣預報</span>
-              <span class="weather-location-pill">📍 ${activeCity.name}</span>
+              <span class="weather-location-pill" style="cursor:pointer;" onclick="openCustomWeatherCityModal()" title="點此可自由更換或搜尋其他城市氣象">📍 ${activeCity.name} <span style="font-size:10px;text-decoration:underline;margin-left:2px;opacity:0.85;">[更換]</span></span>
             </div>
           </div>
         </div>
@@ -774,15 +868,32 @@ function showTripView() {
   renderWeatherCard();
 }
 
-// 獨立專屬後台視圖 (完全獨立於所有旅遊行程之外)
+// 獨立專屬後台視圖 (完全獨立於所有旅遊行程之外，具備管理員身分持久保持保護)
 function showAdminView() {
-  const isAdmin = userRole === "admin" && idToken && !isTokenExpired(idToken);
-  if (!isAdmin) {
+  // 雙重管理員身分判定：
+  let isKnownAdmin = userRole === "admin";
+  try {
+    const list = JSON.parse(localStorage.getItem("known_admin_emails") || "[]");
+    const cachedRole = localStorage.getItem("cache_userRole");
+    if (cachedRole === "admin") isKnownAdmin = true;
+    if (idToken) {
+      const info = parseJwt(idToken);
+      const email = info?.email?.toLowerCase().trim();
+      if (email && list.includes(email)) isKnownAdmin = true;
+    }
+  } catch (e) {}
+
+  // 只有在既非已知管理員、又無有效 Token 時才阻擋並導向登入
+  if (!isKnownAdmin && (!idToken || isTokenExpired(idToken))) {
     showToast("此管理專區僅限系統管理員存取");
     triggerGoogleLogin();
     showHubView();
     return;
   }
+
+  // 穩定鎖定為管理員，絕不中途降級跳走
+  userRole = "admin";
+  try { localStorage.setItem("cache_userRole", "admin"); } catch (e) {}
 
   document.getElementById("view-hub").style.display = "none";
   document.getElementById("view-trip").style.display = "none";
@@ -798,9 +909,15 @@ function showAdminView() {
   }
 
   const adminUserTag = document.getElementById("adminUserTag");
-  if (adminUserTag && idToken) {
-    const userInfo = parseJwt(idToken);
-    adminUserTag.innerText = userInfo?.name || userInfo?.email || "管理員已就緒";
+  if (adminUserTag) {
+    if (idToken) {
+      const userInfo = parseJwt(idToken);
+      const isExp = isTokenExpired(idToken);
+      const nameStr = userInfo?.name || userInfo?.email || "管理員";
+      adminUserTag.innerHTML = `👑 ${escapeHtml(nameStr)} ${isExp ? '<span style="font-size:11px;text-decoration:underline;cursor:pointer;margin-left:4px;color:#FEF08A;" onclick="triggerGoogleLogin()">[憑證過期點此續期]</span>' : '✓'}`;
+    } else {
+      adminUserTag.innerText = "👑 系統管理員已就緒";
+    }
   }
 
   resetToDefaultTheme();
@@ -934,6 +1051,9 @@ document.addEventListener("DOMContentLoaded", function () {
       // 尚未確定密碼狀態：先顯示安全載入提示，由 fetchTripData 進行門禁確認
       showLoading("正在驗證存取權限，請稍候...");
     }
+  } else if (window.location.search.includes("admin=1") || window.location.search.includes("trip=admin")) {
+    // 若在後台頁，保持後台渲染，絕不執行大廳渲染！
+    renderAdminView();
   } else {
     // 若在大廳頁，立即渲染大廳卡片！
     renderHubTripsGrid();
@@ -1169,7 +1289,7 @@ function openAdminCenterModal() {
             </div>
           </div>
           <div style="font-size:11px;color:#64748B;margin-top:6px;line-height:1.6;">
-            <div>🗓️ 期間：${escapeHtml(t.startDate || "")} ~ ${escapeHtml(t.endDate || "")} (${escapeHtml(t.duration || "")})</div>
+            <div>🗓️ 期間：${escapeHtml(t.startDate || "")} ~ ${escapeHtml(t.endDate || "")} (${escapeHtml(t.duration || calculateTripDuration(t.startDate, t.endDate) || "未註記天數")})</div>
             <div>🔐 密碼：<span style="font-family:monospace;font-weight:700;color:#0F766E;">${escapeHtml(t.password || "未設密碼 (公開)")}</span> ｜ 👥 授權：${escapeHtml(t.allowed_users || "僅管理員")}</div>
           </div>
         </div>
@@ -1489,7 +1609,12 @@ async function fetchTrips() {
       } catch (e) {}
 
       updateAuthUI();
-      renderHubTripsGrid();
+      const isAdminRoute = window.location.search.includes("admin=1") || window.location.search.includes("trip=admin");
+      if (isAdminRoute) {
+        renderAdminView();
+      } else if (!currentTripUuid) {
+        renderHubTripsGrid();
+      }
 
       // 若當前有在特定行程手冊中，更新其資料
       if (currentTripUuid) {
@@ -4485,7 +4610,9 @@ function renderAdminView() {
 
       const sDate = t.startDate || (cachedData ? cachedData.startDate : "") || (tripData && currentTripUuid === t.uuid ? tripData.startDate : "");
       const eDate = t.endDate || (cachedData ? cachedData.endDate : "") || (tripData && currentTripUuid === t.uuid ? tripData.endDate : "");
-      const dur = t.duration || (cachedData ? cachedData.duration : "") || (tripData && currentTripUuid === t.uuid ? tripData.duration : "") || "未註記天數";
+      const calculatedDur = calculateTripDuration(sDate, eDate);
+      const rawDur = t.duration || (cachedData ? cachedData.duration : "") || (tripData && currentTripUuid === t.uuid ? tripData.duration : "");
+      const dur = (rawDur && rawDur.trim() && rawDur.trim() !== "未註記天數") ? rawDur.trim() : (calculatedDur || "未註記天數");
       const dateRange = (sDate && eDate) ? `${escapeHtml(sDate)} ~ ${escapeHtml(eDate)}` : (sDate ? escapeHtml(sDate) : "未設日期");
 
       // 補齊物件屬性供全域使用
@@ -4726,7 +4853,7 @@ function openEditTripMetaModal(uuid) {
 
   const currentStartDate = trip.startDate || (cachedData ? cachedData.startDate : "") || (tripData && currentTripUuid === uuid ? tripData.startDate : "");
   const currentEndDate = trip.endDate || (cachedData ? cachedData.endDate : "") || (tripData && currentTripUuid === uuid ? tripData.endDate : "");
-  const currentDuration = trip.duration || (cachedData ? cachedData.duration : "") || (tripData && currentTripUuid === uuid ? tripData.duration : "");
+  const currentDuration = trip.duration || (cachedData ? cachedData.duration : "") || (tripData && currentTripUuid === uuid ? tripData.duration : "") || calculateTripDuration(currentStartDate, currentEndDate);
   const currentTheme =
     trip.theme || (cachedData ? cachedData.theme : "") || (tripData && currentTripUuid === uuid ? tripData.theme : "") || getAutoThemeKeyForTrip(trip.name, trip.uuid);
 
