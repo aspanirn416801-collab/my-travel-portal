@@ -345,6 +345,7 @@ function doPost(e) {
     const startDate = postData.startDate || "";
     const endDate = postData.endDate || "";
     const duration = postData.duration || "";
+    const theme = (postData.theme || "violet").trim();
     
     // 若 sheetId 或 folderId 為空，啟動全自動建立機制
     if (!sheetId || !folderId) {
@@ -388,7 +389,7 @@ function doPost(e) {
     
     // 初始化關聯試算表的結構與分頁
     try {
-      initializeSubSheet(sheetId, name, startDate, endDate, duration, password);
+      initializeSubSheet(sheetId, name, startDate, endDate, duration, password, theme);
       return ContentService.createTextOutput(JSON.stringify({ 
         status: "success", 
         sheetId: sheetId,
@@ -429,13 +430,14 @@ function doPost(e) {
     }
   }
 
-  // 3. 修改行程基本設定（名稱、出發/結束日期、天數、授權名單）
+  // 3. 修改行程基本設定（名稱、出發/結束日期、天數、主題色彩、授權名單）
   if (action === "updateTripMeta") {
     const tripUuid = postData.tripUuid;
     const name = postData.name;
     const startDate = postData.startDate;
     const endDate = postData.endDate;
     const duration = postData.duration;
+    const theme = postData.theme !== undefined ? String(postData.theme).trim() : null;
     const allowedUsers = postData.allowedUsers || "";
     const password = postData.password !== undefined ? String(postData.password).trim() : null;
     
@@ -480,6 +482,20 @@ function doPost(e) {
             }
             if (!hasPwdRow) {
               infoSheet.appendRow(["Password", password]);
+            }
+          }
+          if (theme !== null) {
+            let hasThemeRow = false;
+            const infoData = infoSheet.getDataRange().getValues();
+            for (let r = 0; r < infoData.length; r++) {
+              if (String(infoData[r][0]).toLowerCase() === "theme") {
+                infoSheet.getRange(r + 1, 2).setValue(theme);
+                hasThemeRow = true;
+                break;
+              }
+            }
+            if (!hasThemeRow) {
+              infoSheet.appendRow(["Theme", theme]);
             }
           }
         }
@@ -544,7 +560,7 @@ function doPost(e) {
 }
 
 // 初始化關聯試算表結構
-function initializeSubSheet(sheetId, tripName, startDate, endDate, duration, password) {
+function initializeSubSheet(sheetId, tripName, startDate, endDate, duration, password, theme) {
   const ss = SpreadsheetApp.openById(sheetId);
   
   // 1. 基本資訊頁 (Info)
@@ -557,6 +573,7 @@ function initializeSubSheet(sheetId, tripName, startDate, endDate, duration, pas
   infoSheet.appendRow(["EndDate", endDate || "2027-02-19"]);
   infoSheet.appendRow(["Duration", duration || "8天7夜"]);
   infoSheet.appendRow(["Password", password || ""]);
+  infoSheet.appendRow(["Theme", theme || "violet"]);
   
   // 2. 準備清單頁 (Checklist)
   let checklistSheet = ss.getSheetByName("Checklist");
@@ -646,9 +663,12 @@ function loadTripDetails(sheetId) {
     result.endDate = (infoRows[3] && infoRows[3][1]) || "";
     result.duration = (infoRows[4] && infoRows[4][1]) || "";
     for (let r = 1; r < infoRows.length; r++) {
-      if (String(infoRows[r][0]).toLowerCase() === "password") {
+      const rowKey = String(infoRows[r][0]).toLowerCase();
+      if (rowKey === "password") {
         result.password = infoRows[r][1] || "";
-        break;
+      }
+      if (rowKey === "theme") {
+        result.theme = infoRows[r][1] || "";
       }
     }
   } else {
@@ -657,6 +677,7 @@ function loadTripDetails(sheetId) {
     result.endDate = "";
     result.duration = "";
     result.password = "";
+    result.theme = "";
   }
   
   // 2. Checklist (行前準備與必備清單)
@@ -968,6 +989,20 @@ function saveTripDetails(sheetId, data) {
   infoSheet.getRange(5, 2).setValue(data.duration || "");
   if (data.password !== undefined) {
     infoSheet.getRange(6, 2).setValue(data.password || "");
+  }
+  if (data.theme !== undefined) {
+    let hasThemeRow = false;
+    const infoData = infoSheet.getDataRange().getValues();
+    for (let r = 0; r < infoData.length; r++) {
+      if (String(infoData[r][0]).toLowerCase() === "theme") {
+        infoSheet.getRange(r + 1, 2).setValue(data.theme || "");
+        hasThemeRow = true;
+        break;
+      }
+    }
+    if (!hasThemeRow) {
+      infoSheet.appendRow(["Theme", data.theme || ""]);
+    }
   }
   
   // 2. Checklist (行前準備與行李清單)

@@ -55,6 +55,343 @@ try {
   });
 } catch (e) {}
 
+// =========================================================================
+// 專案主題色彩管理系統 (支援每個行程不同主題顏色，如夢幻紫羅蘭、經典苔綠、海洋藍等)
+// =========================================================================
+const TRIP_THEMES = {
+  violet: {
+    name: "💜 夢幻紫羅蘭 (Lavender Violet)",
+    vars: {
+      "--moss": "#583A85",
+      "--moss-light": "#7B55B3",
+      "--moss-gradient": "linear-gradient(135deg, #52347E 0%, #764BA2 100%)",
+      "--washi": "#F3EFF8",
+      "--bg-gradient": "linear-gradient(135deg, #EFE8F6 0%, #E5DCF2 50%, #F6F2FA 100%)",
+      "--gold": "#8E6ABF",
+      "--gold-soft": "rgba(142, 106, 191, 0.22)",
+      "--mist": "#DDD3E8",
+    },
+  },
+  moss: {
+    name: "🌿 經典苔綠 (Classic Moss)",
+    vars: {
+      "--moss": "#1A3822",
+      "--moss-light": "#2D5A37",
+      "--moss-gradient": "linear-gradient(135deg, #1A3822 0%, #2D5A37 100%)",
+      "--washi": "#F4EFE6",
+      "--bg-gradient": "linear-gradient(135deg, #F0EAE1 0%, #E8DFD3 50%, #F5F0E8 100%)",
+      "--gold": "#C5A059",
+      "--gold-soft": "rgba(197, 160, 89, 0.2)",
+      "--mist": "#D5CFC5",
+    },
+  },
+  ocean: {
+    name: "🌊 琉璃海洋藍 (Ocean Sapphire)",
+    vars: {
+      "--moss": "#1C3F60",
+      "--moss-light": "#2A5B8A",
+      "--moss-gradient": "linear-gradient(135deg, #163654 0%, #2B6294 100%)",
+      "--washi": "#EEF4F8",
+      "--bg-gradient": "linear-gradient(135deg, #E6EFF6 0%, #DCE8F2 50%, #F0F6FA 100%)",
+      "--gold": "#3E84B8",
+      "--gold-soft": "rgba(62, 132, 184, 0.22)",
+      "--mist": "#CFDFEB",
+    },
+  },
+  sunset: {
+    name: "🌅 夕陽珊瑚橙 (Sunset Coral)",
+    vars: {
+      "--moss": "#7A3326",
+      "--moss-light": "#A04A39",
+      "--moss-gradient": "linear-gradient(135deg, #7A3326 0%, #B85945 100%)",
+      "--washi": "#FAF1EE",
+      "--bg-gradient": "linear-gradient(135deg, #F7EAE5 0%, #F2DFD7 50%, #FAF2EE 100%)",
+      "--gold": "#D4775E",
+      "--gold-soft": "rgba(212, 119, 94, 0.22)",
+      "--mist": "#E8D5CE",
+    },
+  },
+  sakura: {
+    name: "🌸 霞櫻柔粉 (Sakura Pink)",
+    vars: {
+      "--moss": "#733348",
+      "--moss-light": "#964B63",
+      "--moss-gradient": "linear-gradient(135deg, #6C2B40 0%, #A55470 100%)",
+      "--washi": "#FAF0F3",
+      "--bg-gradient": "linear-gradient(135deg, #F8E9EE 0%, #F1DDE5 50%, #FAF3F6 100%)",
+      "--gold": "#BA6B85",
+      "--gold-soft": "rgba(186, 107, 133, 0.22)",
+      "--mist": "#E8D3DC",
+    },
+  },
+  amber: {
+    name: "🍂 琥珀秋金 (Amber Gold)",
+    vars: {
+      "--moss": "#63471D",
+      "--moss-light": "#876229",
+      "--moss-gradient": "linear-gradient(135deg, #5B4018 0%, #9C7232 100%)",
+      "--washi": "#F7F3EB",
+      "--bg-gradient": "linear-gradient(135deg, #F4EEE2 0%, #ECE3D1 50%, #F9F6EE 100%)",
+      "--gold": "#B88A3E",
+      "--gold-soft": "rgba(184, 138, 62, 0.25)",
+      "--mist": "#DFD6C3",
+    },
+  },
+  midnight: {
+    name: "🌌 曜石夜灰 (Midnight Slate)",
+    vars: {
+      "--moss": "#242A36",
+      "--moss-light": "#394254",
+      "--moss-gradient": "linear-gradient(135deg, #1E232E 0%, #3D485C 100%)",
+      "--washi": "#F0F2F5",
+      "--bg-gradient": "linear-gradient(135deg, #E9ECF1 0%, #DFE4EC 50%, #F2F5F8 100%)",
+      "--gold": "#556784",
+      "--gold-soft": "rgba(85, 103, 132, 0.22)",
+      "--mist": "#D1D7E0",
+    },
+  },
+};
+
+// 依行程名稱與識別碼智能預設合適的主題色
+function getAutoThemeKeyForTrip(tripName = "", tripUuid = "") {
+  const combined = (String(tripName) + " " + String(tripUuid)).toLowerCase();
+  if (
+    combined.includes("紫") ||
+    combined.includes("薰衣草") ||
+    combined.includes("lavender") ||
+    combined.includes("okayama") ||
+    combined.includes("岡山") ||
+    combined.includes("桃")
+  ) {
+    return "violet";
+  }
+  if (combined.includes("櫻") || combined.includes("sakura") || combined.includes("粉")) {
+    return "sakura";
+  }
+  if (
+    combined.includes("海") ||
+    combined.includes("沖繩") ||
+    combined.includes("okinawa") ||
+    combined.includes("藍")
+  ) {
+    return "ocean";
+  }
+  if (combined.includes("夕") || combined.includes("珊瑚") || combined.includes("日落")) {
+    return "sunset";
+  }
+  if (
+    combined.includes("楓") ||
+    combined.includes("秋") ||
+    combined.includes("銀杏") ||
+    combined.includes("金") ||
+    combined.includes("京都") ||
+    combined.includes("kyoto")
+  ) {
+    return "amber";
+  }
+  if (combined.includes("夜") || combined.includes("星") || combined.includes("黑")) {
+    return "midnight";
+  }
+  return "moss";
+}
+
+// 套用主題色彩至全域 CSS 變數
+function applyTripTheme(themeKey, tripName = "", tripUuid = "") {
+  let key = themeKey;
+  if (!key || !TRIP_THEMES[key]) {
+    key = getAutoThemeKeyForTrip(tripName, tripUuid);
+  }
+  const theme = TRIP_THEMES[key] || TRIP_THEMES["moss"];
+  const root = document.documentElement;
+  Object.entries(theme.vars).forEach(([prop, val]) => {
+    root.style.setProperty(prop, val);
+  });
+}
+
+function resetToDefaultTheme() {
+  applyTripTheme("moss");
+}
+
+// =========================================================================
+// 旅程天氣預報模組 (整合 Open-Meteo 免費 API，支援 3天 / 一週 7天 與多城市切換)
+// =========================================================================
+const WEATHER_CITY_PRESETS = [
+  { id: "okayama", name: "日本 岡山 (Okayama)", lat: 34.6618, lon: 133.935, tz: "Asia/Tokyo" },
+  { id: "kurashiki", name: "日本 倉敷 (Kurashiki)", lat: 34.5956, lon: 133.7719, tz: "Asia/Tokyo" },
+  { id: "tokyo", name: "日本 東京 (Tokyo)", lat: 35.6762, lon: 139.6503, tz: "Asia/Tokyo" },
+  { id: "osaka", name: "日本 大阪 (Osaka)", lat: 34.6937, lon: 135.5023, tz: "Asia/Tokyo" },
+  { id: "kyoto", name: "日本 京都 (Kyoto)", lat: 35.0116, lon: 135.7681, tz: "Asia/Tokyo" },
+  { id: "fukuoka", name: "日本 福岡 (Fukuoka)", lat: 33.5904, lon: 130.4017, tz: "Asia/Tokyo" },
+  { id: "sapporo", name: "日本 札幌 (Sapporo)", lat: 43.0618, lon: 141.3545, tz: "Asia/Tokyo" },
+  { id: "okinawa", name: "日本 沖繩 (Naha)", lat: 26.2124, lon: 127.6809, tz: "Asia/Tokyo" },
+  { id: "taipei", name: "台灣 台北 (Taipei)", lat: 25.033, lon: 121.5654, tz: "Asia/Taipei" },
+  { id: "kaohsiung", name: "台灣 高雄 (Kaohsiung)", lat: 22.6273, lon: 120.3014, tz: "Asia/Taipei" },
+];
+
+let currentWeatherPeriod = "3day"; // '3day' | '7day'
+
+function getWmoWeatherInfo(code) {
+  if (code === 0) return { icon: "☀️", text: "晴朗" };
+  if (code === 1) return { icon: "🌤️", text: "大致晴朗" };
+  if (code === 2) return { icon: "⛅", text: "多雲時晴" };
+  if (code === 3) return { icon: "☁️", text: "多雲陰天" };
+  if ([45, 48].includes(code)) return { icon: "🌫️", text: "薄霧晨靄" };
+  if ([51, 53, 55].includes(code)) return { icon: "🌦️", text: "毛毛陣雨" };
+  if ([61, 63, 65].includes(code)) return { icon: "🌧️", text: "短暫陣雨" };
+  if ([71, 73, 75, 77].includes(code)) return { icon: "❄️", text: "降雪" };
+  if ([80, 81, 82].includes(code)) return { icon: "🌧️", text: "局部豪雨" };
+  if ([85, 86].includes(code)) return { icon: "🌨️", text: "飄雪陣雪" };
+  if ([95, 96, 99].includes(code)) return { icon: "⛈️", text: "雷雨交加" };
+  return { icon: "🌤️", text: "舒適宜人" };
+}
+
+function detectDefaultWeatherCity(tripName = "", tripUuid = "") {
+  const combined = (String(tripName) + " " + String(tripUuid)).toLowerCase();
+  for (const city of WEATHER_CITY_PRESETS) {
+    if (combined.includes(city.id) || combined.includes(city.name.split(" ")[1])) {
+      return city.id;
+    }
+  }
+  if (combined.includes("倉敷")) return "kurashiki";
+  if (combined.includes("岡山")) return "okayama";
+  if (combined.includes("東京")) return "tokyo";
+  if (combined.includes("大阪")) return "osaka";
+  if (combined.includes("京都")) return "kyoto";
+  if (combined.includes("福岡") || combined.includes("九州")) return "fukuoka";
+  if (combined.includes("札幌") || combined.includes("北海道")) return "sapporo";
+  if (combined.includes("沖繩")) return "okinawa";
+  if (combined.includes("台北")) return "taipei";
+  if (combined.includes("高雄")) return "kaohsiung";
+  return "okayama";
+}
+
+async function fetchWeatherForCity(cityId, forceRefresh = false) {
+  const city = WEATHER_CITY_PRESETS.find((c) => c.id === cityId) || WEATHER_CITY_PRESETS[0];
+  const cacheKey = `weather_cache_${city.id}`;
+
+  if (!forceRefresh) {
+    try {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        const { timestamp, data } = JSON.parse(cached);
+        // 1 小時快取
+        if (Date.now() - timestamp < 3600000) {
+          return data;
+        }
+      }
+    } catch (e) {}
+  }
+
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=${encodeURIComponent(city.tz)}`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error("天氣資料伺服器暫時無法連線");
+  const data = await resp.json();
+  try {
+    localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch (e) {}
+  return data;
+}
+
+async function renderWeatherCard(forceRefresh = false) {
+  const container = document.getElementById("tripWeatherContainer");
+  if (!container) return;
+
+  const trip = tripsList.find((t) => t.uuid === currentTripUuid) || tripData;
+  const savedCity = currentTripUuid ? localStorage.getItem("trip_weather_city_" + currentTripUuid) : null;
+  const activeCityId = savedCity || detectDefaultWeatherCity((trip && trip.name) || "", currentTripUuid);
+  const activeCity = WEATHER_CITY_PRESETS.find((c) => c.id === activeCityId) || WEATHER_CITY_PRESETS[0];
+
+  container.innerHTML = `
+    <div class="weather-card">
+      <div class="weather-card-header">
+        <div class="weather-card-title">
+          <span>⛅ 旅程氣象預報</span>
+          <span style="font-size:11px;font-weight:normal;opacity:0.75;">(${activeCity.name.split(" ")[1]})</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <select class="weather-city-select" onchange="onWeatherCitySelectChange(this.value)">
+            ${WEATHER_CITY_PRESETS.map((c) => `<option value="${c.id}" ${c.id === activeCityId ? "selected" : ""}>${c.name}</option>`).join("")}
+          </select>
+          <button type="button" class="weather-refresh-btn" onclick="renderWeatherCard(true)" title="重新整理天氣">🔄</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:12px;">
+        <button type="button" class="weather-period-pill ${currentWeatherPeriod === "3day" ? "active" : ""}" onclick="switchWeatherTab('3day')">未來 3 天</button>
+        <button type="button" class="weather-period-pill ${currentWeatherPeriod === "7day" ? "active" : ""}" onclick="switchWeatherTab('7day')">一週預報</button>
+      </div>
+      <div id="weatherDaysList" style="text-align:center;padding:16px 0;color:var(--moss);font-size:12px;">
+        ⏳ 正在載入即時衛星氣象...
+      </div>
+    </div>
+  `;
+
+  try {
+    const data = await fetchWeatherForCity(activeCityId, forceRefresh);
+    const listContainer = document.getElementById("weatherDaysList");
+    if (!listContainer || !data.daily || !data.daily.time) return;
+
+    const daysToShow = currentWeatherPeriod === "3day" ? 3 : 7;
+    const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
+    const count = Math.min(daysToShow, data.daily.time.length);
+
+    let html = '<div class="weather-days-row">';
+    for (let i = 0; i < count; i++) {
+      const dateStr = data.daily.time[i];
+      const d = new Date(dateStr);
+      const m = d.getMonth() + 1;
+      const dayNum = d.getDate();
+      const wd = weekdays[d.getDay()];
+      const isToday = i === 0;
+      const maxTemp = Math.round(data.daily.temperature_2m_max[i]);
+      const minTemp = Math.round(data.daily.temperature_2m_min[i]);
+      const rainProb = data.daily.precipitation_probability_max ? data.daily.precipitation_probability_max[i] : null;
+      const weatherCode = data.daily.weathercode ? data.daily.weathercode[i] : 0;
+      const weatherInfo = getWmoWeatherInfo(weatherCode);
+
+      html += `
+        <div class="weather-day-card">
+          <div class="weather-day-date">${isToday ? "今日" : `${m}/${dayNum}`} <span style="opacity:0.75;">(${wd})</span></div>
+          <div class="weather-day-icon">${weatherInfo.icon}</div>
+          <div class="weather-day-desc">${weatherInfo.text}</div>
+          <div class="weather-day-temp">
+            <span class="weather-temp-max">${maxTemp}°</span>
+            <span class="weather-temp-min">${minTemp}°</span>
+          </div>
+          <div class="weather-day-rain">💧 ${rainProb !== null ? rainProb + "%" : "--"}</div>
+        </div>
+      `;
+    }
+    html += "</div>";
+    html += `
+      <div class="weather-footer-note">
+        <span>Open-Meteo 高解析氣象模型 • 每小時自動快取更新</span>
+      </div>
+    `;
+    listContainer.outerHTML = html;
+  } catch (err) {
+    const listContainer = document.getElementById("weatherDaysList");
+    if (listContainer) {
+      listContainer.innerHTML = `
+        <div style="padding:10px;background:rgba(255,255,255,0.6);border-radius:10px;font-size:12px;color:#888;">
+          ⛅ 暫時無法取得即時天氣預報（可點擊右上角 🔄 重新整理）
+        </div>
+      `;
+    }
+  }
+}
+
+function switchWeatherTab(period) {
+  currentWeatherPeriod = period;
+  renderWeatherCard(false);
+}
+
+function onWeatherCitySelectChange(cityId) {
+  if (currentTripUuid) {
+    localStorage.setItem("trip_weather_city_" + currentTripUuid, cityId);
+  }
+  renderWeatherCard(false);
+}
+
 function isTripUnlocked(tripUuid, tripPassword) {
   if (!tripUuid) return true;
   // 管理員尊榮特權：必須確實持有有效且未過期的 Google 登入 Token
@@ -269,6 +606,7 @@ function showHubView() {
       }
     });
   }
+  resetToDefaultTheme();
   document.getElementById("view-hub").style.display = "block";
   document.getElementById("view-trip").style.display = "none";
   const lockedView = document.getElementById("view-locked");
@@ -352,6 +690,14 @@ function showTripView() {
     indicator.style.display = "inline-block";
     indicator.innerText = `📍 ${(trip && trip.name) || currentTripUuid}`;
   }
+
+  // 套用專屬主題色彩 (支援每個行程不同色系：紫羅蘭、經典苔綠、海洋藍等)
+  const themeKey = (trip && trip.theme) || (tripData && tripData.theme) || "";
+  const tripTitle = (trip && trip.name) || (tripData && tripData.name) || "";
+  applyTripTheme(themeKey, tripTitle, currentTripUuid);
+
+  // 渲染未來 3 天 / 一週氣象預報卡片
+  renderWeatherCard();
 }
 
 // 解析 URL Query 參數取得行程 UUID (例如 ?trip=okayama-2027 或 ?okayama-2027)
@@ -581,6 +927,18 @@ function updateAuthUI() {
   const loginBtn = document.getElementById("customLoginBtn");
   const logoutBtn = document.getElementById("logoutBtn");
   const adminHubActions = document.getElementById("adminHubActions");
+  const adminCapsule = document.getElementById("adminCapsule");
+  const headerLoginBtn = document.getElementById("headerLoginBtn");
+
+  const isAdmin = userRole === "admin" && idToken && !isTokenExpired(idToken);
+
+  // 右上方整合膠囊 [ 🛠️ 後台 ｜ 登出 ] 與快捷登入狀態控制
+  if (adminCapsule) {
+    adminCapsule.style.display = isAdmin ? "inline-flex" : "none";
+  }
+  if (headerLoginBtn) {
+    headerLoginBtn.style.display = !isAdmin ? "inline-flex" : "none";
+  }
 
   if (!badge) return;
 
@@ -627,6 +985,29 @@ function updateAuthUI() {
     if (adminHubActions) adminHubActions.style.display = "none";
     if (loginBtn) loginBtn.style.display = "inline-flex";
   }
+}
+
+// 點擊頂部導覽列右上方「🛠️ 後台」按鈕
+function openAdminPanelFromHeader() {
+  if (userRole !== "admin" || !idToken || isTokenExpired(idToken)) {
+    showToast("請先登入管理員帳號");
+    triggerGoogleLogin();
+    return;
+  }
+  if (currentTripUuid) {
+    const adminTabBtn = document.getElementById("btn-tab-admin");
+    if (adminTabBtn) {
+      switchTab("admin", adminTabBtn);
+      window.scrollTo({ top: 100, behavior: "smooth" });
+    }
+  } else {
+    openCreateTripModal();
+  }
+}
+
+// 頂部膠囊登出按鈕
+function triggerGoogleLogout() {
+  logout();
 }
 
 // 登入成功回呼 (0.001 秒極速瞬間切換管理員，完全免乾等網路延遲！)
@@ -3220,45 +3601,43 @@ function renderFood() {
       const hasImg = safeImgUrl && safeImgUrl !== "#";
 
       return `
-        <div style="padding:16px 0;border-bottom:1px solid var(--mist);">
-          <div style="display:flex;align-items:flex-start;gap:14px;">
-            <!-- 美食圖示或上傳的美食照片 -->
-            ${hasImg
-          ? `<img src="${safeImgUrl}" referrerpolicy="no-referrer" loading="lazy" class="shopping-thumb" onerror="handleImgError(this)">`
-          : `<span style="font-size:32px;flex-shrink:0;opacity:${item.done ? 0.35 : 1};line-height:1;">${safeEmoji}</span>`
-        }
-
-            <div style="flex:1;min-width:0;${item.done ? "text-decoration:line-through;opacity:0.45;" : ""}">
-              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-                <div style="font-size:16px;font-weight:800;color:var(--ink);">
-                  ${safeName}
-                  ${item.must
-          ? '<span style="font-size:10px;background:var(--red);color:#fff;padding:2px 6px;border-radius:4px;vertical-align:middle;font-weight:normal;margin-left:4px;">必吃</span>'
+        <div class="food-card" style="${item.done ? "opacity:0.6;" : ""}">
+          <!-- 頂部店名與狀態列 (滿版 100% 寬度不擠壓，徹底根除窄螢幕直條擠字) -->
+          <div class="food-card-header">
+            <div class="food-card-title-wrap">
+              <span class="food-card-name" style="${item.done ? "text-decoration:line-through;color:#888;" : ""}">
+                ${safeName}
+              </span>
+              ${item.must
+          ? '<span class="food-tag-badge" style="background:var(--red);color:#fff;">🔥 必吃</span>'
           : ""
         }
-                  ${detectedArea
-          ? `<span style="font-size:10px;background:rgba(26,56,34,0.1);color:var(--moss);padding:2px 6px;border-radius:4px;vertical-align:middle;font-weight:600;margin-left:4px;">📍 ${escapeHtml(detectedArea)}</span>`
-          : ""
-        }
-                </div>
-                ${adminActions}
-              </div>
-
-              <!-- 地圖導航按鈕 -->
-              <div style="margin-top:6px;">
-                ${autoMapUrl ? `<a class="map-link" style="margin-top:0;" href="${autoMapUrl}" target="_blank" rel="noopener noreferrer">🗺 地圖導航</a>` : ""}
-              </div>
-
-              ${safeDesc
-          ? `<div style="font-size:12px;color:#666;margin-top:6px;background:#FAF8F5;padding:6px 10px;border-radius:8px;border:1px dashed var(--mist);line-height:1.5;">${safeDesc}</div>`
+              ${detectedArea
+          ? `<span class="food-tag-badge" style="background:var(--washi);color:var(--moss);border:1px solid rgba(26,56,34,0.2);font-weight:600;">📍 ${escapeHtml(detectedArea)}</span>`
           : ""
         }
             </div>
+            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+              ${adminActions}
+              <button onclick="toggleFoodDone(${i})" style="border:none;border-radius:14px;padding:5px 12px;font-size:11px;font-weight:bold;cursor:pointer;background:${item.done ? "var(--moss)" : "var(--mist)"};color:${item.done ? "#fff" : "#666"};transition:all 0.2s;white-space:nowrap;">
+                ${item.done ? "已品嚐 ✓" : "想吃"}
+              </button>
+            </div>
+          </div>
 
-            <button onclick="toggleFoodDone(${i})" style="flex-shrink:0;border:none;border-radius:14px;padding:6px 14px;font-size:11px;font-weight:bold;cursor:pointer;background:${item.done ? "var(--moss)" : "var(--mist)"
-        };color:${item.done ? "#fff" : "#666"};transition:all 0.2s;margin-top:2px;">
-              ${item.done ? "已品嚐 ✓" : "想吃"}
-            </button>
+          <!-- 卡片內容區：左側縮圖/圖示，右側導航與心得介紹 -->
+          <div class="food-card-body">
+            <div class="food-card-img-wrap">
+              ${hasImg
+          ? `<img src="${safeImgUrl}" referrerpolicy="no-referrer" loading="lazy" class="shopping-thumb" onerror="handleImgError(this)" alt="${safeName}">`
+          : `<span style="font-size:32px;display:inline-block;opacity:${item.done ? 0.35 : 1};line-height:1;">${safeEmoji}</span>`
+        }
+            </div>
+
+            <div class="food-card-content">
+              ${autoMapUrl ? `<div style="margin-bottom:6px;"><a class="map-link" style="margin-top:0;display:inline-flex;" href="${autoMapUrl}" target="_blank" rel="noopener noreferrer">🗺 地圖導航</a></div>` : ""}
+              ${safeDesc ? `<div style="font-size:12px;color:#555;background:#FAF8F5;padding:8px 12px;border-radius:8px;border:1px dashed var(--mist);line-height:1.5;word-break:break-word;">${safeDesc}</div>` : ""}
+            </div>
           </div>
         </div>
       `;
@@ -3952,6 +4331,18 @@ function openCreateTripModal() {
       <textarea id="newAllowedUsers" class="ef-textarea" placeholder="user1@gmail.com, user2@gmail.com"></textarea>
     </div>
     <div class="ef-wrap">
+      <div class="ef-label">🎨 專案主題色彩</div>
+      <select id="newTripTheme" class="ef-input" style="background:#fff;">
+        <option value="violet">💜 夢幻紫羅蘭 (Lavender Violet - 典雅浪漫)</option>
+        <option value="moss">🌿 經典苔綠 (Classic Moss - 和風文青)</option>
+        <option value="ocean">🌊 琉璃海洋藍 (Ocean Blue - 清新海島)</option>
+        <option value="sunset">🌅 夕陽珊瑚橙 (Sunset Coral - 溫暖日落)</option>
+        <option value="sakura">🌸 霞櫻柔粉 (Sakura Pink - 浪漫賞櫻)</option>
+        <option value="amber">🍂 琥珀秋金 (Amber Gold - 賞楓銀杏)</option>
+        <option value="midnight">🌌 曜石夜灰 (Midnight Slate - 極簡都會)</option>
+      </select>
+    </div>
+    <div class="ef-wrap">
       <div class="ef-label">🔐 旅程專屬存取密碼 <span style="font-weight:normal;color:#888;">(選填，留空為公開手冊，有設密碼訪客需輸入密碼唯讀)</span></div>
       <input type="text" id="newTripPassword" class="ef-input" placeholder="例如: okayama2027 (選填)">
     </div>
@@ -3967,6 +4358,7 @@ function openCreateTripModal() {
       const startDate = document.getElementById("newStartDate").value.trim();
       const endDate = document.getElementById("newEndDate").value.trim();
       const duration = document.getElementById("newDuration").value.trim();
+      const theme = document.getElementById("newTripTheme")?.value || "violet";
       const sheetId = document.getElementById("newSheetId").value.trim();
       const folderId = document.getElementById("newFolderId").value.trim();
       const password = document.getElementById("newTripPassword").value.trim();
@@ -4007,6 +4399,7 @@ function openCreateTripModal() {
             startDate,
             endDate,
             duration: duration || "8天7夜",
+            theme,
             sheetId,
             folderId,
             allowedUsers,
@@ -4059,6 +4452,8 @@ function openEditTripMetaModal(uuid) {
     tripData && currentTripUuid === uuid ? tripData.endDate : "";
   const currentDuration =
     tripData && currentTripUuid === uuid ? tripData.duration : "";
+  const currentTheme =
+    trip.theme || (tripData && currentTripUuid === uuid ? tripData.theme : "") || getAutoThemeKeyForTrip(trip.name, trip.uuid);
 
   const formHtml = `
     <div class="ef-wrap">
@@ -4084,6 +4479,18 @@ function openEditTripMetaModal(uuid) {
       <input type="text" id="editTripDuration" class="ef-input" value="${currentDuration}">
     </div>
     <div class="ef-wrap">
+      <div class="ef-label">🎨 專案主題色彩</div>
+      <select id="editTripTheme" class="ef-input" style="background:#fff;">
+        <option value="violet" ${currentTheme === "violet" ? "selected" : ""}>💜 夢幻紫羅蘭 (Lavender Violet - 典雅浪漫)</option>
+        <option value="moss" ${currentTheme === "moss" ? "selected" : ""}>🌿 經典苔綠 (Classic Moss - 和風文青)</option>
+        <option value="ocean" ${currentTheme === "ocean" ? "selected" : ""}>🌊 琉璃海洋藍 (Ocean Blue - 清新海島)</option>
+        <option value="sunset" ${currentTheme === "sunset" ? "selected" : ""}>🌅 夕陽珊瑚橙 (Sunset Coral - 溫暖日落)</option>
+        <option value="sakura" ${currentTheme === "sakura" ? "selected" : ""}>🌸 霞櫻柔粉 (Sakura Pink - 浪漫賞櫻)</option>
+        <option value="amber" ${currentTheme === "amber" ? "selected" : ""}>🍂 琥珀秋金 (Amber Gold - 賞楓銀杏)</option>
+        <option value="midnight" ${currentTheme === "midnight" ? "selected" : ""}>🌌 曜石夜灰 (Midnight Slate - 極簡都會)</option>
+      </select>
+    </div>
+    <div class="ef-wrap">
       <div class="ef-label">授權人員 Email (以英文逗號分隔)</div>
       <textarea id="editTripAllowedUsers" class="ef-textarea">${trip.allowed_users || ""}</textarea>
     </div>
@@ -4104,6 +4511,7 @@ function openEditTripMetaModal(uuid) {
         .value.trim();
       const endDate = document.getElementById("editTripEndDate").value.trim();
       const duration = document.getElementById("editTripDuration").value.trim();
+      const theme = document.getElementById("editTripTheme")?.value || "violet";
       const password = document.getElementById("editTripPassword").value.trim();
       let allowedUsers = document
         .getElementById("editTripAllowedUsers")
@@ -4136,6 +4544,7 @@ function openEditTripMetaModal(uuid) {
             startDate,
             endDate,
             duration,
+            theme,
             allowedUsers,
             password,
           }),
@@ -4144,14 +4553,17 @@ function openEditTripMetaModal(uuid) {
         if (result.status === "success") {
           showToast("行程設定更新成功 ✓");
           trip.password = password;
-          // 若修改的是當前行程，同步更新記憶體資料
+          trip.theme = theme;
+          // 若修改的是當前行程，同步更新記憶體資料並即時變換主題色
           if (currentTripUuid === uuid && tripData) {
             tripData.name = name;
             tripData.startDate = startDate;
             tripData.endDate = endDate;
             tripData.duration = duration;
             tripData.password = password;
+            tripData.theme = theme;
             initCountdown();
+            applyTripTheme(theme, name, uuid);
           }
           fetchTrips();
         } else {

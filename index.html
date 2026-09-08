@@ -1813,20 +1813,304 @@ body.large { font-size: 16px; }
   align-items: center;
   gap: 6px;
 }
+/* 表單日期即時預覽膠囊標籤 */
+.ef-preview-tag {
+  margin-top: 6px;
+  padding: 8px 12px;
+  background: rgba(26, 56, 34, 0.08);
+  border: 1px dashed var(--moss);
+  border-radius: 8px;
+  color: var(--moss);
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 頂部管理員膠囊雙功能按鈕 (參考截圖 2：🛠️ 後台 ｜ 登出) */
+.admin-capsule {
+  display: inline-flex;
+  align-items: center;
+  background: var(--glass-bg);
+  border: 1px solid var(--mist);
+  border-radius: 20px;
+  padding: 3px 6px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  gap: 2px;
+}
+.admin-capsule-btn {
+  background: transparent;
+  border: none;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--moss);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 12px;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+.admin-capsule-btn:hover {
+  background: rgba(0,0,0,0.05);
+}
+.admin-capsule-btn.danger {
+  color: #B43232;
+}
+.admin-capsule-btn.danger:hover {
+  background: rgba(180, 50, 50, 0.1);
+}
+.admin-capsule-divider {
+  color: var(--mist);
+  font-size: 11px;
+  user-select: none;
+  padding: 0 1px;
+}
+
+/* 美食清單響應式卡片樣式 (徹底根除手機直向擠字問題) */
+.food-card {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--mist);
+  transition: all 0.2s ease;
+}
+.food-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.food-card-title-wrap {
+  flex: 1;
+  min-width: 0;
+}
+.food-card-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--ink);
+  line-height: 1.4;
+  word-break: break-word;
+}
+.food-tag-badge {
+  display: inline-block;
+  white-space: nowrap !important; /* 確保「日生町」絕不被拆行 */
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  vertical-align: middle;
+  font-weight: 600;
+  margin-left: 4px;
+}
+.food-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.food-card-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.food-card-thumb {
+  width: 72px;
+  height: 72px;
+  border-radius: 12px;
+  object-fit: cover;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+.food-card-info {
+  flex: 1;
+  min-width: 0;
+}
+.food-status-btn {
+  border: none;
+  border-radius: 14px;
+  padding: 6px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+/* 旅程天氣預報卡片 (比照參考截圖 2 設計) */
+.weather-card {
+  background: var(--glass-bg);
+  border: var(--glass-border);
+  border-radius: 24px;
+  padding: 16px 16px 14px;
+  margin-bottom: 18px;
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  transition: all 0.3s ease;
+}
+.weather-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.weather-title-area {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.weather-icon-badge {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(255,220,100,0.35), rgba(255,180,50,0.2));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  box-shadow: 0 4px 12px rgba(255,180,50,0.15);
+  flex-shrink: 0;
+}
+.weather-title-text {
+  font-family: 'Noto Serif TC', serif;
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--ink);
+}
+.weather-location-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--gold-soft);
+  color: var(--moss);
+  padding: 2px 8px;
+  border-radius: 12px;
+  margin-top: 2px;
+}
+.weather-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.weather-tab-switch {
+  display: inline-flex;
+  background: rgba(0,0,0,0.05);
+  padding: 2px;
+  border-radius: 12px;
+}
+.weather-tab-btn {
+  border: none;
+  background: transparent;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 10px;
+  cursor: pointer;
+  color: #666;
+  transition: all 0.2s;
+}
+.weather-tab-btn.active {
+  background: #FFF;
+  color: var(--moss);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+}
+.weather-city-select {
+  padding: 4px 8px;
+  font-size: 11px;
+  border-radius: 10px;
+  border: 1px solid var(--mist);
+  background: var(--glass-bg);
+  color: var(--ink);
+  font-weight: 600;
+  outline: none;
+  cursor: pointer;
+}
+.weather-days-row {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 4px 2px 6px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.weather-days-row::-webkit-scrollbar {
+  display: none;
+}
+.weather-day-col {
+  flex: 1;
+  min-width: 92px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--mist);
+  border-radius: 18px;
+  padding: 12px 6px;
+  text-align: center;
+  transition: all 0.2s;
+}
+.weather-day-col:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.06);
+  border-color: var(--gold);
+}
+.weather-day-date {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--ink);
+}
+.weather-day-sub {
+  font-size: 10px;
+  color: #777;
+  margin-top: 1px;
+}
+.weather-day-emoji {
+  font-size: 26px;
+  margin: 6px 0;
+  line-height: 1;
+}
+.weather-day-desc {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink);
+  margin-bottom: 4px;
+}
+.weather-day-temp {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--ink);
+}
+.weather-day-rain {
+  font-size: 10px;
+  color: #2563EB;
+  margin-top: 3px;
+  font-weight: 600;
+}
 </style>
 </head>
 <body>
 
-  <!-- 全域頂部導覽列 -->
+  <!-- 全域頂部導覽列 (參考截圖 2：左側所有行程，右側後台+登出) -->
   <header class="app-header">
     <div class="header-left">
-      <button class="hub-nav-btn" onclick="navigateTo('')">🏠 行程大廳</button>
+      <button class="hub-nav-btn" onclick="navigateTo('')">← 所有行程</button>
       <span id="currentTripIndicator" style="font-size:12px;font-weight:700;color:var(--moss);display:none;"></span>
     </div>
     <div class="header-right">
       <div id="userRoleBadge" class="user-badge badge-guest">訪客模式</div>
+
+      <!-- 管理員雙功能膠囊按鈕 (參考截圖 2：🛠️ 後台 ｜ 登出) -->
+      <div id="adminCapsule" class="admin-capsule" style="display:none;">
+        <button type="button" class="admin-capsule-btn" onclick="navigateTo('')" title="前往後台管理中心">🛠️ 後台</button>
+        <span class="admin-capsule-divider">｜</span>
+        <button type="button" class="admin-capsule-btn danger" onclick="logout()" title="登出管理員身分">登出</button>
+      </div>
       
-      <!-- 自訂日系登入膠囊按鈕 (避免 Google iframe 預載入 403) -->
+      <!-- 自訂日系登入膠囊按鈕 (未登入或訪客狀態時顯示) -->
       <button id="customLoginBtn" class="hub-nav-btn" style="background:var(--moss);color:#fff;border-color:var(--moss);" onclick="triggerGoogleLogin()">🔑 登入</button>
       <button id="logoutBtn" class="hub-nav-btn" style="display:none;" onclick="logout()">🚪 登出</button>
     </div>
@@ -1896,6 +2180,9 @@ body.large { font-size: 16px; }
           </div>
         </div>
       </div>
+
+      <!-- 旅程即時天氣預報容器 (比照截圖 2，置於分頁列與主要內容之間) -->
+      <div id="tripWeatherContainer" style="padding: 0 16px; margin-top: 16px;"></div>
 
       <!-- 主分頁內容 -->
       <div class="main">
@@ -2003,6 +2290,6 @@ body.large { font-size: 16px; }
   <!-- Google Identity Services SDK -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- 前端核心邏輯 (加入版本號防快取) -->
-  <script src="app.js?v=20260907_15"></script>
+  <script src="app.js?v=20260908_01"></script>
 </body>
 </html>
