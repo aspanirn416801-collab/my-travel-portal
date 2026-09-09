@@ -619,14 +619,10 @@ function doPost(e) {
   }
 }
 
-// 初始化關聯試算表結構
+// 初始化關聯試算表結構 (遵循純白留空原則，建立標準欄位 Header，不預設硬編碼任何舊行程資料，徹底避免跨行程污染)
 function initializeSubSheet(sheetId, tripName, startDate, endDate, duration, password, theme) {
   const ss = SpreadsheetApp.openById(sheetId);
-  let effectiveName = tripName || "旅遊手冊";
-  if (effectiveName === "2027-02okayama" || effectiveName === "trip-okayama202702") {
-    effectiveName = "2027岡山・四國之旅";
-  }
-  const isOkayama = effectiveName.toLowerCase().includes("okayama") || effectiveName.includes("岡山") || effectiveName.includes("四國");
+  const effectiveName = tripName || "旅遊手冊";
   
   // 1. 基本資訊頁 (Info)
   let infoSheet = ss.getSheetByName("Info");
@@ -640,7 +636,7 @@ function initializeSubSheet(sheetId, tripName, startDate, endDate, duration, pas
   infoSheet.appendRow(["Password", password || ""]);
   infoSheet.appendRow(["Theme", theme || ""]);
   
-  // 2. 準備清單頁 (Checklist)
+  // 2. 準備清單頁 (Checklist) - 保留最通用的出國準備基礎項，內容可自由編輯或增刪
   let checklistSheet = ss.getSheetByName("Checklist");
   if (!checklistSheet) checklistSheet = ss.insertSheet("Checklist");
   checklistSheet.clear();
@@ -649,64 +645,42 @@ function initializeSubSheet(sheetId, tripName, startDate, endDate, duration, pas
   checklistSheet.appendRow(["2", "通訊", "網卡 / eSIM", "確認上網設定與開通日期", "", "FALSE"]);
   checklistSheet.appendRow(["3", "財務", "外幣與信用卡", "通知銀行開啟海外刷卡與提款", "", "FALSE"]);
   
-  // 3. 航班與住宿 (Flights)
+  // 3. 航班與住宿 (Flights) - 純白留空：僅寫入標準欄位 Header，不預設任何航班
   let flightsSheet = ss.getSheetByName("Flights");
   if (!flightsSheet) flightsSheet = ss.insertSheet("Flights");
   flightsSheet.clear();
   flightsSheet.appendRow(["Type", "airline", "no", "from", "to", "date", "dep", "arr", "note"]);
-  if (isOkayama) {
-    flightsSheet.appendRow(["out", "虎航", "IT214", "TPE桃園", "OKJ岡山", "2027-02-12", "11:30", "15:05", "準時登機"]);
-    flightsSheet.appendRow(["in", "虎航", "IT215", "OKJ岡山", "TPE桃園", "2027-02-19", "15:55", "17:40", ""]);
-  }
   
-  // 4. 飯店資訊 (Hotel)
+  // 4. 飯店資訊 (Hotel) - 純白留空：僅寫入標準欄位 Header，不預設任何飯店
   let hotelSheet = ss.getSheetByName("Hotel");
   if (!hotelSheet) hotelSheet = ss.insertSheet("Hotel");
   hotelSheet.clear();
   hotelSheet.appendRow(["name", "addr", "checkin", "checkout", "nights", "note"]);
-  if (isOkayama) {
-    hotelSheet.appendRow(["岡山格蘭比亞大酒店", "〒700-0024 岡山県岡山市北区駅元町1-5", "2027-02-12", "2027-02-19", "7晚", "岡山站直結，出站即達"]);
-  }
   
-  // 5. 行程規劃 (Days)
+  // 5. 行程規劃 (Days) - 純白留空骨架：僅建立 Day 1 標題骨架，不預設任何景點或接駁資訊
   let daysSheet = ss.getSheetByName("Days");
   if (!daysSheet) daysSheet = ss.insertSheet("Days");
   daysSheet.clear();
   daysSheet.appendRow(["dayId", "date", "title", "time", "place", "desc", "imgUrl", "link"]);
-  if (isOkayama) {
-    daysSheet.appendRow(["Day 1", "2月12日（五）", "岡山空港 ➔ 岡山車站", "15:30", "岡山桃太郎空港", "搭乘接駁巴士前往市區", "", ""]);
-  } else {
-    daysSheet.appendRow(["Day 1", startDate || "第一天", (tripName || "") + " 啟程日", "", "", "開啟精彩旅程！", "", ""]);
-  }
+  daysSheet.appendRow(["Day 1", startDate || "第一天", (tripName || "") + " 啟程日", "", "", "開啟精彩旅程！", "", ""]);
   
-  // 6. 美食清單 (Food)
+  // 6. 美食清單 (Food) - 純白留空：僅寫入標準欄位 Header，不預設任何特定餐廳或美食
   let foodSheet = ss.getSheetByName("Food");
   if (!foodSheet) foodSheet = ss.insertSheet("Food");
   foodSheet.clear();
   foodSheet.appendRow(["id", "emoji", "name", "area", "desc", "must", "done", "imgUrl"]);
-  if (isOkayama) {
-    foodSheet.appendRow(["f1", "🦪", "日生 牡蠣燒 (お好み焼き)", "日生町", "岡山限定冬季美味", "TRUE", "FALSE", ""]);
-  }
   
-  // 7. 代購清單 (Shopping)
+  // 7. 代購清單 (Shopping) - 純白留空：僅寫入標準欄位 Header，不預設任何商品或特定店家
   let shoppingSheet = ss.getSheetByName("Shopping");
   if (!shoppingSheet) shoppingSheet = ss.insertSheet("Shopping");
   shoppingSheet.clear();
   shoppingSheet.appendRow(["id", "buyer", "name", "location", "price", "qty", "link", "imgUrl", "note", "done"]);
-  if (isOkayama) {
-    shoppingSheet.appendRow(["s1", "媽媽", "合利他命 EX Plus 270錠", "BicCamera 岡山站前店", "¥5,800", "2瓶", "https://www.biccamera.com/", "", "買2瓶，注意效期", "FALSE"]);
-  }
 
-  // 8. 交通規劃 (交通 / Transport)
+  // 8. 交通規劃 (交通 / Transport) - 純白留空：僅寫入標準欄位 Header，不預設任何車票或路線
   let transSheet = ss.getSheetByName("交通");
   if (!transSheet) transSheet = ss.insertSheet("交通");
   transSheet.clear();
   transSheet.appendRow(["日期", "行程", "起訖點/內容", "時間", "預估費用/人", "幣別", "車種資訊", "備註"]);
-  if (isOkayama) {
-    transSheet.appendRow(["", "黑部立山周遊券", "", "", "24000", "日円", "", ""]);
-    transSheet.appendRow(["D1-8/5", "中部機場到名古屋", "", "14:30", "980", "日円", "指定席450円", "第1月台"]);
-    transSheet.appendRow(["D1-8/5", "名古屋到高山", "下午 4:03:00 Hida 15", "16:03", "", "", "使用周遊券(劃位)", ""]);
-  }
 }
 
 // 輔助函式：將試算表可能自動轉為 Date 物件的時間格式過濾回乾淨字串 (例如 "14:00")

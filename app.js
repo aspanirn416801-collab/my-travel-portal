@@ -931,6 +931,14 @@ function showTripView() {
   const tripStartDate = (trip && trip.startDate) || (tripData && tripData.startDate) || "";
   applyTripTheme(themeKey, tripTitle, currentTripUuid, tripStartDate);
 
+  // 依據 currentTab 同步啟用對應之頁籤按鈕與內容分頁
+  document.querySelectorAll(".page").forEach((p) => p.classList.remove("active"));
+  document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
+  const activePage = document.getElementById("page-" + currentTab);
+  if (activePage) activePage.classList.add("active");
+  const activeBtn = document.getElementById("btn-tab-" + currentTab);
+  if (activeBtn) activeBtn.classList.add("active");
+
   // 渲染未來 3 天 / 一週氣象預報卡片
   renderWeatherCard();
 }
@@ -1022,6 +1030,11 @@ function initRouter() {
   }
 
   currentTripUuid = getTripUuidFromUrl();
+  const tabParam = urlParams.get("tab");
+  if (tabParam && ["checklist", "flights", "transport", "itinerary", "food", "shopping"].includes(tabParam)) {
+    currentTab = tabParam;
+  }
+
   if (currentTripUuid) {
     const trip = tripsList.find((t) => t.uuid === currentTripUuid);
     const pwd = (trip && trip.password) || getKnownTripPassword(currentTripUuid) || "";
@@ -1035,8 +1048,8 @@ function initRouter() {
   }
 }
 
-// 路由導航切換函式
-function navigateTo(tripUuid) {
+// 路由導航切換函式 (嚴格鎖定目標行程 UUID，並支援攜帶指定分頁 tab)
+function navigateTo(tripUuid, targetTab = "") {
   const currentPath = window.location.pathname;
 
   // 獨立後台中心
@@ -1052,17 +1065,22 @@ function navigateTo(tripUuid) {
   // 若切換至不同行程手冊，徹底清空舊行程之記憶體資料與頁面 DOM，杜絕內容混淆！
   if (targetUuid && targetUuid !== currentTripUuid) {
     tripData = null;
+    currentTab = targetTab || "checklist";
     document.querySelectorAll(".page").forEach((p) => {
       p.innerHTML = '<div style="text-align:center;padding:60px 10px;color:var(--moss);font-size:13px;font-weight:700;">⏳ 正在載入旅程手冊內容...</div>';
     });
+  } else if (targetTab) {
+    currentTab = targetTab;
   }
 
   currentTripUuid = targetUuid;
-  const newUrl = currentTripUuid
-    ? `${currentPath}?trip=${encodeURIComponent(currentTripUuid)}`
-    : currentPath;
+  let newUrl = currentPath;
+  if (currentTripUuid) {
+    const tabSuffix = currentTab && currentTab !== "checklist" ? `&tab=${encodeURIComponent(currentTab)}` : "";
+    newUrl = `${currentPath}?trip=${encodeURIComponent(currentTripUuid)}${tabSuffix}`;
+  }
 
-  history.pushState({ trip: currentTripUuid }, "", newUrl);
+  history.pushState({ trip: currentTripUuid, tab: currentTab }, "", newUrl);
 
   if (currentTripUuid) {
     const trip = tripsList.find((t) => t.uuid === currentTripUuid);
@@ -1183,6 +1201,11 @@ function renderGsiOfficialButton() {
 }
 
 function triggerGoogleLogin() {
+  // 保存目前完整網址（含 trip 與 tab 參數），確保登入後 100% 回到原行程分頁
+  try {
+    sessionStorage.setItem("returnAfterLogin", window.location.href);
+  } catch (e) {}
+
   const modal = document.getElementById("googleLoginModal");
   if (modal) modal.style.display = "flex";
 
@@ -1430,6 +1453,22 @@ function handleCredentialResponse(response) {
     showToast(`歡迎 ${userName}，正在同步權限...`);
   }
 
+  // 復原登入前的網址狀態（若在手冊內，確保行程 ID 與分頁完全保留）
+  try {
+    const returnUrl = sessionStorage.getItem("returnAfterLogin");
+    if (returnUrl) {
+      const u = new URL(returnUrl, window.location.origin);
+      const savedTrip = u.searchParams.get("trip");
+      const savedTab = u.searchParams.get("tab");
+      if (savedTrip && !currentTripUuid) {
+        currentTripUuid = savedTrip;
+      }
+      if (savedTab) {
+        currentTab = savedTab;
+      }
+    }
+  } catch (e) {}
+
   // 背景向 GAS 靜默同步並確保存檔
   fetchTrips().then(() => {
     if (userRole === "admin" && userEmail) {
@@ -1633,7 +1672,9 @@ async function fetchTrips() {
       tripsList = JSON.parse(cached);
       if (cachedRole) userRole = cachedRole;
       updateAuthUI();
-      renderHubTripsGrid();
+      if (!currentTripUuid && !window.location.search.includes("admin=1")) {
+        renderHubTripsGrid();
+      }
     }
   } catch (e) {}
 
@@ -2234,6 +2275,17 @@ function switchTab(id, btn) {
   if (targetPage) targetPage.classList.add("active");
   const targetBtn = btn || document.getElementById("btn-tab-" + id);
   if (targetBtn) targetBtn.classList.add("active");
+
+  // 同步更新 URL 中的 tab 參數，確保保留目前行程 ID，重新整理或分享時不會遺失分頁狀態
+  if (currentTripUuid) {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("trip", currentTripUuid);
+      url.searchParams.set("tab", id);
+      history.replaceState({ trip: currentTripUuid, tab: id }, "", url.toString());
+    } catch (e) {}
+  }
+
   render();
 }
 
