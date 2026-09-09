@@ -3,7 +3,7 @@
 // =========================================================================
 const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
-const APP_BUILD_VERSION = "20260909_03";
+const APP_BUILD_VERSION = "20260909_04";
 
 // 智能行程顯示名稱轉換 (將舊版 ID 或技術命名轉換為溫暖手帳風格名稱，技術 ID 留存於後台編輯中)
 function getTripDisplayName(name = "", uuid = "") {
@@ -4105,42 +4105,45 @@ function renderFood() {
       const hasImg = safeImgUrl && safeImgUrl !== "#";
 
       return `
-        <div class="food-card" style="${item.done ? "opacity:0.6;" : ""}">
-          <!-- 頂部店名與狀態列 (滿版 100% 寬度不擠壓，徹底根除窄螢幕直條擠字) -->
-          <div class="food-card-header">
-            <div class="food-card-title-wrap">
-              <span class="food-card-name" style="${item.done ? "text-decoration:line-through;color:#888;" : ""}">
-                ${safeName}
-              </span>
+        <div class="food-card ${item.done ? "done" : ""}">
+          <!-- 第一層：店名/美食名稱 (獨立一行大字，絕不與按鈕搶空間折行) -->
+          <div class="food-title-row">
+            <span class="food-name ${item.done ? "done-text" : ""}">
+              ${safeName}
+            </span>
+          </div>
+
+          <!-- 第二層：標籤與操作按鈕分流列 (左側必吃/地區標籤，右側想吃按鈕) -->
+          <div class="food-action-row">
+            <div class="food-tags-wrap">
               ${item.must
-          ? '<span class="food-tag-badge" style="background:var(--red);color:#fff;">🔥 必吃</span>'
+          ? '<span class="food-tag-badge must-badge">🔥 必吃</span>'
           : ""
         }
               ${detectedArea
-          ? `<span class="food-tag-badge" style="background:var(--washi);color:var(--moss);border:1px solid rgba(26,56,34,0.2);font-weight:600;">📍 ${escapeHtml(detectedArea)}</span>`
+          ? `<span class="food-tag-badge area-badge">📍 ${escapeHtml(detectedArea)}</span>`
           : ""
         }
             </div>
-            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
-              ${adminActions}
-              <button onclick="toggleFoodDone(${i})" style="border:none;border-radius:14px;padding:5px 12px;font-size:11px;font-weight:bold;cursor:pointer;background:${item.done ? "var(--moss)" : "var(--mist)"};color:${item.done ? "#fff" : "#666"};transition:all 0.2s;white-space:nowrap;">
+            <div class="food-btns-wrap">
+              <button onclick="toggleFoodDone(${i})" class="food-status-btn ${item.done ? "done" : ""}">
                 ${item.done ? "已品嚐 ✓" : "想吃"}
               </button>
             </div>
           </div>
 
-          <!-- 卡片內容區：左側縮圖/圖示，右側導航與心得介紹 -->
+          <!-- 第三層：卡片主體 (左側固定縮圖，右側導航與心得介紹) -->
           <div class="food-card-body">
             <div class="food-card-img-wrap">
               ${hasImg
-          ? `<img src="${safeImgUrl}" referrerpolicy="no-referrer" loading="lazy" class="shopping-thumb" onerror="handleImgError(this)" alt="${safeName}">`
-          : `<span style="font-size:32px;display:inline-block;opacity:${item.done ? 0.35 : 1};line-height:1;">${safeEmoji}</span>`
+          ? `<img src="${safeImgUrl}" referrerpolicy="no-referrer" loading="lazy" class="food-thumb" onerror="handleImgError(this)" alt="${safeName}">`
+          : `<div class="food-emoji-box">${safeEmoji}</div>`
         }
             </div>
 
             <div class="food-card-content">
               ${autoMapUrl ? `<div style="margin-bottom:6px;"><a class="map-link" style="margin-top:0;display:inline-flex;" href="${autoMapUrl}" target="_blank" rel="noopener noreferrer">🗺 地圖導航</a></div>` : ""}
-              ${safeDesc ? `<div style="font-size:12px;color:#555;background:#FAF8F5;padding:8px 12px;border-radius:8px;border:1px dashed var(--mist);line-height:1.5;word-break:break-word;">${safeDesc}</div>` : ""}
+              ${safeDesc ? `<div class="food-desc-box">${safeDesc}</div>` : ""}
             </div>
           </div>
         </div>
@@ -4455,64 +4458,58 @@ function renderShopping() {
 
       return `
         <div class="shopping-card ${item.done ? "done" : ""}">
-          <!-- 卡片頂部資訊膠囊列 -->
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px;">
-            <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;">
+          <!-- 頂部列：左側核取方塊 + 委託人膠囊 + 數量，右側想買按鈕 (單行彈性排版，永不折行重疊) -->
+          <div class="shopping-header-row">
+            <div class="shopping-header-left">
+              <input type="checkbox" class="shopping-check" ${item.done ? "checked" : ""} onclick="toggleShoppingDone(${i})">
               <span class="buyer-badge">👤 ${safeBuyer}</span>
-              <span class="qty-badge">🔢 數量: ${safeQty}</span>
+              <span class="qty-badge">🔢 ${safeQty}</span>
               ${safePrice ? `<span class="price-badge">💰 ${safePrice}</span>` : ""}
             </div>
-            ${adminActions}
+            <button onclick="toggleShoppingDone(${i})" class="shopping-status-btn ${item.done ? "done" : ""}">
+              ${item.done ? "已買齊 ✓" : "想買"}
+            </button>
           </div>
 
-          <!-- 卡片主體內容（支援左圖右文結構） -->
-          <div style="display:flex;align-items:flex-start;gap:12px;">
-            <input type="checkbox" style="width:20px;height:20px;accent-color:var(--moss);margin-top:2px;cursor:pointer;flex-shrink:0;" ${item.done ? "checked" : ""
-        } onclick="toggleShoppingDone(${i})">
-            
-            <div style="flex:1;min-width:0;${item.done ? "text-decoration:line-through;opacity:0.45;" : ""}">
-              <div style="display:flex;gap:14px;align-items:flex-start;">
-                ${hasImg
-          ? `<img src="${safeImgUrl}" referrerpolicy="no-referrer" loading="lazy" class="shopping-thumb" onerror="handleImgError(this)">`
-          : ""
+          <!-- 主體內容列：左側商品縮圖，右側品名、地點與備註 -->
+          <div class="shopping-body-row">
+            ${hasImg
+          ? `<img src="${safeImgUrl}" referrerpolicy="no-referrer" loading="lazy" class="shopping-thumb" onerror="handleImgError(this)" alt="${safeName}">`
+          : `<div class="shopping-no-img">🛍️</div>`
         }
-                <div style="flex:1;min-width:0;">
-                  <div style="font-size:16px;font-weight:900;color:var(--ink);line-height:1.35;">${safeName}</div>
-                  
-                  ${safeLocation
-          ? `<div style="font-size:12px;color:var(--moss);font-weight:800;margin-top:6px;display:flex;align-items:center;flex-wrap:wrap;gap:6px;">
-                         <span>📍 ${safeLocation}</span>
-                         ${autoMapUrl ? `<a class="map-link" style="margin-top:0;" href="${autoMapUrl}" target="_blank" rel="noopener noreferrer">🗺 地圖導航</a>` : ""}
-                       </div>`
+            <div class="shopping-info-col">
+              <div class="shopping-item-name ${item.done ? "done-text" : ""}">${safeName}</div>
+              
+              ${safeLocation
+          ? `<div class="shopping-loc-line">
+                       <span>📍 ${safeLocation}</span>
+                       ${autoMapUrl ? `<a class="map-link" style="margin-top:0;" href="${autoMapUrl}" target="_blank" rel="noopener noreferrer">🗺 地圖導航</a>` : ""}
+                     </div>`
           : (autoMapUrl
-            ? `<div style="margin-top:6px;">
+            ? `<div class="shopping-loc-line">
                          <a class="map-link" style="margin-top:0;" href="${autoMapUrl}" target="_blank" rel="noopener noreferrer">🗺 地圖導航</a>
                        </div>`
             : "")
         }
-                  
-                  ${safeNote
-          ? `<div style="font-size:12px;color:#555;margin-top:6px;background:#FAF8F5;padding:6px 10px;border-radius:8px;border:1px dashed var(--mist);line-height:1.5;">
-                         📝 ${safeNote}
-                       </div>`
+              
+              ${safeNote
+          ? `<div class="shopping-note-box">
+                       📝 ${safeNote}
+                     </div>`
           : ""
         }
 
-                  ${safeLink && safeLink !== "#"
-          ? `<div style="margin-top:8px;">
-                         <a class="ext-link" style="margin-top:0;" href="${safeLink}" target="_blank" rel="noopener noreferrer">🔗 商品介紹/網址</a>
-                       </div>`
+              ${safeLink && safeLink !== "#"
+          ? `<div style="margin-top:6px;">
+                       <a class="ext-link" style="margin-top:0;" href="${safeLink}" target="_blank" rel="noopener noreferrer">🔗 官方商品連結</a>
+                     </div>`
           : ""
         }
-                </div>
-              </div>
             </div>
-            
-            <button onclick="toggleShoppingDone(${i})" style="flex-shrink:0;border:none;border-radius:14px;padding:6px 12px;font-size:11px;font-weight:bold;cursor:pointer;background:${item.done ? "var(--moss)" : "var(--mist)"
-        };color:${item.done ? "#fff" : "#666"};transition:all 0.2s;">
-              ${item.done ? "已購買 ✓" : "想買"}
-            </button>
           </div>
+
+          <!-- 底部列：若有管理權限，管理微型按鈕統一沉底靠右，絕不飄在上方重疊折行 -->
+          ${adminActions ? `<div class="shopping-footer-row">${adminActions}</div>` : ""}
         </div>
       `;
     })

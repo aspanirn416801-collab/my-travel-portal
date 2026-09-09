@@ -48,16 +48,16 @@ body {
 }
 body.large { font-size: 16px; }
 
-/* 容器流體自適應寬度限制與防橫向滾動溢出 (流體 RWD：大螢幕自然舒展，手機留有舒服邊距) */
+/* 容器真滿版流體自適應佈局 (大螢幕全面舒展滿版，手機留有舒適邊距) */
 .app-container {
-  max-width: 1240px;
   width: 100%;
+  max-width: 100%;
   margin: 0 auto;
   min-height: 100vh;
   position: relative;
   overflow-x: hidden;
-  padding: 0 20px;
-  transition: max-width 0.3s ease;
+  padding: 0 32px;
+  box-sizing: border-box;
 }
 
 /* 登入阻擋層 */
@@ -681,6 +681,156 @@ body.large { font-size: 16px; }
   align-items: center;
   gap: 6px;
 }
+/* 輕奢美食口袋名單卡片 (三層式不跑版設計) */
+.food-card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-radius: 20px;
+  padding: 18px 20px;
+  border: var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  margin-bottom: 14px;
+  transition: all 0.28s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.food-card:hover {
+  background: var(--glass-bg-hover);
+  box-shadow: var(--glass-shadow-hover);
+  transform: translateY(-2px);
+}
+.food-card.done {
+  opacity: 0.55;
+  background: rgba(245, 245, 245, 0.6);
+}
+.food-title-row {
+  width: 100%;
+}
+.food-name {
+  font-size: 16px;
+  font-weight: 900;
+  color: var(--ink);
+  line-height: 1.4;
+  word-break: break-word;
+}
+.food-name.done-text {
+  text-decoration: line-through;
+  color: #888;
+}
+.food-action-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.food-tags-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.food-tag-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+.food-tag-badge.must-badge {
+  background: var(--red);
+  color: #FFF;
+}
+.food-tag-badge.area-badge {
+  background: var(--washi);
+  color: var(--moss);
+  border: 1px solid rgba(26, 56, 34, 0.2);
+}
+.food-btns-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.food-status-btn {
+  border: none;
+  border-radius: 14px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  background: var(--mist);
+  color: #666;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.food-status-btn.done {
+  background: var(--moss);
+  color: #FFF;
+}
+.food-card-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+.food-card-img-wrap {
+  flex-shrink: 0;
+}
+.food-thumb {
+  width: 80px;
+  height: 80px;
+  border-radius: 14px;
+  object-fit: cover;
+  display: block;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+}
+.food-emoji-box {
+  width: 76px;
+  height: 76px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid var(--mist);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+}
+.food-card-content {
+  flex: 1;
+  min-width: 0;
+}
+.food-desc-box {
+  font-size: 12px;
+  color: #555;
+  background: #FAF8F5;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px dashed var(--mist);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+/* 輕奢代購商品卡片 (緊湊整齊不漂浮) */
+.shopping-card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-radius: 20px;
+  padding: 18px 20px;
+  border: var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  margin-bottom: 14px;
+  transition: all 0.28s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 .shopping-card:hover {
   background: var(--glass-bg-hover);
   box-shadow: var(--glass-shadow-hover);
@@ -690,17 +840,124 @@ body.large { font-size: 16px; }
   opacity: 0.55;
   background: rgba(245, 245, 245, 0.6);
 }
+.shopping-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.shopping-header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.shopping-check {
+  width: 19px;
+  height: 19px;
+  accent-color: var(--moss);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.shopping-status-btn {
+  border: none;
+  border-radius: 14px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  background: var(--mist);
+  color: #666;
+  transition: all 0.2s;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.shopping-status-btn.done {
+  background: var(--moss);
+  color: #FFF;
+}
+.shopping-body-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+.shopping-thumb {
+  width: 80px;
+  height: 80px;
+  border-radius: 14px;
+  object-fit: cover;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+}
+.shopping-no-img {
+  width: 76px;
+  height: 76px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid var(--mist);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30px;
+  flex-shrink: 0;
+}
+.shopping-info-col {
+  flex: 1;
+  min-width: 0;
+}
+.shopping-item-name {
+  font-size: 16px;
+  font-weight: 900;
+  color: var(--ink);
+  line-height: 1.35;
+  word-break: break-word;
+}
+.shopping-item-name.done-text {
+  text-decoration: line-through;
+  color: #888;
+}
+.shopping-loc-line {
+  font-size: 12px;
+  color: var(--moss);
+  font-weight: 800;
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.shopping-note-box {
+  font-size: 12px;
+  color: #555;
+  margin-top: 6px;
+  background: #FAF8F5;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px dashed var(--mist);
+  line-height: 1.5;
+  word-break: break-word;
+}
+.shopping-footer-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding-top: 4px;
+  border-top: 1px dashed rgba(220, 226, 222, 0.5);
+}
 .buyer-badge {
   background: var(--gold-soft);
   color: #6B5A2A;
   border: 1px solid rgba(197, 160, 89, 0.5);
   font-size: 11px;
   font-weight: 800;
-  padding: 3px 9px;
+  padding: 3px 8px;
   border-radius: 8px;
   display: inline-flex;
   align-items: center;
   gap: 3px;
+  white-space: nowrap;
 }
 .qty-badge {
   background: #EAF3EC;
@@ -708,11 +965,12 @@ body.large { font-size: 16px; }
   border: 1px solid rgba(31, 54, 36, 0.25);
   font-size: 11px;
   font-weight: 800;
-  padding: 3px 9px;
+  padding: 3px 8px;
   border-radius: 8px;
   display: inline-flex;
   align-items: center;
   gap: 3px;
+  white-space: nowrap;
 }
 .price-badge {
   background: #FFF0EE;
@@ -720,18 +978,10 @@ body.large { font-size: 16px; }
   border: 1px solid rgba(200, 59, 43, 0.2);
   font-size: 11px;
   font-weight: 800;
-  padding: 3px 9px;
+  padding: 3px 8px;
   border-radius: 8px;
   display: inline-block;
-}
-.shopping-thumb {
-  width: 88px;
-  height: 88px;
-  border-radius: 14px;
-  object-fit: cover;
-  flex-shrink: 0;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.8);
+  white-space: nowrap;
 }
 .status-toast {
   position: fixed;
@@ -1604,64 +1854,76 @@ body.large { font-size: 16px; }
    多裝置 RWD 響應式配置系統 (手機 <768px、平板 768-1023px、電腦 1024px+)
    ========================================================================= */
 
-/* 電腦版樣式增強 (1024px 以上，支援 1280px ~ 1440px 寬螢幕自然伸展) */
+/* 電腦版樣式全面滿版增強 (1024px ~ 1920px+ 寬螢幕自適應滿版開展) */
 @media (min-width: 1024px) {
   .app-container {
-    max-width: 1240px;
-    padding: 0 32px;
+    width: 100%;
+    max-width: 1680px;
+    padding: 0 40px;
   }
-  /* 行程大廳：2~3 欄大器卡片 */
+  /* 行程大廳：3~4 欄現代相簿封面大卡片 */
   .hub-grid {
     grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
-    gap: 26px;
+    gap: 28px;
   }
-  /* 六個功能入口：完整橫向排列且平均分佈 */
+  /* 六大功能入口：滿版橫向展開，按鈕間距舒展 */
   .tabs {
     display: flex;
     justify-content: space-between;
-    gap: 10px;
+    gap: 12px;
   }
   .tab-btn {
     flex: 1 1 0;
-    padding: 13px 16px;
+    padding: 13px 18px;
     font-size: 14px;
+    letter-spacing: 0.5px;
   }
-  /* 往返航班行程：去程與回程登機證左右雙欄對稱並排 */
+  /* 往返航班行程：去程與回程登機證左右對稱雙欄並排，高度 100% 等高伸展 */
   .flights-dual-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 24px;
+    gap: 26px;
     align-items: stretch;
   }
-  /* 飯店住宿清單：單間飯店橫展寬敞，多間飯店自適應雙欄 */
+  /* 飯店住宿清單：單間大氣橫展，多間飯店自適應雙欄 */
   .hotels-container-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+    gap: 22px;
+    align-items: stretch;
+  }
+  /* 美食口袋名單：在大螢幕呈現 3~4 欄旅遊雜誌圖鑑看板 */
+  .items-grid-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
     gap: 20px;
     align-items: stretch;
   }
-  /* 美食／代購：2~3 欄卡片佈局 */
-  .items-grid-container {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 18px;
-    align-items: start;
+  /* 伴手禮與代購：在大螢幕呈現 3 欄電商級精緻卡片 */
+  #page-shopping .items-grid-container {
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 20px;
   }
-  /* 必備清單：依類別多欄佈局 */
+  /* 必備清單：依類別 3~4 欄大看板展開 */
   .checklist-categories-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
-    gap: 20px;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 22px;
     align-items: start;
   }
-  /* 每日行程：恪遵使用者規範，維持單欄時間軸，決不拆雙欄 */
+  /* 每日行程：恪遵使用者規範，維持單欄時間軸，決不拆雙欄；大螢幕寬度舒適伸展 */
   .itinerary-container {
-    max-width: 880px;
+    max-width: 1040px;
     margin: 0 auto;
   }
-  /* 鎖定畫面：440~480px 精緻置中卡片 */
+  /* 交通路線圖網格：桌機 2 欄寬幅展示 */
+  .route-maps-grid {
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    gap: 22px;
+  }
+  /* 鎖定畫面：500px 精緻微透光置中卡片 */
   #view-locked .card {
-    max-width: 460px;
+    max-width: 500px;
   }
 }
 
@@ -2606,6 +2868,6 @@ body.large { font-size: 16px; }
   <!-- Google Identity Services SDK -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- 前端核心邏輯 (加入版本號防快取) -->
-  <script src="app.js?v=20260909_03"></script>
+  <script src="app.js?v=20260909_04"></script>
 </body>
 </html>
