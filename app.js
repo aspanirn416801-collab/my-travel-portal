@@ -3,7 +3,7 @@
 // =========================================================================
 const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
-const APP_BUILD_VERSION = "20260909_04";
+const APP_BUILD_VERSION = "20260909_05";
 
 // 智能行程顯示名稱轉換 (將舊版 ID 或技術命名轉換為溫暖手帳風格名稱，技術 ID 留存於後台編輯中)
 function getTripDisplayName(name = "", uuid = "") {
@@ -2002,6 +2002,18 @@ async function fetchTripData() {
     if (result.status === "locked") {
       try { localStorage.removeItem("cache_trip_" + currentTripUuid); } catch (e) {}
       showLockedView({ uuid: currentTripUuid, name: result.name || currentTripUuid, hasPassword: true });
+      return;
+    }
+
+    // 容錯防護：若後端找不到該行程試算表
+    if (result.status === "error") {
+      console.warn("行程手冊載入失敗:", result.message);
+      showToast("⚠️ " + (result.message || "找不到該行程手冊"));
+      if (!hasCache) {
+        setTimeout(() => {
+          navigateTo("");
+        }, 1800);
+      }
       return;
     }
 
