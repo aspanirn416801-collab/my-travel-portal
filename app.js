@@ -3,6 +3,29 @@
 // =========================================================================
 const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
+const APP_BUILD_VERSION = "20260909_02";
+
+// 智能行程顯示名稱轉換 (將舊版 ID 或技術命名轉換為溫暖手帳風格名稱，技術 ID 留存於後台編輯中)
+function getTripDisplayName(name = "", uuid = "") {
+  const n = (name || "").trim();
+  const u = (uuid || "").trim();
+  if (!n && !u) return "未命名旅程";
+  
+  // 比對岡山/四國歷史舊名稱或系統 ID
+  const lowerN = n.toLowerCase();
+  const lowerU = u.toLowerCase();
+  if (
+    lowerN === "2027-02okayama" ||
+    lowerN === "trip-okayama202702" ||
+    lowerN === "okayama202702" ||
+    lowerU === "2027-02okayama" ||
+    lowerU === "trip-okayama202702" ||
+    lowerU === "okayama202702"
+  ) {
+    return "2027岡山・四國之旅";
+  }
+  return n || u;
+}
 
 // 前端全局狀態管理 (啟動時立即從 LocalStorage 快取中還原，實現 0.001 秒瞬間秒開！)
 let idToken = localStorage.getItem("google_id_token") || null;
@@ -280,6 +303,7 @@ const WEATHER_CITY_PRESETS = [
   { id: "sapporo", name: "日本 札幌 (Sapporo)", lat: 43.0618, lon: 141.3545, tz: "Asia/Tokyo" },
   { id: "okinawa", name: "日本 沖繩 (Naha)", lat: 26.2124, lon: 127.6809, tz: "Asia/Tokyo" },
   { id: "okayama", name: "日本 岡山 (Okayama)", lat: 34.6618, lon: 133.935, tz: "Asia/Tokyo" },
+  { id: "takamatsu", name: "日本 高松 (Takamatsu)", lat: 34.3428, lon: 134.0466, tz: "Asia/Tokyo" },
   { id: "kurashiki", name: "日本 倉敷 (Kurashiki)", lat: 34.5956, lon: 133.7719, tz: "Asia/Tokyo" },
 ];
 
@@ -300,7 +324,7 @@ function getWmoWeatherInfo(code) {
   return { icon: "🌤️", text: "氣候舒適" };
 }
 
-// 智能檢測行程地點所屬之氣象城市 (全面支援歐洲奧捷、全球各大洲與日台，徹底拔除寫死岡山！)
+// 智能檢測行程地點所屬之氣象城市 (精確識別岡山、高松與四國等城市，確保不會誤判為奧捷維也納)
 function detectTripWeatherCity(trip, data) {
   const combined = [
     trip?.name || "",
@@ -313,7 +337,36 @@ function detectTripWeatherCity(trip, data) {
     ...(data?.days || []).flatMap((d) => (d?.spots || []).map((s) => s?.place || "")),
   ].join(" ").toLowerCase();
 
-  // 1. 奧地利 & 捷克城市優先匹配
+  // 1. 日本岡山、高松與四國城市高優先級精確匹配 (防止被預設歐洲設定覆蓋)
+  if (
+    combined.includes("takamatsu") ||
+    combined.includes("高松") ||
+    combined.includes("tak")
+  ) {
+    return "takamatsu";
+  }
+  if (
+    combined.includes("okayama") ||
+    combined.includes("岡山") ||
+    combined.includes("桃太郎") ||
+    combined.includes("okj") ||
+    combined.includes("kurashiki") ||
+    combined.includes("倉敷") ||
+    combined.includes("shikoku") ||
+    combined.includes("四國") ||
+    combined.includes("四国") ||
+    combined.includes("kagawa") ||
+    combined.includes("香川") ||
+    combined.includes("seto") ||
+    combined.includes("瀨戶內") ||
+    combined.includes("瀬戸内") ||
+    combined.includes("直島") ||
+    combined.includes("小豆島")
+  ) {
+    return "okayama";
+  }
+
+  // 2. 奧地利 & 捷克城市匹配
   if (combined.includes("vienna") || combined.includes("維也納") || combined.includes("wien") || combined.includes("vie")) return "vienna";
   if (combined.includes("prague") || combined.includes("布拉格") || combined.includes("praha") || combined.includes("prg")) return "prague";
   if (combined.includes("salzburg") || combined.includes("薩爾斯堡")) return "salzburg";
@@ -323,7 +376,7 @@ function detectTripWeatherCity(trip, data) {
   if (combined.includes("austria") || combined.includes("奧地利") || combined.includes("奧捷")) return "vienna";
   if (combined.includes("czech") || combined.includes("捷克")) return "prague";
 
-  // 2. 歐洲其他名城 & 北歐 & 冰島
+  // 3. 歐洲其他名城 & 北歐 & 冰島
   if (combined.includes("iceland") || combined.includes("冰島") || combined.includes("reykjavik") || combined.includes("雷克雅維克")) return "reykjavik";
   if (combined.includes("norway") || combined.includes("挪威") || combined.includes("oslo") || combined.includes("奧斯陸")) return "oslo";
   if (combined.includes("budapest") || combined.includes("布達佩斯")) return "budapest";
@@ -335,7 +388,7 @@ function detectTripWeatherCity(trip, data) {
   if (combined.includes("munich") || combined.includes("慕尼黑") || combined.includes("德國") || combined.includes("germany")) return "munich";
   if (combined.includes("amsterdam") || combined.includes("阿姆斯特丹") || combined.includes("荷蘭")) return "amsterdam";
 
-  // 3. 大洋洲 & 美洲 & 中東非洲
+  // 4. 大洋洲 & 美洲 & 中東非洲
   if (combined.includes("new zealand") || combined.includes("紐西蘭") || combined.includes("queenstown") || combined.includes("皇后鎮")) return "queenstown";
   if (combined.includes("auckland") || combined.includes("奧克蘭")) return "auckland";
   if (combined.includes("sydney") || combined.includes("雪梨") || combined.includes("澳洲") || combined.includes("australia")) return "sydney";
@@ -346,16 +399,14 @@ function detectTripWeatherCity(trip, data) {
   if (combined.includes("dubai") || combined.includes("杜拜") || combined.includes("阿聯")) return "dubai";
   if (combined.includes("egypt") || combined.includes("埃及") || combined.includes("cairo") || combined.includes("開羅")) return "cairo";
 
-  // 4. 亞洲熱門城市
+  // 5. 亞洲熱門城市
   if (combined.includes("bangkok") || combined.includes("曼谷") || combined.includes("泰國") || combined.includes("thailand") || combined.includes("bkk")) return "bangkok";
   if (combined.includes("chiang mai") || combined.includes("清邁")) return "chiangmai";
   if (combined.includes("seoul") || combined.includes("首爾") || combined.includes("韓國") || combined.includes("korea") || combined.includes("icn")) return "seoul";
   if (combined.includes("busan") || combined.includes("釜山")) return "busan";
   if (combined.includes("singapore") || combined.includes("新加坡") || combined.includes("sin")) return "singapore";
 
-  // 5. 日本主要城市
-  if (combined.includes("kurashiki") || combined.includes("倉敷")) return "kurashiki";
-  if (combined.includes("okayama") || combined.includes("岡山") || combined.includes("桃太郎") || combined.includes("okj")) return "okayama";
+  // 6. 日本其他主要城市
   if (combined.includes("tokyo") || combined.includes("東京") || combined.includes("hnd") || combined.includes("nrt")) return "tokyo";
   if (combined.includes("osaka") || combined.includes("大阪") || combined.includes("kix")) return "osaka";
   if (combined.includes("kyoto") || combined.includes("京都")) return "kyoto";
@@ -363,13 +414,13 @@ function detectTripWeatherCity(trip, data) {
   if (combined.includes("sapporo") || combined.includes("札幌") || combined.includes("北海道") || combined.includes("cts")) return "sapporo";
   if (combined.includes("okinawa") || combined.includes("沖繩") || combined.includes("那霸") || combined.includes("oka")) return "okinawa";
 
-  // 6. 台灣城市
+  // 7. 台灣城市
   if (combined.includes("taipei") || combined.includes("台北") || combined.includes("tpe") || combined.includes("tsa")) return "taipei";
   if (combined.includes("kaohsiung") || combined.includes("高雄") || combined.includes("khh")) return "kaohsiung";
 
-  // 7. 大洲中性兜底 (絕不無腦退回岡山！)
-  if (combined.includes("europe") || combined.includes("歐洲")) return "vienna";
+  // 8. 洲級兜底
   if (combined.includes("japan") || combined.includes("日本")) return "tokyo";
+  if (combined.includes("europe") || combined.includes("歐洲")) return "vienna";
   if (combined.includes("america") || combined.includes("美洲")) return "newyork";
 
   return WEATHER_CITY_PRESETS[0].id;
@@ -615,7 +666,6 @@ function togglePasswordVisibility(inputId, btnEl) {
 
 let pendingUnlockTrip = null;
 
-// 顯示專屬私密行程門禁鎖定畫面 (整塊隱蔽手冊，絕不露出一絲內容)
 function showLockedView(trip) {
   pendingUnlockTrip = trip;
   document.getElementById("view-hub").style.display = "none";
@@ -623,15 +673,21 @@ function showLockedView(trip) {
   const lockedView = document.getElementById("view-locked");
   if (lockedView) lockedView.style.display = "block";
 
+  // 大廳返回按鈕：非大廳時正常顯示
+  const hubBackBtn = document.getElementById("hubBackBtn");
+  if (hubBackBtn) hubBackBtn.style.display = "inline-flex";
+
+  const displayName = getTripDisplayName(trip && trip.name, (trip && trip.uuid) || currentTripUuid);
+
   const indicator = document.getElementById("currentTripIndicator");
   if (indicator) {
     indicator.style.display = "inline-block";
-    indicator.innerText = `🔒 ${(trip && (trip.name || trip.uuid)) || currentTripUuid}`;
+    indicator.innerText = `🔒 ${displayName}`;
   }
 
   const titleEl = document.getElementById("lockedTripTitle");
   if (titleEl) {
-    titleEl.innerText = `🔒【${escapeHtml((trip && (trip.name || trip.uuid)) || currentTripUuid)}】`;
+    titleEl.innerText = `🔒【${escapeHtml(displayName)}】`;
   }
 
   const pwdInput = document.getElementById("lockedTripPwdInput");
@@ -777,6 +833,10 @@ function showHubView() {
   const adminView = document.getElementById("view-admin");
   if (adminView) adminView.style.display = "none";
   document.getElementById("currentTripIndicator").style.display = "none";
+
+  // 大廳返回按鈕：已在「所有行程」大廳時隱藏返回按鈕
+  const hubBackBtn = document.getElementById("hubBackBtn");
+  if (hubBackBtn) hubBackBtn.style.display = "none";
 }
 
 // =========================================================================
@@ -852,15 +912,22 @@ function showTripView() {
   const adminView = document.getElementById("view-admin");
   if (adminView) adminView.style.display = "none";
   document.getElementById("view-trip").style.display = "block";
+
+  // 大廳返回按鈕：在行程手冊中顯示
+  const hubBackBtn = document.getElementById("hubBackBtn");
+  if (hubBackBtn) hubBackBtn.style.display = "inline-flex";
+
+  const displayName = getTripDisplayName(trip && trip.name, (trip && trip.uuid) || currentTripUuid);
+
   const indicator = document.getElementById("currentTripIndicator");
   if (indicator) {
     indicator.style.display = "inline-block";
-    indicator.innerText = `📍 ${(trip && trip.name) || currentTripUuid}`;
+    indicator.innerText = `📍 ${displayName}`;
   }
 
   // 套用四季與專案主題色彩 (優先以出發季節智能適配：春櫻、夏海、秋楓、冬雪)
   const themeKey = (trip && trip.theme) || (tripData && tripData.theme) || "";
-  const tripTitle = (trip && trip.name) || (tripData && tripData.name) || "";
+  const tripTitle = displayName;
   const tripStartDate = (trip && trip.startDate) || (tripData && tripData.startDate) || "";
   applyTripTheme(themeKey, tripTitle, currentTripUuid, tripStartDate);
 
@@ -893,14 +960,22 @@ function showAdminView() {
 
   // 穩定鎖定為管理員，絕不中途降級跳走
   userRole = "admin";
-  try { localStorage.setItem("cache_userRole", "admin"); } catch (e) {}
+  try {
+    localStorage.setItem("cache_userRole", "admin");
+  } catch (e) {}
 
+  updateUserRoleUI();
   document.getElementById("view-hub").style.display = "none";
   document.getElementById("view-trip").style.display = "none";
   const lockedView = document.getElementById("view-locked");
   if (lockedView) lockedView.style.display = "none";
   const adminView = document.getElementById("view-admin");
   if (adminView) adminView.style.display = "block";
+  document.getElementById("currentTripIndicator").style.display = "none";
+
+  // 大廳返回按鈕：在後台管理中心顯示
+  const hubBackBtn = document.getElementById("hubBackBtn");
+  if (hubBackBtn) hubBackBtn.style.display = "inline-flex";
 
   const indicator = document.getElementById("currentTripIndicator");
   if (indicator) {
@@ -1646,9 +1721,10 @@ function renderHubTripsGrid() {
 
   const cardsHtml = tripsList
     .map((t) => {
-      const safeName = escapeHtml(t.name);
+      const displayName = getTripDisplayName(t.name, t.uuid);
+      const safeName = escapeHtml(displayName);
       const safeUuid = escapeHtml(t.uuid);
-      const coverInfo = getAutoCoverInfo(t.name, t.uuid, t.coverUrl);
+      const coverInfo = getAutoCoverInfo(displayName, t.uuid, t.coverUrl);
       const tripPassword = (t.password && String(t.password).trim()) || getKnownTripPassword(t.uuid) || "";
       const hasPassword = Boolean(tripPassword || t.hasPassword);
       const isUnlocked = isTripUnlocked(t.uuid, tripPassword);
@@ -1660,7 +1736,7 @@ function renderHubTripsGrid() {
         } else if (isUnlocked) {
           lockBadge = '<span style="flex-shrink:0;white-space:nowrap;font-size:10px;background:rgba(26,56,34,0.12);color:var(--moss);padding:2px 8px;border-radius:12px;font-weight:800;">🔓 已解鎖</span>';
         } else {
-          lockBadge = '<span style="flex-shrink:0;white-space:nowrap;font-size:10px;background:rgba(200,59,43,0.12);color:var(--red);padding:2px 8px;border-radius:12px;font-weight:800;">🔒 密碼保護</span>';
+          lockBadge = '<span style="flex-shrink:0;white-space:nowrap;font-size:10px;background:rgba(200,59,43,0.12);color:var(--red);padding:2px 8px;border-radius:12px;font-weight:800;">🔒 PIN保護</span>';
         }
       }
 
@@ -1684,7 +1760,8 @@ function renderHubTripsGrid() {
         dateMetaHtml = `<div>⏱️ 行程天數：<b>${escapeHtml(dur)}</b></div>`;
       }
 
-      const btnText = hasPassword && !isUnlocked && userRole !== "admin" ? "輸入密碼解鎖 ➔" : "開啟手冊 ➔";
+      // 一般親友顯示「輸入PIN查看行程 ➔」，管理員或已解鎖顯示「開啟手冊 ➔」
+      const btnText = hasPassword && !isUnlocked && userRole !== "admin" ? "輸入PIN查看行程 ➔" : "開啟手冊 ➔";
 
       return `
         <div class="trip-hub-card" onclick="openTripByUuid('${safeUuid}')">
@@ -1694,14 +1771,13 @@ function renderHubTripsGrid() {
           </div>
           <div class="hub-card-body">
             <div>
-              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;margin-bottom:4px;">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;margin-bottom:6px;">
                 <div class="hub-card-title" style="flex:1;min-width:0;word-break:break-word;">${safeName}</div>
                 ${lockBadge}
               </div>
-              <div class="hub-card-uuid">ID: ${safeUuid}</div>
               <div class="hub-card-meta">
                 ${dateMetaHtml}
-                <div>📖 包含每日行程、航班住宿、美食口袋、代購清單</div>
+                <div style="color:#555;margin-top:4px;">📖 每日行程・航班住宿・美食・代購</div>
               </div>
             </div>
             <div class="hub-card-btn">${btnText}</div>
@@ -2153,8 +2229,10 @@ function switchTab(id, btn) {
   document
     .querySelectorAll(".tab-btn")
     .forEach((b) => b.classList.remove("active"));
-  document.getElementById("page-" + id).classList.add("active");
-  btn.classList.add("active");
+  const targetPage = document.getElementById("page-" + id);
+  if (targetPage) targetPage.classList.add("active");
+  const targetBtn = btn || document.getElementById("btn-tab-" + id);
+  if (targetBtn) targetBtn.classList.add("active");
   render();
 }
 
@@ -2226,7 +2304,7 @@ function closeModal() {
 }
 
 // =========================================================================
-// 1. 必備清單 (Checklist) - 現代輕奢進度儀表板與即時同步
+// 1. 必備清單 (Checklist) - 依類別多欄佈局與即時同步
 // =========================================================================
 function renderChecklist() {
   if (!tripData) return;
@@ -2236,50 +2314,113 @@ function renderChecklist() {
   const doneCount = list.filter((i) => i.done).length;
   const percent = list.length ? Math.round((doneCount / list.length) * 100) : 0;
 
-  const rows = list
-    .map((item, i) => {
+  const addBtn = isAdmin
+    ? `<button class="glass-btn" style="background:var(--moss-gradient);color:#fff;width:100%;margin-top:16px;justify-content:center;" onclick="openAddChecklistModal()">＋ 新增必備項目</button>`
+    : "";
+
+  // 統計分類
+  const catGroups = {};
+  list.forEach((item, i) => {
+    const c = (item.cat || "備忘待辦").trim();
+    if (!catGroups[c]) catGroups[c] = [];
+    catGroups[c].push({ item, originalIdx: i });
+  });
+
+  const catKeys = Object.keys(catGroups);
+  let contentHtml = "";
+
+  if (list.length === 0) {
+    contentHtml = `
+      <div class="card">
+        <div class="card-header"><span class="card-title">✓ 行前準備清單項目</span></div>
+        <p style="color:#888;padding:12px 0;">尚無清單項目</p>
+        ${addBtn}
+      </div>
+    `;
+  } else if (catKeys.length > 1) {
+    // 多類別展示：桌機版依類別多欄卡片，手機版單欄卡片
+    const groupCardsHtml = catKeys.map((cName) => {
+      const groupItems = catGroups[cName];
+      const gDone = groupItems.filter(g => g.item.done).length;
+      const gRows = groupItems.map(({ item, originalIdx: i }) => {
+        const adminActions = isAdmin
+          ? `<div class="item-actions">
+               <button class="btn-mini" onclick="editChecklistItem(${i})">✏️ 修改</button>
+               <button class="btn-mini btn-mini-danger" onclick="deleteChecklistItem(${i})">🗑️ 刪除</button>
+             </div>`
+          : "";
+        const safeTitle = escapeHtml(item.title || "");
+        const safeNote = escapeHtml(item.note || "");
+        const safeLink = sanitizeUrl(item.link);
+        return `
+          <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid rgba(220, 226, 222, 0.45);transition:all 0.2s;">
+            <input type="checkbox" style="width:18px;height:18px;accent-color:var(--moss);margin-top:2px;cursor:pointer;border-radius:6px;flex-shrink:0;" ${item.done ? "checked" : ""} onclick="toggleChecklistItem(${i})">
+            <div style="flex:1;min-width:0;${item.done ? "text-decoration:line-through;opacity:0.45;" : ""}">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+                <div style="font-size:14px;font-weight:800;color:var(--moss);">${safeTitle}</div>
+                ${adminActions}
+              </div>
+              ${safeNote ? `<div style="font-size:12px;color:#555;margin-top:3px;line-height:1.4;">${safeNote}</div>` : ""}
+              ${safeLink && safeLink !== "#" ? `<a class="ext-link" href="${safeLink}" target="_blank" rel="noopener noreferrer">🔗 點擊查看/預約</a>` : ""}
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      return `
+        <div class="card" style="margin-bottom:0;">
+          <div class="card-header" style="border-bottom:1px solid var(--mist);padding-bottom:8px;margin-bottom:6px;">
+            <span class="card-title" style="font-size:15px;">📌 ${escapeHtml(cName)}</span>
+            <span style="font-size:11px;color:var(--moss);font-weight:700;">${gDone}/${groupItems.length} 完成</span>
+          </div>
+          ${gRows}
+        </div>
+      `;
+    }).join("");
+
+    contentHtml = `
+      <div class="checklist-categories-grid">
+        ${groupCardsHtml}
+      </div>
+      <div style="margin-top:16px;">${addBtn}</div>
+    `;
+  } else {
+    // 單一類別卡片
+    const rows = list.map((item, i) => {
       const adminActions = isAdmin
         ? `<div class="item-actions">
              <button class="btn-mini" onclick="editChecklistItem(${i})">✏️ 修改</button>
              <button class="btn-mini btn-mini-danger" onclick="deleteChecklistItem(${i})">🗑️ 刪除</button>
            </div>`
         : "";
-
       const safeCat = escapeHtml(item.cat || "備忘");
       const safeTitle = escapeHtml(item.title || "");
       const safeNote = escapeHtml(item.note || "");
       const safeLink = sanitizeUrl(item.link);
-
       return `
         <div style="display:flex;align-items:flex-start;gap:14px;padding:14px 0;border-bottom:1px solid rgba(220, 226, 222, 0.45);transition:all 0.2s;">
-          <input type="checkbox" style="width:20px;height:20px;accent-color:var(--moss);margin-top:2px;cursor:pointer;border-radius:6px;" ${item.done ? "checked" : ""
-        } onclick="toggleChecklistItem(${i})">
-          <div style="flex:1;${item.done ? "text-decoration:line-through;opacity:0.45;" : ""
-        }">
+          <input type="checkbox" style="width:20px;height:20px;accent-color:var(--moss);margin-top:2px;cursor:pointer;border-radius:6px;" ${item.done ? "checked" : ""} onclick="toggleChecklistItem(${i})">
+          <div style="flex:1;${item.done ? "text-decoration:line-through;opacity:0.45;" : ""}">
             <div style="display:flex;justify-content:space-between;align-items:center;">
-              <span style="font-size:10px;font-weight:800;color:#6B5A2A;background:var(--gold-soft);padding:3px 9px;border-radius:8px;letter-spacing:0.5px;border:1px solid rgba(197, 160, 89, 0.3);">${safeCat
-        }</span>
+              <span style="font-size:10px;font-weight:800;color:#6B5A2A;background:var(--gold-soft);padding:3px 9px;border-radius:8px;letter-spacing:0.5px;border:1px solid rgba(197, 160, 89, 0.3);">${safeCat}</span>
               ${adminActions}
             </div>
-            <div style="font-size:15px;font-weight:800;color:var(--moss);margin-top:5px;">${safeTitle
-        }</div>
-            ${safeNote
-          ? `<div style="font-size:12px;color:#666;margin-top:3px;line-height:1.5;">${safeNote}</div>`
-          : ""
-        }
-            ${safeLink && safeLink !== "#"
-          ? `<a class="ext-link" href="${safeLink}" target="_blank" rel="noopener noreferrer">🔗 點擊查看/預約</a>`
-          : ""
-        }
+            <div style="font-size:15px;font-weight:800;color:var(--moss);margin-top:5px;">${safeTitle}</div>
+            ${safeNote ? `<div style="font-size:12px;color:#555;margin-top:3px;line-height:1.5;">${safeNote}</div>` : ""}
+            ${safeLink && safeLink !== "#" ? `<a class="ext-link" href="${safeLink}" target="_blank" rel="noopener noreferrer">🔗 點擊查看/預約</a>` : ""}
           </div>
         </div>
       `;
-    })
-    .join("");
+    }).join("");
 
-  const addBtn = isAdmin
-    ? `<button class="glass-btn" style="background:var(--moss-gradient);color:#fff;width:100%;margin-top:16px;justify-content:center;" onclick="openAddChecklistModal()">＋ 新增必備項目</button>`
-    : "";
+    contentHtml = `
+      <div class="card">
+        <div class="card-header"><span class="card-title">✓ 行前準備清單項目</span></div>
+        ${rows}
+        ${addBtn}
+      </div>
+    `;
+  }
 
   document.getElementById("page-checklist").innerHTML = `
     <!-- 輕奢進度儀表板 -->
@@ -2298,14 +2439,8 @@ function renderChecklist() {
       </div>
     </div>
 
-    <!-- 清單內容卡片 -->
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">✓ 行前準備清單項目</span>
-      </div>
-      ${rows || '<p style="color:#888;">尚無清單項目</p>'}
-      ${addBtn}
-    </div>
+    <!-- 清單內容區 -->
+    ${contentHtml}
   `;
 }
 
@@ -2585,19 +2720,21 @@ function renderFlights() {
       : '<p style="color:#888;">尚未設定飯店住宿資訊</p>';
 
   document.getElementById("page-flights").innerHTML = `
-    <div style="margin-bottom: 24px;">
-      <div style="font-family:'Noto Serif TC',serif;font-size:17px;font-weight:900;color:var(--moss);margin-bottom:14px;display:flex;align-items:center;gap:6px;">
-        <span>✈️ 機票行程（登機證）</span>
+    <div class="flights-layout-grid">
+      <div style="margin-bottom: 24px;">
+        <div style="font-family:'Noto Serif TC',serif;font-size:17px;font-weight:900;color:var(--moss);margin-bottom:14px;display:flex;align-items:center;gap:6px;">
+          <span>✈️ 機票行程（登機證）</span>
+        </div>
+        ${fc("去程航班", tripData.flights ? tripData.flights.out : {}, "out")}
+        ${fc("回程航班", tripData.flights ? tripData.flights.in : {}, "in")}
       </div>
-      ${fc("去程航班", tripData.flights ? tripData.flights.out : {}, "out")}
-      ${fc("回程航班", tripData.flights ? tripData.flights.in : {}, "in")}
-    </div>
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">🏨 飯店住宿清單</span>
+      <div class="card" style="margin-bottom: 24px;">
+        <div class="card-header">
+          <span class="card-title">🏨 飯店住宿清單</span>
+        </div>
+        ${hotelCards}
+        ${addHotelBtn}
       </div>
-      ${hotelCards}
-      ${addHotelBtn}
     </div>
   `;
 }
@@ -4014,7 +4151,7 @@ function renderFood() {
   } else if (filteredItems.length === 0) {
     listContent = '<p style="color:#888;padding:16px 0;text-align:center;">此分類條件下尚無符合的美食項目</p>';
   } else {
-    listContent = itemsHtml;
+    listContent = `<div class="items-grid-container">${itemsHtml}</div>`;
   }
 
   document.getElementById("page-food").innerHTML = `
@@ -4384,7 +4521,7 @@ function renderShopping() {
   } else if (filteredItems.length === 0) {
     listContent = '<p style="color:#888;font-size:13px;padding:16px 0;text-align:center;">此分類條件下尚無符合的代購商品</p>';
   } else {
-    listContent = itemsHtml;
+    listContent = `<div class="items-grid-container">${itemsHtml}</div>`;
   }
 
   document.getElementById("page-shopping").innerHTML = `
@@ -5334,7 +5471,144 @@ function renderTransport() {
   `;
 }
 
-// 路線圖燈箱開啟與關閉 (支援相簿索引切換與相容直接網址)
+// =========================================================================
+// 交通路線圖全功能燈箱 (支援觸控雙指縮放、拖曳移動、滑鼠滾輪與 1:1 還原)
+// =========================================================================
+let lightboxScale = 1;
+let lightboxTranslateX = 0;
+let lightboxTranslateY = 0;
+let isLightboxDragging = false;
+let lightboxStartX = 0;
+let lightboxStartY = 0;
+let lightboxPinchStartDist = 0;
+let lightboxPinchStartScale = 1;
+let isLightboxEventAttached = false;
+
+function applyLightboxTransform() {
+  const img = document.getElementById("lightboxImg");
+  if (!img) return;
+  img.style.transform = `translate(${lightboxTranslateX}px, ${lightboxTranslateY}px) scale(${lightboxScale})`;
+  const wrap = document.getElementById("lightboxImgWrap");
+  if (wrap) {
+    if (isLightboxDragging) wrap.classList.add("dragging");
+    else wrap.classList.remove("dragging");
+  }
+}
+
+function zoomLightbox(delta) {
+  const nextScale = Math.min(Math.max(0.6, lightboxScale + delta), 4.5);
+  lightboxScale = parseFloat(nextScale.toFixed(2));
+  if (lightboxScale <= 1) {
+    lightboxTranslateX = 0;
+    lightboxTranslateY = 0;
+  }
+  applyLightboxTransform();
+}
+
+function resetLightboxZoom() {
+  lightboxScale = 1;
+  lightboxTranslateX = 0;
+  lightboxTranslateY = 0;
+  applyLightboxTransform();
+}
+
+function setupLightboxInteractions() {
+  if (isLightboxEventAttached) return;
+  const wrap = document.getElementById("lightboxImgWrap");
+  const img = document.getElementById("lightboxImg");
+  if (!wrap || !img) return;
+  isLightboxEventAttached = true;
+
+  // 滑鼠滾輪縮放
+  wrap.addEventListener("wheel", function (e) {
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 0.2 : -0.2;
+    zoomLightbox(delta);
+  }, { passive: false });
+
+  // 滑鼠拖曳平移
+  wrap.addEventListener("mousedown", function (e) {
+    if (lightboxScale <= 1) return;
+    e.preventDefault();
+    isLightboxDragging = true;
+    lightboxStartX = e.clientX - lightboxTranslateX;
+    lightboxStartY = e.clientY - lightboxTranslateY;
+    wrap.classList.add("dragging");
+  });
+
+  window.addEventListener("mousemove", function (e) {
+    if (!isLightboxDragging) return;
+    lightboxTranslateX = e.clientX - lightboxStartX;
+    lightboxTranslateY = e.clientY - lightboxStartY;
+    applyLightboxTransform();
+  });
+
+  window.addEventListener("mouseup", function () {
+    if (isLightboxDragging) {
+      isLightboxDragging = false;
+      const w = document.getElementById("lightboxImgWrap");
+      if (w) w.classList.remove("dragging");
+    }
+  });
+
+  // 觸控雙指縮放與單指拖曳平移 (Pinch to Zoom & Pan)
+  wrap.addEventListener("touchstart", function (e) {
+    if (e.touches.length === 1) {
+      if (lightboxScale > 1) {
+        isLightboxDragging = true;
+        lightboxStartX = e.touches[0].clientX - lightboxTranslateX;
+        lightboxStartY = e.touches[0].clientY - lightboxTranslateY;
+      }
+    } else if (e.touches.length === 2) {
+      isLightboxDragging = false;
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      lightboxPinchStartDist = Math.hypot(dx, dy);
+      lightboxPinchStartScale = lightboxScale;
+    }
+  }, { passive: true });
+
+  wrap.addEventListener("touchmove", function (e) {
+    if (e.touches.length === 1 && isLightboxDragging) {
+      lightboxTranslateX = e.touches[0].clientX - lightboxStartX;
+      lightboxTranslateY = e.touches[0].clientY - lightboxStartY;
+      applyLightboxTransform();
+    } else if (e.touches.length === 2 && lightboxPinchStartDist > 0) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const currentDist = Math.hypot(dx, dy);
+      const factor = currentDist / lightboxPinchStartDist;
+      lightboxScale = Math.min(Math.max(0.6, lightboxPinchStartScale * factor), 4.5);
+      applyLightboxTransform();
+    }
+  }, { passive: true });
+
+  wrap.addEventListener("touchend", function (e) {
+    if (e.touches.length < 2) {
+      lightboxPinchStartDist = 0;
+    }
+    if (e.touches.length === 0) {
+      isLightboxDragging = false;
+      if (lightboxScale <= 1) {
+        lightboxTranslateX = 0;
+        lightboxTranslateY = 0;
+        applyLightboxTransform();
+      }
+    }
+  });
+
+  // 雙擊切換放大 2x 與還原 1x
+  wrap.addEventListener("dblclick", function (e) {
+    e.preventDefault();
+    if (lightboxScale > 1) {
+      resetLightboxZoom();
+    } else {
+      zoomLightbox(1.0);
+    }
+  });
+}
+
+// 路線圖燈箱開啟與關閉 (支援相簿索引切換、相容直接網址與縮放重設)
 function openMapLightbox(idxOrUrl, caption = "") {
   ensureTransportData();
   const overlay = document.getElementById("imageLightbox");
@@ -5345,6 +5619,9 @@ function openMapLightbox(idxOrUrl, caption = "") {
   const nextBtn = document.getElementById("lightboxNextBtn");
 
   if (!overlay || !img) return;
+
+  setupLightboxInteractions();
+  resetLightboxZoom();
 
   const maps = (tripData && tripData.transport && tripData.transport.maps) || [];
 
@@ -5358,14 +5635,14 @@ function openMapLightbox(idxOrUrl, caption = "") {
       img.src = sanitizeUrl(currentMap.url);
       if (titleEl) titleEl.innerText = `🗺️ ${currentMap.title || "交通路線圖"}`;
       if (capEl) {
-        capEl.innerText = `${currentMap.note ? currentMap.note + " · " : ""}(${currentLightboxMapIdx + 1} / ${maps.length}) · 點擊任意處或按 ESC 關閉`;
+        capEl.innerText = `${currentMap.note ? currentMap.note + " · " : ""}(${currentLightboxMapIdx + 1} / ${maps.length}) · 支援雙指縮放與拖曳`;
       }
     }
   } else {
     // 傳入純圖片網址的相容模式
     img.src = sanitizeUrl(idxOrUrl);
     if (titleEl) titleEl.innerText = "🗺️ 交通路線圖";
-    if (capEl) capEl.innerText = caption || "點擊任意處或按 ESC 關閉";
+    if (capEl) capEl.innerText = caption || "支援雙指縮放與拖曳，點擊✕關閉";
   }
 
   // 若有多張地圖則顯示左右導航按鈕
@@ -5395,6 +5672,7 @@ function nextLightboxMap(e) {
 function closeMapLightbox() {
   const overlay = document.getElementById("imageLightbox");
   if (overlay) overlay.style.display = "none";
+  resetLightboxZoom();
 }
 
 // 全域鍵盤監聽 (按 ESC 鍵關閉燈箱與彈窗，按左右鍵切換燈箱地圖)

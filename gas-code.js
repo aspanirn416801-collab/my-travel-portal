@@ -622,14 +622,18 @@ function doPost(e) {
 // 初始化關聯試算表結構
 function initializeSubSheet(sheetId, tripName, startDate, endDate, duration, password, theme) {
   const ss = SpreadsheetApp.openById(sheetId);
-  const isOkayama = (tripName || "").toLowerCase().includes("okayama") || (tripName || "").includes("岡山");
+  let effectiveName = tripName || "旅遊手冊";
+  if (effectiveName === "2027-02okayama" || effectiveName === "trip-okayama202702") {
+    effectiveName = "2027岡山・四國之旅";
+  }
+  const isOkayama = effectiveName.toLowerCase().includes("okayama") || effectiveName.includes("岡山") || effectiveName.includes("四國");
   
   // 1. 基本資訊頁 (Info)
   let infoSheet = ss.getSheetByName("Info");
   if (!infoSheet) infoSheet = ss.insertSheet("Info");
   infoSheet.clear();
   infoSheet.appendRow(["Key", "Value"]);
-  infoSheet.appendRow(["Name", tripName || "旅遊手冊"]);
+  infoSheet.appendRow(["Name", effectiveName]);
   infoSheet.appendRow(["StartDate", startDate || ""]);
   infoSheet.appendRow(["EndDate", endDate || ""]);
   infoSheet.appendRow(["Duration", duration || ""]);
