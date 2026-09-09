@@ -48,15 +48,16 @@ body {
 }
 body.large { font-size: 16px; }
 
-/* 容器寬度限制與防橫向滾動溢出 (桌機升級 1160px，手機自適應保留邊距) */
+/* 容器流體自適應寬度限制與防橫向滾動溢出 (流體 RWD：大螢幕自然舒展，手機留有舒服邊距) */
 .app-container {
-  max-width: 1160px;
+  max-width: 1240px;
   width: 100%;
   margin: 0 auto;
   min-height: 100vh;
   position: relative;
   overflow-x: hidden;
-  padding: 0 16px;
+  padding: 0 20px;
+  transition: max-width 0.3s ease;
 }
 
 /* 登入阻擋層 */
@@ -621,13 +622,41 @@ body.large { font-size: 16px; }
   user-select: none;
 }
 
+/* 航班去回程雙欄並排與飯店自適應排版 */
+.flights-dual-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 20px;
+  align-items: stretch;
+}
+.flights-dual-grid .boarding-pass {
+  margin-bottom: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.hotels-container-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  align-items: stretch;
+}
+.hotels-container-grid .hotel-card {
+  margin-bottom: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
 /* 輕奢飯店住宿卡 (Hotel Keycard) */
 .hotel-card {
   background: var(--glass-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border-radius: 20px;
-  padding: 18px 20px;
+  padding: 20px 22px;
   border: var(--glass-border);
   box-shadow: var(--glass-shadow);
   margin-bottom: 14px;
@@ -1575,34 +1604,41 @@ body.large { font-size: 16px; }
    多裝置 RWD 響應式配置系統 (手機 <768px、平板 768-1023px、電腦 1024px+)
    ========================================================================= */
 
-/* 電腦版樣式增強 (1024px 以上) */
+/* 電腦版樣式增強 (1024px 以上，支援 1280px ~ 1440px 寬螢幕自然伸展) */
 @media (min-width: 1024px) {
   .app-container {
-    max-width: 1160px;
-    padding: 0 24px;
+    max-width: 1240px;
+    padding: 0 32px;
   }
   /* 行程大廳：2~3 欄大器卡片 */
   .hub-grid {
-    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-    gap: 24px;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 26px;
   }
   /* 六個功能入口：完整橫向排列且平均分佈 */
   .tabs {
     display: flex;
     justify-content: space-between;
-    gap: 8px;
+    gap: 10px;
   }
   .tab-btn {
     flex: 1 1 0;
-    padding: 12px 14px;
+    padding: 13px 16px;
     font-size: 14px;
   }
-  /* 航班／住宿：左右雙欄佈局 */
-  .flights-layout-grid {
+  /* 往返航班行程：去程與回程登機證左右雙欄對稱並排 */
+  .flights-dual-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 24px;
-    align-items: start;
+    align-items: stretch;
+  }
+  /* 飯店住宿清單：單間飯店橫展寬敞，多間飯店自適應雙欄 */
+  .hotels-container-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+    gap: 20px;
+    align-items: stretch;
   }
   /* 美食／代購：2~3 欄卡片佈局 */
   .items-grid-container {
@@ -1649,10 +1685,16 @@ body.large { font-size: 16px; }
     grid-template-columns: repeat(2, 1fr);
     gap: 16px;
   }
-  .flights-layout-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
+  /* 航班／住宿：平板版去回程並排，飯店自適應單/雙欄 */
+  .flights-dual-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+  .hotels-container-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 16px;
   }
 }
 
@@ -1867,11 +1909,16 @@ body.large { font-size: 16px; }
   .transit-item-card {
     padding: 14px 12px;
   }
-  /* 航班／住宿：手機版上下排列 */
-  .flights-layout-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
+  /* 航班／住宿：手機版自然直式堆疊，外觀維持卡片圓潤氣質 */
+  .flights-dual-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .hotels-container-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
   }
   /* 美食／代購：手機版單欄排列 */
   .items-grid-container {
@@ -2559,6 +2606,6 @@ body.large { font-size: 16px; }
   <!-- Google Identity Services SDK -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- 前端核心邏輯 (加入版本號防快取) -->
-  <script src="app.js?v=20260908_09"></script>
+  <script src="app.js?v=20260909_03"></script>
 </body>
 </html>

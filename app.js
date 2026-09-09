@@ -3,7 +3,7 @@
 // =========================================================================
 const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
-const APP_BUILD_VERSION = "20260909_02";
+const APP_BUILD_VERSION = "20260909_03";
 
 // 智能行程顯示名稱轉換 (將舊版 ID 或技術命名轉換為溫暖手帳風格名稱，技術 ID 留存於後台編輯中)
 function getTripDisplayName(name = "", uuid = "") {
@@ -2047,9 +2047,10 @@ function initCountdown() {
     cdEl.innerText = `旅程進行中 / 已出發`;
   }
 
-  // 更新 Hero 區域文字
+  // 更新 Hero 區域文字 (使用 getTripDisplayName 正名，避免顯示技術 ID 字串)
+  const displayName = getTripDisplayName(tripData.name, currentTripUuid);
   document.getElementById("portalTitle").innerText =
-    `✈️ ${tripData.name || "旅遊行程手冊"}`;
+    `✈️ ${displayName || "旅遊行程手冊"}`;
   document.getElementById("portalSubtitle").innerText =
     `${tripData.startDate || ""} — ${tripData.endDate || ""}・${tripData.duration || ""
     }`;
@@ -2720,21 +2721,27 @@ function renderFlights() {
       : '<p style="color:#888;">尚未設定飯店住宿資訊</p>';
 
   document.getElementById("page-flights").innerHTML = `
-    <div class="flights-layout-grid">
-      <div style="margin-bottom: 24px;">
-        <div style="font-family:'Noto Serif TC',serif;font-size:17px;font-weight:900;color:var(--moss);margin-bottom:14px;display:flex;align-items:center;gap:6px;">
-          <span>✈️ 機票行程（登機證）</span>
-        </div>
+    <!-- 模組一：✈️ 往返航班行程（登機證） -->
+    <div class="card" style="margin-bottom: 24px;">
+      <div class="card-header">
+        <span class="card-title">✈️ 往返航班行程（登機證）</span>
+      </div>
+      <div class="flights-dual-grid">
         ${fc("去程航班", tripData.flights ? tripData.flights.out : {}, "out")}
         ${fc("回程航班", tripData.flights ? tripData.flights.in : {}, "in")}
       </div>
-      <div class="card" style="margin-bottom: 24px;">
-        <div class="card-header">
-          <span class="card-title">🏨 飯店住宿清單</span>
-        </div>
-        ${hotelCards}
-        ${addHotelBtn}
+    </div>
+
+    <!-- 模組二：🏨 飯店住宿清單 -->
+    <div class="card" style="margin-bottom: 24px;">
+      <div class="card-header">
+        <span class="card-title">🏨 飯店住宿清單</span>
+        ${isAdmin ? `<button class="card-header-btn" onclick="openAddHotelModal()">＋ 新增住宿</button>` : ""}
       </div>
+      <div class="hotels-container-grid">
+        ${hotelCards}
+      </div>
+      ${addHotelBtn}
     </div>
   `;
 }
