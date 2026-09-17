@@ -3,7 +3,7 @@
 // =========================================================================
 const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
-const APP_BUILD_VERSION = "20260909_05";
+const APP_BUILD_VERSION = "20260917_01";
 
 // 智能行程顯示名稱轉換 (將舊版 ID 或技術命名轉換為溫暖手帳風格名稱，技術 ID 留存於後台編輯中)
 function getTripDisplayName(name = "", uuid = "") {
@@ -24,6 +24,19 @@ function getTripDisplayName(name = "", uuid = "") {
   ) {
     return "2027岡山・四國之旅";
   }
+
+  // 比對奧地利・捷克名稱或 ID
+  if (
+    lowerN === "austria and czech" ||
+    lowerN === "austria-czech" ||
+    lowerN === "austria_czech" ||
+    lowerU === "austria and czech" ||
+    lowerU === "austria-czech" ||
+    lowerU === "austria_czech"
+  ) {
+    return "奧地利・捷克之旅";
+  }
+
   return n || u;
 }
 
@@ -1141,8 +1154,8 @@ document.addEventListener("DOMContentLoaded", function () {
         render();
       }
     } else {
-      // 尚未確定密碼狀態：先顯示安全載入提示，由 fetchTripData 進行門禁確認
-      showLoading("正在驗證存取權限，請稍候...");
+      // 尚未確定密碼狀態：立即顯示 PIN 門禁輸入畫面，不使用全螢幕阻塞遮罩！背景靜默由 fetchTripData 進行門禁確認
+      showLockedView({ uuid: currentTripUuid, name: (tripData && tripData.name) || currentTripUuid, password: "" });
     }
   } else if (window.location.search.includes("admin=1") || window.location.search.includes("trip=admin")) {
     // 若在後台頁，保持後台渲染，絕不執行大廳渲染！
@@ -1551,22 +1564,22 @@ function sanitizeUrl(url) {
 const DESTINATION_COVERS = [
   {
     keywords: ["austria-czech", "austria and czech", "奧捷", "德奧捷", "東歐", "中歐"],
-    url: "https://images.unsplash.com/photo-1541849546-216549ae216d?auto=format&fit=crop&w=1200&q=85", // 歐洲古典名城與城堡
+    url: "./assets/images/austria-czech.webp", // 歐洲古典名城與城堡 (本地高壓 WebP 瞬間秒開)
     cityTag: "🇪🇺 歐洲 · 奧捷漫遊",
   },
   {
     keywords: ["austria", "奧地利", "vienna", "維也納", "salzburg", "薩爾斯堡", "hallstatt", "哈修塔特", "innsbruck", "因斯布魯克", "wien"],
-    url: "https://images.unsplash.com/photo-1516550893923-42d28e5677af?auto=format&fit=crop&w=1200&q=85", // 奧地利哈修塔特湖光山色
+    url: "./assets/images/austria-czech.webp", // 奧地利哈修塔特湖光山色 (本地 WebP)
     cityTag: "🇦🇹 奧地利 · 維也納",
   },
   {
     keywords: ["czech", "czechia", "捷克", "prague", "布拉格", "praha", "krumlov", "庫倫洛夫", "brno", "布爾諾"],
-    url: "https://images.unsplash.com/photo-1519671482749-fd09be7ccebf?auto=format&fit=crop&w=1200&q=85", // 捷克布拉格查理大橋
+    url: "./assets/images/austria-czech.webp", // 捷克布拉格查理大橋 (本地 WebP)
     cityTag: "🇨🇿 捷克 · 布拉格",
   },
   {
     keywords: ["okayama", "岡山", "kurashiki", "倉敷", "後樂園"],
-    url: "https://images.unsplash.com/photo-1503899036084-c55cdd92da26?auto=format&fit=crop&w=1200&q=85", // 岡山城與名園
+    url: "./assets/images/okayama.webp", // 岡山倉敷美觀與後樂園 (本地高壓 WebP 瞬間秒開)
     cityTag: "🇯🇵 日本 · 岡山",
   },
   {
@@ -1804,10 +1817,13 @@ function renderHubTripsGrid() {
       // 一般親友顯示「輸入PIN查看行程 ➔」，管理員或已解鎖顯示「開啟手冊 ➔」
       const btnText = hasPassword && !isUnlocked && userRole !== "admin" ? "輸入PIN查看行程 ➔" : "開啟手冊 ➔";
 
+      // 根據行程提供具體語意的圖片替代文字 (alt)
+      const altText = safeName.includes("岡山") ? "日本岡山行程封面照片" : (safeName.includes("奧") || safeName.includes("捷") ? "奧地利捷克行程封面照片" : `${safeName} 封面照片`);
+
       return `
-        <div class="trip-hub-card" onclick="openTripByUuid('${safeUuid}')">
+        <a href="?trip=${encodeURIComponent(safeUuid)}" class="trip-hub-card" onclick="event.preventDefault(); openTripByUuid('${safeUuid}')" role="button" aria-label="${safeName}行程手冊" style="text-decoration:none;color:inherit;display:flex;">
           <div class="hub-card-cover-wrap">
-            <img class="hub-card-cover" src="${coverInfo.url}" loading="lazy" referrerpolicy="no-referrer" onerror="handleImgError(this)">
+            <img class="hub-card-cover" src="${coverInfo.url}" alt="${altText}" loading="lazy" referrerpolicy="no-referrer" onerror="handleImgError(this)">
             <div class="hub-card-tag">${coverInfo.tag}</div>
           </div>
           <div class="hub-card-body">
@@ -1823,7 +1839,7 @@ function renderHubTripsGrid() {
             </div>
             <div class="hub-card-btn">${btnText}</div>
           </div>
-        </div>
+        </a>
       `;
     })
     .join("");
@@ -1983,8 +1999,10 @@ async function fetchTripData() {
     }
   } catch (e) {}
 
-  if (!hasCache) {
-    showLoading("正在驗證存取權限，請稍候...");
+  const lockedViewEl = document.getElementById("view-locked");
+  const isAlreadyLockedView = lockedViewEl && lockedViewEl.style.display !== "none";
+  if (!hasCache && !isAlreadyLockedView) {
+    showLoading("正在載入旅程資料，請稍候...");
   }
 
   // 2. 在背景向 Google 試算表靜默同步最新資料，同時帶上 Token 與 Session 解鎖密碼
@@ -5699,18 +5717,26 @@ function openMapLightbox(idxOrUrl, caption = "") {
     if (currentLightboxMapIdx >= maps.length) currentLightboxMapIdx = maps.length - 1;
 
     const currentMap = maps[currentLightboxMapIdx];
-    if (currentMap) {
+    if (currentMap && currentMap.url) {
       img.src = sanitizeUrl(currentMap.url);
+      img.style.display = "block";
       if (titleEl) titleEl.innerText = `🗺️ ${currentMap.title || "交通路線圖"}`;
       if (capEl) {
         capEl.innerText = `${currentMap.note ? currentMap.note + " · " : ""}(${currentLightboxMapIdx + 1} / ${maps.length}) · 支援雙指縮放與拖曳`;
       }
+    } else {
+      img.removeAttribute("src");
+      img.style.display = "none";
     }
-  } else {
+  } else if (idxOrUrl) {
     // 傳入純圖片網址的相容模式
     img.src = sanitizeUrl(idxOrUrl);
+    img.style.display = "block";
     if (titleEl) titleEl.innerText = "🗺️ 交通路線圖";
     if (capEl) capEl.innerText = caption || "支援雙指縮放與拖曳，點擊✕關閉";
+  } else {
+    img.removeAttribute("src");
+    img.style.display = "none";
   }
 
   // 若有多張地圖則顯示左右導航按鈕
@@ -5740,6 +5766,11 @@ function nextLightboxMap(e) {
 function closeMapLightbox() {
   const overlay = document.getElementById("imageLightbox");
   if (overlay) overlay.style.display = "none";
+  const img = document.getElementById("lightboxImg");
+  if (img) {
+    img.removeAttribute("src");
+    img.style.display = "none";
+  }
   resetLightboxZoom();
 }
 
