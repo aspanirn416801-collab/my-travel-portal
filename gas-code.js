@@ -198,11 +198,11 @@ function getUserAccess(email) {
         allowedTrips.push({ 
           uuid: uuid, 
           name: name, 
-          password: password,
+          hasPassword: Boolean(password),
           startDate: startDate,
           endDate: endDate,
           duration: duration
-        }); // 傳遞密碼與日期天數供前端顯示
+        }); // 資安防禦：訪客模式嚴禁回傳明文 password，僅回傳 hasPassword 狀態供前端介面呈現
       }
     }
   }

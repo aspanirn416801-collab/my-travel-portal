@@ -3,7 +3,7 @@
 // =========================================================================
 const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
-const APP_BUILD_VERSION = "20260917_02";
+const APP_BUILD_VERSION = "20260917_03";
 
 // 智能行程顯示名稱轉換 (將舊版 ID 或技術命名轉換為溫暖手帳風格名稱，技術 ID 留存於後台編輯中)
 function getTripDisplayName(name = "", uuid = "") {
@@ -52,7 +52,27 @@ if (!idToken || isTokenExpired(idToken)) {
   } catch (e) {}
 }
 
-let tripsList = []; // 可存取的行程列表
+// 預設安全之公開行程摘要骨架 (無快取或冷啟動時 0 秒立即呈現卡片，不含任何 PIN 密碼，大幅消弭等待焦慮)
+const PUBLIC_TRIP_SUMMARIES = [
+  {
+    uuid: "trip-okayama202702",
+    name: "2027岡山・四國之旅",
+    hasPassword: true,
+    startDate: "2027-02-12",
+    endDate: "2027-02-19",
+    duration: "8天7夜"
+  },
+  {
+    uuid: "Austria-Czech",
+    name: "奧地利・捷克之旅",
+    hasPassword: true,
+    startDate: "2027-12-11",
+    endDate: "2027-12-25",
+    duration: "15天14夜"
+  }
+];
+
+let tripsList = [...PUBLIC_TRIP_SUMMARIES]; // 可存取的行程列表 (預設以公開摘要秒開大廳)
 let currentTripUuid = "";
 let tripData = null; // 當前行程詳細手冊資料
 let currentTab = "checklist";
@@ -76,7 +96,12 @@ try {
 // 預先同步載入本地快取
 try {
   const cachedTrips = localStorage.getItem("cache_tripsList");
-  if (cachedTrips) tripsList = JSON.parse(cachedTrips);
+  if (cachedTrips) {
+    const parsed = JSON.parse(cachedTrips);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      tripsList = parsed;
+    }
+  }
 } catch (e) {}
 
 // =========================================================================
@@ -726,41 +751,22 @@ async function handleTripUnlockSubmit(e) {
     return;
   }
 
-  const trip = pendingUnlockTrip || tripsList.find((t) => t.uuid === currentTripUuid) || (tripData && tripData.uuid === currentTripUuid ? tripData : { uuid: currentTripUuid, password: "" });
-  const expectedPwd = String((trip && trip.password) || getKnownTripPassword(currentTripUuid) || "").trim();
-
-  // 1. 若本機已知密碼：0.001 秒極速秒驗秒開，完全不需要浪費 3~5 秒乾等網路！
-  if (expectedPwd) {
-    if (inputPwd !== expectedPwd) {
-      if (errEl) {
-        errEl.innerText = "❌ 密碼錯誤，請重新輸入！";
-        errEl.style.display = "block";
-      }
-      if (inputEl) {
-        inputEl.style.borderColor = "var(--red)";
-        inputEl.select();
-      }
-      return;
-    }
-
-    // 密碼完全正確：瞬間授權解鎖並進入手冊
+  // 1. 若當前工作階段已驗證此密碼：直接秒開手冊
+  const savedUnlock = sessionStorage.getItem("unlocked_trip_" + currentTripUuid);
+  if (savedUnlock && savedUnlock === inputPwd) {
     markTripUnlocked(currentTripUuid, inputPwd);
-    markTripHasPassword(currentTripUuid, inputPwd);
-    showToast("密碼驗證成功，手冊已解鎖 ✓");
-
     const lockedView = document.getElementById("view-locked");
     if (lockedView) lockedView.style.display = "none";
-
     showTripView();
-    initCountdown();
-    render();
-
-    // 在背景靜默同步最新資料 (完全不阻擋使用者操作)
+    if (tripData) {
+      initCountdown();
+      render();
+    }
     fetchTripData();
     return;
   }
 
-  // 2. 若本機尚未知曉密碼 (初次訪問且尚未同步)：向後端請求驗證並同步解鎖資料
+  // 2. 嚴格由後端 Google Apps Script 進行 PIN 驗證 (不在前端儲存任何明文密碼，杜絕越權繞過)
   showLoading("正在驗證密碼，請稍候...");
   try {
     const tokenParam = idToken ? `&token=${encodeURIComponent(idToken)}` : "";
@@ -1792,6 +1798,15 @@ async function fetchTrips() {
     }
   } catch (e) {
     console.warn("連線後端狀態:", e);
+    const container = document.getElementById("hubTripsGrid");
+    if (container && tripsList.length === 0) {
+      container.innerHTML = `
+        <div style="text-align:center;padding:40px 10px;color:#888;grid-column:1/-1;background:var(--glass-bg);border-radius:20px;border:1.5px dashed rgba(200, 59, 43, 0.4);backdrop-filter:blur(16px);">
+          <p style="font-size:14px;margin-bottom:12px;font-weight:700;color:var(--red);">⚠️ 伺服器連線延遲，請點擊下方按鈕重試</p>
+          <button class="glass-btn" style="background:var(--moss-gradient);color:#fff;display:inline-flex;" onclick="fetchTrips()">🔄 重新載入行程</button>
+        </div>
+      `;
+    }
   }
 }
 
