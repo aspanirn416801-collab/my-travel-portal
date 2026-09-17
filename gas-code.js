@@ -195,19 +195,16 @@ function getUserAccess(email) {
     } else {
       const allowedEmails = allowedUsersStr.toLowerCase().split(",").map(e => normalizeEmail(e));
       const isMember = Boolean(cleanEmail && allowedEmails.includes(cleanEmail));
-      const isPublic = !allowedUsersStr || allowedEmails.includes("*") || allowedEmails.includes("public");
-      // 只要是公開行程或授權成員均可看見卡片
-      if (isPublic || isMember) {
-        allowedTrips.push({ 
-          uuid: uuid, 
-          name: name, 
-          hasPassword: Boolean(password),
-          canEdit: isMember,
-          startDate: startDate,
-          endDate: endDate,
-          duration: duration
-        }); // 資安防禦：訪客模式與手冊清單嚴禁回傳明文 password，僅回傳 hasPassword 狀態供前端介面呈現
-      }
+      // 所有行程均公開大廳卡片摘要（所有人可見），手冊閱讀權限由 PIN 或成員登入嚴格把關
+      allowedTrips.push({ 
+        uuid: uuid, 
+        name: name, 
+        hasPassword: Boolean(password),
+        canEdit: isMember,
+        startDate: startDate,
+        endDate: endDate,
+        duration: duration
+      });
     }
   }
   
@@ -242,14 +239,11 @@ function doGet(e) {
   if (email) {
     access = getUserAccess(email);
   } else {
-    // 訪客模式：僅讀取公開行程清單（隱蔽 Sheet & Folder ID）
+    // 訪客模式：讀取所有行程之公開摘要（絕不包含密碼與內部試算表 ID）
     const publicTrips = [];
     for (let i = 1; i < tripRows.length; i++) {
       const uuid = tripRows[i][0];
       const name = tripRows[i][1];
-      const allowedUsersStr = tripRows[i][4] || "";
-      const allowedEmails = allowedUsersStr.toLowerCase().split(",").map(u => u.trim());
-      const isPublic = !allowedUsersStr || allowedEmails.includes("*") || allowedEmails.includes("public");
       const password = tripRows[i][5] ? String(tripRows[i][5]).trim() : "";
       const startDate = tripRows[i][6] ? String(tripRows[i][6]).trim() : "";
       const endDate = tripRows[i][7] ? String(tripRows[i][7]).trim() : "";
@@ -257,7 +251,7 @@ function doGet(e) {
       if (!duration && startDate && endDate) {
         duration = calcTripDurationInGas(startDate, endDate);
       }
-      if (uuid && isPublic) {
+      if (uuid) {
         publicTrips.push({
           uuid: uuid,
           name: name,
@@ -280,6 +274,47 @@ function doGet(e) {
     };
     return ContentService.createTextOutput(JSON.stringify(responseData))
                          .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  // 管理員專用端點：讀取指定行程之完整管理 Meta (包含原 PIN、授權成員名單、試算表與資料夾 ID)
+  if (action === "getTripMeta") {
+    if (access.role !== "admin") {
+      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Admin privileges required" }))
+                           .setMimeType(ContentService.MimeType.JSON);
+    }
+    const tripUuid = e.parameter.tripUuid;
+    let foundTrip = null;
+    for (let i = 1; i < tripRows.length; i++) {
+      if (tripRows[i][0] === tripUuid) {
+        const password = tripRows[i][5] ? String(tripRows[i][5]).trim() : "";
+        const startDate = tripRows[i][6] ? String(tripRows[i][6]).trim() : "";
+        const endDate = tripRows[i][7] ? String(tripRows[i][7]).trim() : "";
+        let duration = tripRows[i][8] ? String(tripRows[i][8]).trim() : "";
+        if (!duration && startDate && endDate) {
+          duration = calcTripDurationInGas(startDate, endDate);
+        }
+        foundTrip = {
+          uuid: tripRows[i][0],
+          name: tripRows[i][1],
+          sheet_id: tripRows[i][2],
+          folder_id: tripRows[i][3],
+          allowed_users: tripRows[i][4] || "",
+          password: password,
+          hasPassword: Boolean(password),
+          startDate: startDate,
+          endDate: endDate,
+          duration: duration
+        };
+        break;
+      }
+    }
+    if (foundTrip) {
+      return ContentService.createTextOutput(JSON.stringify({ status: "success", trip: foundTrip }))
+                           .setMimeType(ContentService.MimeType.JSON);
+    } else {
+      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Trip not found" }))
+                           .setMimeType(ContentService.MimeType.JSON);
+    }
   }
   
   if (action === "getTripData") {
@@ -398,12 +433,7 @@ function doPost(e) {
   }
   
   const access = getUserAccess(email);
-  
-  // 只有管理員可以執行 POST 修改動作
-  if (access.role !== "admin") {
-    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Admin privileges required" }))
-                         .setMimeType(ContentService.MimeType.JSON);
-  }
+  const isAdmin = access.role === "admin";
   
   const masterSpreadsheet = SpreadsheetApp.openById(MASTER_SHEET_ID);
   const tripSheet = masterSpreadsheet.getSheetByName("Trips");
@@ -430,7 +460,6 @@ function doPost(e) {
                            .setMimeType(ContentService.MimeType.JSON);
     }
 
-    const isAdmin = access.role === "admin";
     const allowedList = (allowedUsersStr || "").toLowerCase().split(",").map(s => normalizeEmail(s));
     const isMember = Boolean(email && allowedList.includes(normalizeEmail(email)));
 
@@ -450,8 +479,56 @@ function doPost(e) {
                          .setMimeType(ContentService.MimeType.JSON);
   }
 
-  // 門禁保護：除 updateTripData 外，所有管理操作 (createTrip, updateTripMeta, uploadImage) 嚴格僅限系統管理員！
-  if (access.role !== "admin") {
+  // 4. 上傳圖片到該行程的雲端硬碟 (允許 admin 或該行程授權 member 上傳)
+  if (action === "uploadImage") {
+    const tripUuid = postData.tripUuid;
+    const filename = postData.filename;
+    const mimeType = postData.mimeType;
+    const base64Data = postData.data;
+    
+    let folderId = "";
+    let allowedUsersStr = "";
+    for (let i = 1; i < tripRows.length; i++) {
+      if (tripRows[i][0] === tripUuid) {
+        folderId = tripRows[i][3];
+        allowedUsersStr = tripRows[i][4] || "";
+        break;
+      }
+    }
+
+    const allowedList = (allowedUsersStr || "").toLowerCase().split(",").map(s => normalizeEmail(s));
+    const isMember = Boolean(email && allowedList.includes(normalizeEmail(email)));
+
+    if (!isAdmin && !isMember) {
+      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "您未被授權上傳照片至此行程" }))
+                           .setMimeType(ContentService.MimeType.JSON);
+    }
+    
+    if (folderId) {
+      try {
+        const folder = DriveApp.getFolderById(folderId);
+        const decoded = Utilities.base64Decode(base64Data);
+        const blob = Utilities.newBlob(decoded, mimeType, filename);
+        const file = folder.createFile(blob);
+        
+        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        const fileId = file.getId();
+        const previewUrl = "https://lh3.googleusercontent.com/d/" + fileId;
+        
+        return ContentService.createTextOutput(JSON.stringify({ status: "success", url: previewUrl }))
+                             .setMimeType(ContentService.MimeType.JSON);
+      } catch (err) {
+        return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Drive upload failed: " + err.message }))
+                             .setMimeType(ContentService.MimeType.JSON);
+      }
+    } else {
+      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Folder not found" }))
+                           .setMimeType(ContentService.MimeType.JSON);
+    }
+  }
+
+  // 門禁保護：除 updateTripData 與 uploadImage 外，其餘行程管理操作 (createTrip, updateTripMeta) 嚴格僅限系統管理員！
+  if (!isAdmin) {
     return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "此操作僅限系統管理員 (Admin privileges required)" }))
                          .setMimeType(ContentService.MimeType.JSON);
   }
@@ -532,7 +609,7 @@ function doPost(e) {
   
 
 
-  // 3. 修改行程基本設定（名稱、出發/結束日期、天數、主題色彩、授權名單）
+  // 3. 修改行程基本設定（名稱、出發/結束日期、天數、主題色彩、授權名單，支援密碼防呆保護）
   if (action === "updateTripMeta") {
     const tripUuid = postData.tripUuid;
     const name = postData.name;
@@ -541,10 +618,19 @@ function doPost(e) {
     const duration = postData.duration;
     const theme = postData.theme !== undefined ? String(postData.theme).trim() : null;
     const allowedUsers = postData.allowedUsers || "";
-    const password = postData.password !== undefined ? String(postData.password).trim() : null;
     
-    const tripSheet = masterSpreadsheet.getSheetByName("Trips");
-    const tripRows = tripSheet.getDataRange().getValues();
+    // 密碼更新安全防呆：支援 passwordAction ("keep" | "set" | "remove")
+    const passwordAction = postData.passwordAction || "";
+    let newPasswordToSet = null;
+    if (passwordAction === "remove") {
+      newPasswordToSet = "";
+    } else if (passwordAction === "set") {
+      newPasswordToSet = postData.password !== undefined ? String(postData.password).trim() : "";
+    } else if (postData.password !== undefined && String(postData.password).trim() !== "") {
+      newPasswordToSet = String(postData.password).trim();
+    }
+    // 若為 "keep" 或未指定且未傳入非空密碼，newPasswordToSet 保持 null，保留原密碼不變！
+    
     let targetSheetId = "";
     let targetRowIndex = -1;
     for (let i = 1; i < tripRows.length; i++) {
@@ -564,8 +650,8 @@ function doPost(e) {
       // 1. 更新主控表 Trips 分頁 (名稱、授權清單與密碼，以及出發日期、結束日期與天數)
       tripSheet.getRange(targetRowIndex, 2).setValue(name);
       tripSheet.getRange(targetRowIndex, 5).setValue(allowedUsers);
-      if (password !== null) {
-        tripSheet.getRange(targetRowIndex, 6).setValue(password);
+      if (newPasswordToSet !== null) {
+        tripSheet.getRange(targetRowIndex, 6).setValue(newPasswordToSet);
       }
       if (startDate !== undefined) tripSheet.getRange(targetRowIndex, 7).setValue(startDate);
       if (endDate !== undefined) tripSheet.getRange(targetRowIndex, 8).setValue(endDate);
@@ -586,8 +672,8 @@ function doPost(e) {
           "EndDate": endDate,
           "Duration": finalDuration
         };
-        if (password !== null) {
-          metaMap["Password"] = password;
+        if (newPasswordToSet !== null) {
+          metaMap["Password"] = newPasswordToSet;
         }
         if (theme !== null) {
           metaMap["Theme"] = theme;
@@ -605,45 +691,7 @@ function doPost(e) {
     }
   }
   
-  // 4. 上傳圖片到該行程的雲端硬碟
-  if (action === "uploadImage") {
-    const tripUuid = postData.tripUuid;
-    const filename = postData.filename;
-    const mimeType = postData.mimeType;
-    const base64Data = postData.data;
-    
-    // 找出該行程的 Folder ID
-    const tripSheet = masterSpreadsheet.getSheetByName("Trips");
-    const tripRows = tripSheet.getDataRange().getValues();
-    let folderId = "";
-    for (let i = 1; i < tripRows.length; i++) {
-      if (tripRows[i][0] === tripUuid) {
-        folderId = tripRows[i][3];
-        break;
-      }
-    }
-    
-    if (folderId) {
-      try {
-        const folder = DriveApp.getFolderById(folderId);
-        const decoded = Utilities.base64Decode(base64Data);
-        const blob = Utilities.newBlob(decoded, mimeType, filename);
-        const file = folder.createFile(blob);
-        
-        // 設定共用權限為「任何知道連結的人皆可檢視」，以供網頁直接渲染
-        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-        const fileId = file.getId();
-        // 轉換為直連預覽網址（使用 lh3.googleusercontent.com 避免 uc?export=view 被 Google 阻擋 403）
-        const previewUrl = "https://lh3.googleusercontent.com/d/" + fileId;
-        
-        return ContentService.createTextOutput(JSON.stringify({ status: "success", url: previewUrl }))
-                             .setMimeType(ContentService.MimeType.JSON);
-      } catch (err) {
-        return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Drive upload failed: " + err.message }))
-                             .setMimeType(ContentService.MimeType.JSON);
-      }
-    }
-  }
+
   
     return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Action handler not found" }))
                          .setMimeType(ContentService.MimeType.JSON);

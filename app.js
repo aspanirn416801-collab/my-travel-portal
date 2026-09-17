@@ -3,7 +3,7 @@
 // =========================================================================
 const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
-const APP_BUILD_VERSION = "20260917_05";
+const APP_BUILD_VERSION = "20260917_06";
 
 // 智能行程顯示名稱轉換 (將舊版 ID 或技術命名轉換為溫暖手帳風格名稱，技術 ID 留存於後台編輯中)
 function getTripDisplayName(name = "", uuid = "") {
@@ -529,7 +529,7 @@ function openCustomWeatherCityModal() {
     title: "🌍 切換旅程氣象城市",
     bodyHtml: modalHtml,
     confirmText: "套用並更新天氣",
-    onConfirm: () => {
+    onConfirm: async () => {
       const selectedId = document.getElementById("selectWeatherCityDropdown").value;
       if (selectedId && currentTripUuid) {
         localStorage.setItem("trip_weather_city_" + currentTripUuid, selectedId);
@@ -802,15 +802,14 @@ async function handleTripUnlockSubmit(e) {
 // 點擊大廳行程卡片時的安全進入路由
 function openTripByUuid(uuid) {
   const trip = tripsList.find((t) => t.uuid === uuid);
-  const tripPassword = (trip && trip.password) || getKnownTripPassword(uuid) || "";
-  const hasPassword = Boolean(tripPassword || (trip && trip.hasPassword));
+  const hasPassword = Boolean(trip && trip.hasPassword);
 
-  if (hasPassword && !isTripUnlocked(uuid, tripPassword)) {
+  if (hasPassword && !isTripUnlocked(uuid, hasPassword)) {
     // 進入專屬門禁鎖定畫面，未解鎖前完全不載入手冊內容
     currentTripUuid = uuid;
     const currentPath = window.location.pathname;
     history.pushState({ trip: uuid }, "", `${currentPath}?trip=${encodeURIComponent(uuid)}`);
-    showLockedView(trip || { uuid, name: (trip && trip.name) || uuid, password: tripPassword });
+    showLockedView(trip || { uuid, name: (trip && trip.name) || uuid });
     return;
   }
 
@@ -1032,9 +1031,9 @@ function initRouter() {
 
   if (currentTripUuid) {
     const trip = tripsList.find((t) => t.uuid === currentTripUuid);
-    const pwd = (trip && trip.password) || getKnownTripPassword(currentTripUuid) || "";
-    if (pwd && !isTripUnlocked(currentTripUuid, pwd)) {
-      showLockedView(trip || { uuid: currentTripUuid, name: (trip && trip.name) || currentTripUuid, password: pwd });
+    const hasPassword = Boolean(trip && trip.hasPassword);
+    if (hasPassword && !isTripUnlocked(currentTripUuid, hasPassword)) {
+      showLockedView(trip || { uuid: currentTripUuid, name: (trip && trip.name) || currentTripUuid });
     } else {
       showTripView();
     }
@@ -1079,10 +1078,10 @@ function navigateTo(tripUuid, targetTab = "") {
 
   if (currentTripUuid) {
     const trip = tripsList.find((t) => t.uuid === currentTripUuid);
-    const tripPassword = (trip && trip.password) || getKnownTripPassword(currentTripUuid) || "";
+    const hasPassword = Boolean(trip && trip.hasPassword);
 
-    if (tripPassword && !isTripUnlocked(currentTripUuid, tripPassword)) {
-      showLockedView(trip || { uuid: currentTripUuid, name: (trip && trip.name) || currentTripUuid, password: tripPassword });
+    if (hasPassword && !isTripUnlocked(currentTripUuid, hasPassword)) {
+      showLockedView(trip || { uuid: currentTripUuid, name: (trip && trip.name) || currentTripUuid });
       fetchTripData();
     } else {
       showTripView();
@@ -1109,35 +1108,23 @@ document.addEventListener("DOMContentLoaded", function () {
   initRouter();
   initGoogleAuth();
 
-  // 若當前在手冊頁，嚴格檢查密碼門禁後再決定是否從快取渲染！
+  // 若當前在手冊頁，嚴格檢查密碼門禁後再決定是否渲染手冊內容
   if (currentTripUuid) {
-    let tripPassword = "";
-    try {
-      const cachedTrip = localStorage.getItem("cache_trip_" + currentTripUuid);
-      if (cachedTrip) {
-        tripData = JSON.parse(cachedTrip);
-        tripPassword = tripData.password || "";
-      }
-      if (!tripPassword) {
-        tripPassword = getKnownTripPassword(currentTripUuid);
-      }
-    } catch (e) {}
-
+    const trip = tripsList.find((t) => t.uuid === currentTripUuid);
+    const hasPassword = Boolean(trip && trip.hasPassword);
     const isAdmin = userRole === "admin" && idToken && !isTokenExpired(idToken);
-    const savedUnlock = sessionStorage.getItem("unlocked_trip_" + currentTripUuid);
+    const canEdit = canEditCurrentTrip();
+    const isUnlocked = isTripUnlocked(currentTripUuid, hasPassword);
 
-    // 關鍵門禁：未解鎖時「絕對不渲染手冊內容」，直接顯示門禁鎖定畫面！
-    if (!isAdmin && tripPassword && savedUnlock !== tripPassword) {
-      showLockedView({ uuid: currentTripUuid, name: (tripData && tripData.name) || currentTripUuid, password: tripPassword });
-    } else if (isAdmin || savedUnlock) {
+    // 關鍵門禁：未解鎖且未獲授權時「絕對不渲染手冊內容」，直接顯示門禁鎖定畫面！
+    if (hasPassword && !isAdmin && !canEdit && !isUnlocked) {
+      showLockedView(trip || { uuid: currentTripUuid, name: (trip && trip.name) || currentTripUuid });
+    } else {
       showTripView();
       if (tripData) {
         initCountdown();
         render();
       }
-    } else {
-      // 尚未確定密碼狀態：立即顯示 PIN 門禁輸入畫面，不使用全螢幕阻塞遮罩！背景靜默由 fetchTripData 進行門禁確認
-      showLockedView({ uuid: currentTripUuid, name: (tripData && tripData.name) || currentTripUuid, password: "" });
     }
   } else if (window.location.search.includes("admin=1") || window.location.search.includes("trip=admin")) {
     // 若在後台頁，保持後台渲染，絕不執行大廳渲染！
@@ -1428,25 +1415,9 @@ function handleCredentialResponse(response) {
   const userEmail = userInfo?.email ? userInfo.email.toLowerCase().trim() : "";
   const userName = userInfo?.name || userEmail.split("@")[0] || "使用者";
 
-  // 1. 本地身分智庫即時比對：若為已知管理員或曾授權之 admin
-  let knownAdminEmails = [];
-  try {
-    knownAdminEmails = JSON.parse(localStorage.getItem("known_admin_emails") || "[]");
-  } catch (e) {}
-
-  const cachedRole = localStorage.getItem("cache_userRole");
-  const isKnownAdmin = knownAdminEmails.includes(userEmail) || cachedRole === "admin";
-
-  if (isKnownAdmin) {
-    // 0.001 秒瞬間點亮管理員身分！
-    userRole = "admin";
-    localStorage.setItem("cache_userRole", "admin");
-    updateAuthUI();
-    showToast(`👑 歡迎管理員 ${userName}，已瞬間切換身分 ✓`);
-  } else {
-    updateAuthUI();
-    showToast(`歡迎 ${userName}，正在同步權限...`);
-  }
+  // 身分完全以 Google Apps Script 後端回應為唯一依據，絕不信任本地快取提權
+  updateAuthUI();
+  showToast(`歡迎 ${userName}，正在向後端驗證身分權限...`);
 
   // 復原登入前的網址狀態（若在手冊內，確保行程 ID 與分頁完全保留）
   try {
@@ -1464,17 +1435,8 @@ function handleCredentialResponse(response) {
     }
   } catch (e) {}
 
-  // 背景向 GAS 靜默同步並確保存檔
+  // 向 GAS 後端驗證身分並取得最新行程清單與角色
   fetchTrips().then(() => {
-    if (userRole === "admin" && userEmail) {
-      try {
-        const list = JSON.parse(localStorage.getItem("known_admin_emails") || "[]");
-        if (!list.includes(userEmail)) {
-          list.push(userEmail);
-          localStorage.setItem("known_admin_emails", JSON.stringify(list));
-        }
-      } catch (e) {}
-    }
 
     const returnUrl = sessionStorage.getItem("returnAfterLogin") || "";
     const shouldOpenAdmin =
@@ -1705,14 +1667,11 @@ function getAutoCoverInfo(name = "", uuid = "", customUrl = "") {
 
 // 取得行程清單 (SWR 0 秒瞬間秒開快取機制)
 async function fetchTrips() {
-  // 1. 優先從本地快取瞬間秒開大廳，0 等待！
+  // 1. 優先從本地快取瞬間秒開大廳，0 等待！(僅讀取公開摘要，絕不快取角色權限)
   try {
     const cached = localStorage.getItem("cache_tripsList");
-    const cachedRole = localStorage.getItem("cache_userRole");
     if (cached) {
       tripsList = JSON.parse(cached);
-      if (cachedRole) userRole = cachedRole;
-      updateAuthUI();
       if (!currentTripUuid && !window.location.search.includes("admin=1")) {
         renderHubTripsGrid();
       }
@@ -1726,17 +1685,11 @@ async function fetchTrips() {
     const result = await res.json();
 
     if (result.status === "success") {
-      // 權限穩固保護機制：若本地已登入為 admin，只要 Token 尚未逾期，絕不因後端暫時抖動而誤降級為 guest
+      // 身分角色一律以 GAS 後端簽發之 result.role 為準
       if (result.role) {
-        if (userRole === "admin" && result.role === "guest" && !isTokenExpired(idToken)) {
-          console.warn("後端暫時判定為 guest，但本地 Token 有效且身分為 admin，穩定保留 admin 權限");
-        } else {
-          userRole = result.role;
-        }
+        userRole = result.role;
       } else {
-        if (userRole !== "admin" || isTokenExpired(idToken)) {
-          userRole = "guest";
-        }
+        userRole = "guest";
       }
       // 記錄後端授權之 canEdit 旗標於記憶體 tripPermissions (絕不存入 localStorage)
       tripsList = (result.trips || []).map((t) => {
@@ -1827,9 +1780,8 @@ function renderHubTripsGrid() {
       const safeName = escapeHtml(displayName);
       const safeUuid = escapeHtml(t.uuid);
       const coverInfo = getAutoCoverInfo(displayName, t.uuid, t.coverUrl);
-      const tripPassword = (t.password && String(t.password).trim()) || getKnownTripPassword(t.uuid) || "";
-      const hasPassword = Boolean(tripPassword || t.hasPassword);
-      const isUnlocked = isTripUnlocked(t.uuid, tripPassword);
+      const hasPassword = Boolean(t.hasPassword);
+      const isUnlocked = isTripUnlocked(t.uuid, hasPassword);
 
       let lockBadge = "";
       if (hasPassword) {
@@ -2405,6 +2357,7 @@ function openConfirmModal({
   };
 
   confirmBtn.onclick = modalConfirmHandler;
+  document.body.style.overflow = "hidden";
   document.getElementById("commonModal").style.display = "flex";
 }
 
@@ -2451,6 +2404,7 @@ function openFormModal({
 }
 
 function closeModal() {
+  document.body.style.overflow = "";
   document.getElementById("commonModal").style.display = "none";
   modalConfirmHandler = null;
   // 關閉時精確還原捲動高度，徹底杜絕彈窗關閉後視窗跳頂
@@ -2644,7 +2598,7 @@ function editChecklistItem(index) {
     title: "✏️ 編輯必備清單項目",
     bodyHtml: formHtml,
     confirmText: "儲存修改",
-    onConfirm: () => {
+    onConfirm: async () => {
       const cat = document.getElementById("editChecklistCat").value.trim();
       const title = document.getElementById("editChecklistTitle").value.trim();
       const note = document.getElementById("editChecklistNote").value.trim();
@@ -2661,8 +2615,8 @@ function editChecklistItem(index) {
       tripData.checklist[index].link = link;
 
       renderChecklist();
-      save();
-      return true;
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -2679,7 +2633,7 @@ function deleteChecklistItem(index) {
     message: `確定要刪除「${item.title || "此項目"}」嗎？`,
     danger: true,
     confirmText: "確定刪除",
-    onConfirm: () => {
+    onConfirm: async () => {
       tripData.checklist.splice(index, 1);
       renderChecklist();
       save();
@@ -2716,7 +2670,7 @@ function openAddChecklistModal() {
     title: "➕ 新增必備清單項目",
     bodyHtml: formHtml,
     confirmText: "確認新增並同步",
-    onConfirm: () => {
+    onConfirm: async () => {
       const cat = document.getElementById("addChecklistCat").value.trim();
       const title = document.getElementById("addChecklistTitle").value.trim();
       const note = document.getElementById("addChecklistNote").value.trim();
@@ -2738,8 +2692,8 @@ function openAddChecklistModal() {
       });
 
       renderChecklist();
-      save();
-      return true;
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -2977,7 +2931,7 @@ function openEditFlightModal(type) {
     title: `✏️ 編輯 ${title}`,
     bodyHtml: formHtml,
     confirmText: "儲存航班並同步",
-    onConfirm: () => {
+    onConfirm: async () => {
       tripData.flights[type] = {
         airline: document.getElementById("editFlightAirline").value.trim(),
         no: document.getElementById("editFlightNo").value.trim(),
@@ -2989,8 +2943,8 @@ function openEditFlightModal(type) {
         note: document.getElementById("editFlightNote").value.trim(),
       };
       renderFlights();
-      save();
-      return true;
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -3047,7 +3001,7 @@ function openAddHotelModal() {
     title: "➕ 新增飯店住宿",
     bodyHtml: formHtml,
     confirmText: "確認新增並同步",
-    onConfirm: () => {
+    onConfirm: async () => {
       const name = document.getElementById("addHotelName").value.trim();
       if (!name) {
         alert("請輸入飯店名稱！");
@@ -3082,8 +3036,8 @@ function openAddHotelModal() {
       });
 
       renderFlights();
-      save();
-      return true;
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -3146,7 +3100,7 @@ function openEditHotelModal(index) {
     title: "✏️ 編輯飯店住宿資訊",
     bodyHtml: formHtml,
     confirmText: "儲存修改並同步",
-    onConfirm: () => {
+    onConfirm: async () => {
       const name = document.getElementById("editHotelName").value.trim();
       if (!name) {
         alert("請填寫飯店名稱！");
@@ -3179,8 +3133,8 @@ function openEditHotelModal(index) {
       };
 
       renderFlights();
-      save();
-      return true;
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -3201,7 +3155,7 @@ function deleteHotel(index) {
     message: `確定要刪除飯店「${h.name || "此住宿"}」嗎？`,
     danger: true,
     confirmText: "確定刪除",
-    onConfirm: () => {
+    onConfirm: async () => {
       if (!tripData.hotels) {
         tripData.hotels =
           tripData.hotel && tripData.hotel.name ? [tripData.hotel] : [];
@@ -3456,7 +3410,7 @@ function resequenceAllDays() {
     title: "⚡ 連續重編天數序號確認",
     message: `確定要將現有 ${tripData.days.length} 天行程重新連續編號為「Day 1 ～ Day ${tripData.days.length}」嗎？系統將自動重新對齊連續日期與交通對應代號。`,
     confirmText: "確認重編序號",
-    onConfirm: () => {
+    onConfirm: async () => {
       // 先依原先日期與數字排序好
       sortTripDays(tripData.days);
       const tagMapping = {}; // 記錄舊交通代號 -> 新交通代號
@@ -3694,7 +3648,7 @@ function openAddDayModal() {
     title: `➕ 新增行程天數`,
     bodyHtml: formHtml,
     confirmText: "確認新增並同步",
-    onConfirm: () => {
+    onConfirm: async () => {
       const dayId =
         document.getElementById("addDayId").value.trim() || nextDayId;
       const title = document.getElementById("addDayTitle").value.trim();
@@ -3717,8 +3671,8 @@ function openAddDayModal() {
       const newIdx = tripData.days.findIndex((d) => d.id === dayId);
       selectedDay = newIdx !== -1 ? newIdx : tripData.days.length - 1;
       renderItinerary();
-      save();
-      return true;
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -3738,7 +3692,7 @@ function deleteCurrentDay(dayIdx) {
     message: `確定要刪除「${day.id} ｜ ${day.title}」及其包含的所有景點活動嗎？此操作不可逆！`,
     danger: true,
     confirmText: "確定刪除本日",
-    onConfirm: () => {
+    onConfirm: async () => {
       tripData.days.splice(dayIdx, 1);
       sortTripDays(tripData.days);
       if (selectedDay >= tripData.days.length) {
@@ -3799,7 +3753,7 @@ function openEditDayTitleModal(dayIdx) {
     title: `✏️ 編輯 ${day.id} 主題與日期`,
     bodyHtml: formHtml,
     confirmText: "儲存並同步",
-    onConfirm: () => {
+    onConfirm: async () => {
       const id = document.getElementById("editDayId").value.trim() || day.id;
       const title = document.getElementById("editDayTitle").value.trim();
       const pickerVal = document.getElementById("editDayPicker").value;
@@ -3853,8 +3807,8 @@ function openEditDayTitleModal(dayIdx) {
       selectedDay = editedIdx !== -1 ? editedIdx : 0;
 
       renderItinerary();
-      save();
-      return true;
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -3914,7 +3868,7 @@ function openEditItineraryModal(dayIdx, itemIdx) {
     title: "✏️ 編輯行程景點",
     bodyHtml: formHtml,
     confirmText: "儲存修改並同步",
-    onConfirm: () => {
+    onConfirm: async () => {
       const place = document.getElementById("editItPlace").value.trim();
       if (!place) {
         alert("景點名稱不得為空！");
@@ -3939,8 +3893,8 @@ function openEditItineraryModal(dayIdx, itemIdx) {
       sortDayItems(tripData.days[dayIdx].items);
 
       renderItinerary();
-      save();
-      return true;
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -4098,7 +4052,7 @@ function deleteItineraryItem(dayIdx, itemIdx) {
     message: `確定要刪除景點「${item.place || "此行程"}」嗎？`,
     danger: true,
     confirmText: "確定刪除",
-    onConfirm: () => {
+    onConfirm: async () => {
       tripData.days[dayIdx].items.splice(itemIdx, 1);
       renderItinerary();
       save();
@@ -4194,7 +4148,7 @@ function openAddItineraryModal(dayIdx) {
     title: `➕ 新增 ${dayTitle} 行程景點`,
     bodyHtml: formHtml,
     confirmText: "確認新增並同步",
-    onConfirm: () => {
+    onConfirm: async () => {
       const time = document.getElementById("addItineraryTime").value.trim();
       const place = document.getElementById("addItineraryPlace").value.trim();
       const link = document.getElementById("addItineraryLink").value.trim();
@@ -4220,8 +4174,8 @@ function openAddItineraryModal(dayIdx) {
       sortDayItems(tripData.days[dayIdx].items);
 
       renderItinerary();
-      save();
-      return true;
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -4489,7 +4443,7 @@ function openEditFoodModal(index) {
     title: "✏️ 編輯美食口袋名單",
     bodyHtml: formHtml,
     confirmText: "儲存修改並同步",
-    onConfirm: () => {
+    onConfirm: async () => {
       const name = document.getElementById("editFoodName").value.trim();
       if (!name) {
         alert("美食名稱不得為空！");
@@ -4512,8 +4466,8 @@ function openEditFoodModal(index) {
       );
 
       renderFood();
-      save();
-      return true;
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -4530,7 +4484,7 @@ function deleteFoodItem(index) {
     message: `確定要刪除美食「${item.name || "此項目"}」嗎？`,
     danger: true,
     confirmText: "確定刪除",
-    onConfirm: () => {
+    onConfirm: async () => {
       tripData.food.splice(index, 1);
       renderFood();
       save();
@@ -4576,7 +4530,7 @@ function openAddFoodModal() {
     title: "➕ 新增美食口袋名單",
     bodyHtml: formHtml,
     confirmText: "確認新增並同步",
-    onConfirm: () => {
+    onConfirm: async () => {
       const emoji =
         document.getElementById("addFoodEmoji").value.trim() || "🍴";
       const name = document.getElementById("addFoodName").value.trim();
@@ -4615,8 +4569,8 @@ function openAddFoodModal() {
       });
 
       renderFood();
-      save();
-      return true;
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -4881,7 +4835,7 @@ function openAddShoppingModal() {
     title: "➕ 新增代購商品",
     bodyHtml: formHtml,
     confirmText: "確認新增並同步",
-    onConfirm: () => {
+    onConfirm: async () => {
       const buyer = document.getElementById("addShoppingBuyer").value.trim() || "自己";
       const name = document.getElementById("addShoppingName").value.trim();
       const qty = document.getElementById("addShoppingQty").value.trim() || "1";
@@ -4911,8 +4865,8 @@ function openAddShoppingModal() {
       });
 
       renderShopping();
-      save();
-      return true;
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -4977,7 +4931,7 @@ function openEditShoppingModal(index) {
     title: "✏️ 編輯代購商品",
     bodyHtml: formHtml,
     confirmText: "儲存修改並同步",
-    onConfirm: () => {
+    onConfirm: async () => {
       const name = document.getElementById("editShoppingName").value.trim();
       if (!name) {
         alert("商品名稱不得為空！");
@@ -4994,8 +4948,8 @@ function openEditShoppingModal(index) {
       tripData.shopping[index].imgUrl = formatDriveImageUrl(document.getElementById("editShoppingImgUrl").value.trim());
 
       renderShopping();
-      save();
-      return true;
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -5012,7 +4966,7 @@ function deleteShoppingItem(index) {
     message: `確定要刪除代購商品「${item.name || "此項目"}」嗎？`,
     danger: true,
     confirmText: "確定刪除",
-    onConfirm: () => {
+    onConfirm: async () => {
       tripData.shopping.splice(index, 1);
       renderShopping();
       save();
@@ -5292,23 +5246,38 @@ function autoSyncEditTripDuration() {
   }
 }
 
-// 編輯現有行程基本設定對話框
-function openEditTripMetaModal(uuid) {
+// 編輯現有行程基本設定對話框 (支援向管理員專屬端點 getTripMeta 讀取完整設定，並具備密碼安全保護機制)
+async function openEditTripMetaModal(uuid) {
   const trip = tripsList.find((t) => t.uuid === uuid);
   if (!trip) return;
 
-  // 深度優先從行程物件、本地快取或當前 tripData 中取出原本設定的日期與天數
-  let cachedData = null;
-  try {
-    const c = localStorage.getItem("cache_trip_" + uuid);
-    if (c) cachedData = JSON.parse(c);
-  } catch (e) {}
+  if (isTokenExpired(idToken)) {
+    showToast("登入憑證已逾期，請先登入管理員");
+    triggerGoogleLogin();
+    return;
+  }
 
-  const currentStartDate = trip.startDate || (cachedData ? cachedData.startDate : "") || (tripData && currentTripUuid === uuid ? tripData.startDate : "");
-  const currentEndDate = trip.endDate || (cachedData ? cachedData.endDate : "") || (tripData && currentTripUuid === uuid ? tripData.endDate : "");
-  const currentDuration = trip.duration || (cachedData ? cachedData.duration : "") || (tripData && currentTripUuid === uuid ? tripData.duration : "") || calculateTripDuration(currentStartDate, currentEndDate);
-  const currentTheme =
-    trip.theme || (cachedData ? cachedData.theme : "") || (tripData && currentTripUuid === uuid ? tripData.theme : "") || getAutoThemeKeyForTrip(trip.name, trip.uuid);
+  showLoading("正在載入行程完整設定...");
+  let fullMeta = null;
+  try {
+    const res = await fetch(`${GAS_API_URL}?action=getTripMeta&tripUuid=${encodeURIComponent(uuid)}&token=${encodeURIComponent(idToken)}`);
+    const result = await res.json();
+    if (result.status === "success" && result.trip) {
+      fullMeta = result.trip;
+    }
+  } catch (err) {
+    console.warn("無法取得線上完整 Meta，降級使用本地快取:", err);
+  } finally {
+    hideLoading();
+  }
+
+  const currentStartDate = (fullMeta && fullMeta.startDate) || trip.startDate || "";
+  const currentEndDate = (fullMeta && fullMeta.endDate) || trip.endDate || "";
+  const currentDuration = (fullMeta && fullMeta.duration) || trip.duration || calculateTripDuration(currentStartDate, currentEndDate);
+  const currentTheme = (fullMeta && fullMeta.theme) || trip.theme || getAutoThemeKeyForTrip(trip.name, trip.uuid);
+  const currentAllowedUsers = (fullMeta && fullMeta.allowed_users) || trip.allowed_users || "";
+  const currentPassword = (fullMeta && fullMeta.password) || "";
+  const hasExistingPassword = Boolean(currentPassword || trip.hasPassword);
 
   const formHtml = `
     <div class="ef-wrap">
@@ -5317,7 +5286,7 @@ function openEditTripMetaModal(uuid) {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">行程名稱 <span style="color:var(--red);">*</span></div>
-      <input type="text" id="editTripName" class="ef-input" value="${trip.name || ""}">
+      <input type="text" id="editTripName" class="ef-input" value="${(fullMeta && fullMeta.name) || trip.name || ""}">
     </div>
     <div style="display:flex;gap:10px;">
       <div class="ef-wrap" style="flex:1;">
@@ -5346,12 +5315,33 @@ function openEditTripMetaModal(uuid) {
       </select>
     </div>
     <div class="ef-wrap">
-      <div class="ef-label">授權人員 Email (以英文逗號分隔)</div>
-      <textarea id="editTripAllowedUsers" class="ef-textarea">${trip.allowed_users || ""}</textarea>
+      <div class="ef-label">授權人員 Email (以英文逗號分隔，授權成員登入後免輸密碼直接編輯手冊)</div>
+      <textarea id="editTripAllowedUsers" class="ef-textarea">${currentAllowedUsers}</textarea>
     </div>
-    <div class="ef-wrap">
-      <div class="ef-label">🔐 旅程專屬存取密碼 <span style="font-weight:normal;color:#888;">(選填，留空即取消密碼變為公開手冊)</span></div>
-      <input type="text" id="editTripPassword" class="ef-input" value="${trip.password || ""}" placeholder="例如: travel2028 (選填)">
+    <div class="ef-wrap" style="background:rgba(0,0,0,0.02);padding:12px;border-radius:10px;border:1px solid #E0E0E0;">
+      <div class="ef-label" style="display:flex;justify-content:space-between;align-items:center;">
+        <span>🔐 旅程專屬存取密碼 (PIN 保護)</span>
+        <span style="font-size:11px;color:${hasExistingPassword ? "var(--moss)" : "#888"};font-weight:700;">
+          ${hasExistingPassword ? "● 目前已設有 PIN 保護" : "○ 目前為公開行程"}
+        </span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px;">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+          <input type="radio" name="pwdActionRadio" value="keep" checked onchange="document.getElementById('editPwdInputWrap').style.display='none'">
+          <span>保持現有密碼設定 (不更動)</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+          <input type="radio" name="pwdActionRadio" value="set" onchange="document.getElementById('editPwdInputWrap').style.display='block'">
+          <span>設定 / 變更為新密碼</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+          <input type="radio" name="pwdActionRadio" value="remove" onchange="document.getElementById('editPwdInputWrap').style.display='none'">
+          <span>取消密碼保護 (改為無密碼公開行程)</span>
+        </label>
+      </div>
+      <div id="editPwdInputWrap" style="display:none;margin-top:10px;">
+        <input type="text" id="editTripPassword" class="ef-input" placeholder="請輸入新設定的 PIN 密碼" value="${currentPassword}">
+      </div>
     </div>
   `;
 
@@ -5361,16 +5351,22 @@ function openEditTripMetaModal(uuid) {
     confirmText: "儲存設定並同步雲端",
     onConfirm: async () => {
       const name = document.getElementById("editTripName").value.trim();
-      const startDate = document
-        .getElementById("editTripStartDate")
-        .value.trim();
+      const startDate = document.getElementById("editTripStartDate").value.trim();
       const endDate = document.getElementById("editTripEndDate").value.trim();
       const duration = document.getElementById("editTripDuration").value.trim();
       const theme = document.getElementById("editTripTheme")?.value || "violet";
-      const password = document.getElementById("editTripPassword").value.trim();
-      let allowedUsers = document
-        .getElementById("editTripAllowedUsers")
-        .value.trim();
+      let allowedUsers = document.getElementById("editTripAllowedUsers").value.trim();
+
+      const selectedActionEl = document.querySelector('input[name="pwdActionRadio"]:checked');
+      const passwordAction = selectedActionEl ? selectedActionEl.value : "keep";
+      let newPwdValue = "";
+      if (passwordAction === "set") {
+        newPwdValue = document.getElementById("editTripPassword").value.trim();
+        if (!newPwdValue) {
+          alert("若選擇設定新密碼，請輸入密碼內容！");
+          return false;
+        }
+      }
 
       if (!name) {
         alert("行程名稱不得為空！");
@@ -5401,17 +5397,24 @@ function openEditTripMetaModal(uuid) {
             duration,
             theme,
             allowedUsers,
-            password,
+            passwordAction,
+            password: newPwdValue,
           }),
         });
         const result = await res.json();
+        hideLoading();
+
         if (result.status === "success") {
           showToast("行程設定更新成功 ✓");
           trip.name = name;
           trip.startDate = startDate;
           trip.endDate = endDate;
           trip.duration = duration;
-          trip.hasPassword = Boolean(password);
+          if (passwordAction === "remove") {
+            trip.hasPassword = false;
+          } else if (passwordAction === "set") {
+            trip.hasPassword = Boolean(newPwdValue);
+          }
           delete trip.password;
           delete trip.canEdit;
           trip.theme = theme;
@@ -5448,23 +5451,25 @@ function openEditTripMetaModal(uuid) {
             tripData.startDate = startDate;
             tripData.endDate = endDate;
             tripData.duration = duration;
-            tripData.password = password;
             tripData.theme = theme;
+            delete tripData.password;
             initCountdown();
             applyTripTheme(theme, name, uuid, startDate);
           }
-          
+
           renderAdminView();
           fetchTrips();
+          return true;
         } else {
           alert("更新失敗：" + (result.message || "未知錯誤"));
+          return false;
         }
       } catch (e) {
-        alert("網路連線錯誤，更新失敗");
-      } finally {
         hideLoading();
+        console.error("更新異常:", e);
+        alert("網路異常，更新失敗");
+        return false;
       }
-      return true;
     },
   });
 }
@@ -6041,7 +6046,7 @@ function openAddRouteMapModal() {
     title: "🗺️ 新增交通路線圖",
     bodyHtml: formHtml,
     confirmText: "確認新增並同步",
-    onConfirm: () => {
+    onConfirm: async () => {
       const title = document.getElementById("addMapTitle").value.trim();
       const imgUrl = document.getElementById("addMapImgUrl").value.trim();
       const note = document.getElementById("addMapNote").value.trim();
@@ -6067,8 +6072,8 @@ function openAddRouteMapModal() {
       tripData.transport.mapNote = tripData.transport.maps[0].title;
 
       renderTransport();
-      save();
-      return true;
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -6111,7 +6116,7 @@ function openEditRouteMapModal(idx) {
     title: `✏️ 修改路線圖 - ${escapeHtml(currentTitle || "地圖")}`,
     bodyHtml: formHtml,
     confirmText: "儲存修改並同步",
-    onConfirm: () => {
+    onConfirm: async () => {
       const title = document.getElementById("editMapTitle").value.trim();
       const imgUrl = document.getElementById("editMapImgUrl").value.trim();
       const note = document.getElementById("editMapNote").value.trim();
@@ -6136,8 +6141,8 @@ function openEditRouteMapModal(idx) {
       }
 
       renderTransport();
-      save();
-      return true;
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -6158,7 +6163,7 @@ function deleteRouteMap(idx) {
     message: `確定要刪除「${map.title || "此路線圖"}」嗎？`,
     danger: true,
     confirmText: "確定刪除",
-    onConfirm: () => {
+    onConfirm: async () => {
       tripData.transport.maps.splice(idx, 1);
       if (tripData.transport.maps.length > 0) {
         tripData.transport.mapImgUrl = tripData.transport.maps[0].url;
@@ -6281,7 +6286,7 @@ function openAddTransportModal() {
     title: "➕ 新增乘車行程",
     bodyHtml: formHtml,
     confirmText: "確認新增並同步",
-    onConfirm: () => {
+    onConfirm: async () => {
       const dayTag = document.getElementById("addTransDay").value.trim();
       const fromTo = document.getElementById("addTransFromTo").value.trim();
       const time = document.getElementById("addTransTime").value.trim();
@@ -6308,8 +6313,8 @@ function openAddTransportModal() {
       });
 
       renderTransport();
-      save();
-      return true;
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -6379,7 +6384,7 @@ function openEditTransportModal(idx) {
     title: "✏️ 編輯乘車行程",
     bodyHtml: formHtml,
     confirmText: "儲存修改並同步",
-    onConfirm: () => {
+    onConfirm: async () => {
       const dayTag = document.getElementById("editTransDay").value.trim();
       const fromTo = document.getElementById("editTransFromTo").value.trim();
       const time = document.getElementById("editTransTime").value.trim();
@@ -6405,8 +6410,8 @@ function openEditTransportModal(idx) {
       };
 
       renderTransport();
-      save();
-      return true;
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -6424,7 +6429,7 @@ function deleteTransportItem(idx) {
     message: `確定要刪除「${item.fromTo || "此乘車段"}」嗎？`,
     danger: true,
     confirmText: "確定刪除",
-    onConfirm: () => {
+    onConfirm: async () => {
       tripData.transport.routes.splice(idx, 1);
       renderTransport();
       save();
@@ -6469,7 +6474,7 @@ function openAddTransitPassModal() {
     title: "🎟️ 新增周遊券 / 交通票券",
     bodyHtml: formHtml,
     confirmText: "確認新增並同步",
-    onConfirm: () => {
+    onConfirm: async () => {
       const name = document.getElementById("addPassName").value.trim();
       const cost = document.getElementById("addPassCost").value.trim();
       const curr = document.getElementById("addPassCurr").value.trim() || "日円";
@@ -6489,8 +6494,8 @@ function openAddTransitPassModal() {
       });
 
       renderTransport();
-      save();
-      return true;
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -6535,7 +6540,7 @@ function openEditTransitPassModal(idx) {
     title: "✏️ 編輯周遊券 / 交通票券",
     bodyHtml: formHtml,
     confirmText: "儲存修改並同步",
-    onConfirm: () => {
+    onConfirm: async () => {
       const name = document.getElementById("editPassName").value.trim();
       const cost = document.getElementById("editPassCost").value.trim();
       const curr = document.getElementById("editPassCurr").value.trim() || "日円";
@@ -6571,7 +6576,7 @@ function deleteTransitPass(idx) {
     message: `確定要刪除「${pass.name}」嗎？`,
     danger: true,
     confirmText: "確定刪除",
-    onConfirm: () => {
+    onConfirm: async () => {
       tripData.transport.passes.splice(idx, 1);
       renderTransport();
       save();
