@@ -1821,7 +1821,7 @@ function renderHubTripsGrid() {
       const altText = safeName.includes("岡山") ? "日本岡山行程封面照片" : (safeName.includes("奧") || safeName.includes("捷") ? "奧地利捷克行程封面照片" : `${safeName} 封面照片`);
 
       return `
-        <a href="?trip=${encodeURIComponent(safeUuid)}" class="trip-hub-card" onclick="event.preventDefault(); openTripByUuid('${safeUuid}')" role="button" aria-label="${safeName}行程手冊" style="text-decoration:none;color:inherit;display:flex;">
+        <a href="?trip=${encodeURIComponent(safeUuid)}" class="trip-hub-card" onclick="event.preventDefault(); openTripByUuid('${safeUuid}')" aria-label="${safeName}行程手冊" style="text-decoration:none;color:inherit;display:flex;">
           <div class="hub-card-cover-wrap">
             <img class="hub-card-cover" src="${coverInfo.url}" alt="${altText}" loading="lazy" referrerpolicy="no-referrer" onerror="handleImgError(this)">
             <div class="hub-card-tag">${coverInfo.tag}</div>
