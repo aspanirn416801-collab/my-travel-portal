@@ -3,7 +3,7 @@
 // =========================================================================
 const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
-const APP_BUILD_VERSION = "20260917_03";
+const APP_BUILD_VERSION = "20260917_04";
 
 // 智能行程顯示名稱轉換 (將舊版 ID 或技術命名轉換為溫暖手帳風格名稱，技術 ID 留存於後台編輯中)
 function getTripDisplayName(name = "", uuid = "") {
@@ -991,7 +991,8 @@ function showAdminView() {
     localStorage.setItem("cache_userRole", "admin");
   } catch (e) {}
 
-  updateUserRoleUI();
+  // 更新登入與身分狀態列 UI（修正函式名稱，確保後台顯示流程順暢）
+  updateAuthUI();
   document.getElementById("view-hub").style.display = "none";
   document.getElementById("view-trip").style.display = "none";
   const lockedView = document.getElementById("view-locked");
