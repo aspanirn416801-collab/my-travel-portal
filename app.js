@@ -3,7 +3,7 @@
 // =========================================================================
 const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
-const APP_BUILD_VERSION = "20260917_06";
+const APP_BUILD_VERSION = "20260917_07";
 
 // 智能行程顯示名稱轉換 (將舊版 ID 或技術命名轉換為溫暖手帳風格名稱，技術 ID 留存於後台編輯中)
 function getTripDisplayName(name = "", uuid = "") {
@@ -2346,7 +2346,12 @@ function openConfirmModal({
     confirmBtn.innerText = "處理中...";
     try {
       if (typeof onConfirm === "function") {
-        await onConfirm();
+        const ok = await onConfirm();
+        if (ok === false) {
+          confirmBtn.disabled = false;
+          confirmBtn.innerText = confirmText;
+          return;
+        }
       }
       closeModal();
     } catch (err) {
@@ -2636,7 +2641,8 @@ function deleteChecklistItem(index) {
     onConfirm: async () => {
       tripData.checklist.splice(index, 1);
       renderChecklist();
-      save();
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -3162,7 +3168,8 @@ function deleteHotel(index) {
       }
       tripData.hotels.splice(index, 1);
       renderFlights();
-      save();
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -3466,7 +3473,8 @@ function resequenceAllDays() {
       sortTripDays(tripData.days);
       if (selectedDay >= tripData.days.length) selectedDay = 0;
       renderItinerary();
-      save();
+      const ok = await save();
+      return ok !== false;
       showToast(`已成功將天數重整為 Day 1 ～ Day ${tripData.days.length}！`);
     },
   });
@@ -4055,7 +4063,8 @@ function deleteItineraryItem(dayIdx, itemIdx) {
     onConfirm: async () => {
       tripData.days[dayIdx].items.splice(itemIdx, 1);
       renderItinerary();
-      save();
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -4487,7 +4496,8 @@ function deleteFoodItem(index) {
     onConfirm: async () => {
       tripData.food.splice(index, 1);
       renderFood();
-      save();
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -4969,7 +4979,8 @@ function deleteShoppingItem(index) {
     onConfirm: async () => {
       tripData.shopping.splice(index, 1);
       renderShopping();
-      save();
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -5274,7 +5285,7 @@ async function openEditTripMetaModal(uuid) {
   const currentStartDate = (fullMeta && fullMeta.startDate) || trip.startDate || "";
   const currentEndDate = (fullMeta && fullMeta.endDate) || trip.endDate || "";
   const currentDuration = (fullMeta && fullMeta.duration) || trip.duration || calculateTripDuration(currentStartDate, currentEndDate);
-  const currentTheme = (fullMeta && fullMeta.theme) || trip.theme || getAutoThemeKeyForTrip(trip.name, trip.uuid);
+  const currentTheme = (fullMeta && fullMeta.theme !== undefined) ? fullMeta.theme : (trip.theme || "");
   const currentAllowedUsers = (fullMeta && fullMeta.allowed_users) || trip.allowed_users || "";
   const currentPassword = (fullMeta && fullMeta.password) || "";
   const hasExistingPassword = Boolean(currentPassword || trip.hasPassword);
@@ -5354,7 +5365,7 @@ async function openEditTripMetaModal(uuid) {
       const startDate = document.getElementById("editTripStartDate").value.trim();
       const endDate = document.getElementById("editTripEndDate").value.trim();
       const duration = document.getElementById("editTripDuration").value.trim();
-      const theme = document.getElementById("editTripTheme")?.value || "violet";
+      const theme = document.getElementById("editTripTheme")?.value || "";
       let allowedUsers = document.getElementById("editTripAllowedUsers").value.trim();
 
       const selectedActionEl = document.querySelector('input[name="pwdActionRadio"]:checked');
@@ -6173,7 +6184,8 @@ function deleteRouteMap(idx) {
         tripData.transport.mapNote = "";
       }
       renderTransport();
-      save();
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -6432,7 +6444,8 @@ function deleteTransportItem(idx) {
     onConfirm: async () => {
       tripData.transport.routes.splice(idx, 1);
       renderTransport();
-      save();
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -6579,7 +6592,8 @@ function deleteTransitPass(idx) {
     onConfirm: async () => {
       tripData.transport.passes.splice(idx, 1);
       renderTransport();
-      save();
+      const ok = await save();
+      return ok !== false;
     },
   });
 }

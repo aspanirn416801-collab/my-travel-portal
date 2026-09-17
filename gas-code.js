@@ -293,6 +293,23 @@ function doGet(e) {
         if (!duration && startDate && endDate) {
           duration = calcTripDurationInGas(startDate, endDate);
         }
+        let themeVal = "";
+        try {
+          if (tripRows[i][2]) {
+            const subSs = SpreadsheetApp.openById(tripRows[i][2]);
+            const infoSheet = subSs.getSheetByName("Info");
+            if (infoSheet) {
+              const infoData = infoSheet.getDataRange().getValues();
+              for (let r = 0; r < infoData.length; r++) {
+                if (String(infoData[r][0]).trim().toLowerCase() === "theme") {
+                  themeVal = String(infoData[r][1] || "").trim();
+                  break;
+                }
+              }
+            }
+          }
+        } catch (e) {}
+
         foundTrip = {
           uuid: tripRows[i][0],
           name: tripRows[i][1],
@@ -303,7 +320,8 @@ function doGet(e) {
           hasPassword: Boolean(password),
           startDate: startDate,
           endDate: endDate,
-          duration: duration
+          duration: duration,
+          theme: themeVal
         };
         break;
       }
