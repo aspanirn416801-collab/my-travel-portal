@@ -3,7 +3,7 @@
 // =========================================================================
 const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
-const APP_BUILD_VERSION = "20260917_01";
+const APP_BUILD_VERSION = "20260917_02";
 
 // 智能行程顯示名稱轉換 (將舊版 ID 或技術命名轉換為溫暖手帳風格名稱，技術 ID 留存於後台編輯中)
 function getTripDisplayName(name = "", uuid = "") {
@@ -991,7 +991,12 @@ function showAdminView() {
   const lockedView = document.getElementById("view-locked");
   if (lockedView) lockedView.style.display = "none";
   const adminView = document.getElementById("view-admin");
-  if (adminView) adminView.style.display = "block";
+  if (!adminView) {
+    console.error("找不到後台視圖 #view-admin");
+    showToast("後台畫面載入失敗，請重新整理後再試");
+    return;
+  }
+  adminView.style.display = "block";
   document.getElementById("currentTripIndicator").style.display = "none";
 
   // 大廳返回按鈕：在後台管理中心顯示
@@ -1015,6 +1020,12 @@ function showAdminView() {
       adminUserTag.innerText = "👑 系統管理員已就緒";
     }
   }
+
+  window.scrollTo({
+    top: 0,
+    left: 0,
+    behavior: "instant",
+  });
 
   resetToDefaultTheme();
   renderAdminView();
@@ -1493,6 +1504,27 @@ function handleCredentialResponse(response) {
         }
       } catch (e) {}
     }
+
+    const returnUrl = sessionStorage.getItem("returnAfterLogin") || "";
+    const shouldOpenAdmin =
+      returnUrl.includes("admin=1") ||
+      returnUrl.includes("trip=admin") ||
+      window.location.search.includes("admin=1");
+
+    if (
+      shouldOpenAdmin &&
+      userRole === "admin" &&
+      idToken &&
+      !isTokenExpired(idToken)
+    ) {
+      sessionStorage.removeItem("returnAfterLogin");
+      history.replaceState(
+        { view: "admin" },
+        "",
+        `${window.location.pathname}?admin=1`
+      );
+      showAdminView();
+    }
   });
 }
 
@@ -1738,10 +1770,18 @@ async function fetchTrips() {
       } catch (e) {}
 
       updateAuthUI();
-      const isAdminRoute = window.location.search.includes("admin=1") || window.location.search.includes("trip=admin");
-      if (isAdminRoute) {
-        renderAdminView();
-      } else if (!currentTripUuid) {
+      const isAdminRoute =
+        window.location.search.includes("admin=1") ||
+        window.location.search.includes("trip=admin");
+
+      if (
+        isAdminRoute &&
+        userRole === "admin" &&
+        idToken &&
+        !isTokenExpired(idToken)
+      ) {
+        showAdminView();
+      } else if (!currentTripUuid && !isAdminRoute) {
         renderHubTripsGrid();
       }
 
