@@ -3,7 +3,7 @@
 // =========================================================================
 const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
-const APP_BUILD_VERSION = "20260917_04";
+const APP_BUILD_VERSION = "20260917_05";
 
 // 智能行程顯示名稱轉換 (將舊版 ID 或技術命名轉換為溫暖手帳風格名稱，技術 ID 留存於後台編輯中)
 function getTripDisplayName(name = "", uuid = "") {
@@ -27,11 +27,11 @@ function getTripDisplayName(name = "", uuid = "") {
 
   // 比對奧地利・捷克名稱或 ID
   if (
-    lowerN === "austria and czech" ||
     lowerN === "austria-czech" ||
+    lowerN === "austriaczech" ||
     lowerN === "austria_czech" ||
-    lowerU === "austria and czech" ||
     lowerU === "austria-czech" ||
+    lowerU === "austriaczech" ||
     lowerU === "austria_czech"
   ) {
     return "奧地利・捷克之旅";
@@ -40,16 +40,20 @@ function getTripDisplayName(name = "", uuid = "") {
   return n || u;
 }
 
-// 前端全局狀態管理 (啟動時立即從 LocalStorage 快取中還原，實現 0.001 秒瞬間秒開！)
+// 前端全局狀態管理 (身分以有效 Token 與後端即時回傳為唯一依歸)
 let idToken = localStorage.getItem("google_id_token") || null;
-let userRole = localStorage.getItem("cache_userRole") || "guest"; // 'admin' | 'user' | 'guest'
+let userRole = "guest"; // 'admin' | 'user' | 'guest' (絕不信任本地快取，防止偽冒)
 
-// 安全校驗：若無有效 Token 或已逾期，一律強制歸為 guest 訪客身分，防止身分快取偽冒
-if (!idToken || isTokenExpired(idToken)) {
-  userRole = "guest";
-  try {
-    localStorage.setItem("cache_userRole", "guest");
-  } catch (e) {}
+// 記憶體專屬權限管理：嚴禁寫入 localStorage，換帳號或登出時立即清除！
+const tripPermissions = new Map(); // key: tripUuid, value: { canEdit: boolean }
+let tripRequestSequence = 0; // 跨行程請求流水號，徹底杜絕 Race Condition 舊回應覆蓋
+
+// 判定當前行程是否具備編輯權限 (管理員全權、或經後端認證的授權成員)
+function canEditCurrentTrip() {
+  if (userRole === "admin" && idToken && !isTokenExpired(idToken)) return true;
+  if (!currentTripUuid) return false;
+  const perm = tripPermissions.get(currentTripUuid);
+  return Boolean(perm && perm.canEdit && idToken && !isTokenExpired(idToken));
 }
 
 // 預設安全之公開行程摘要骨架 (無快取或冷啟動時 0 秒立即呈現卡片，不含任何 PIN 密碼，大幅消弭等待焦慮)
@@ -644,50 +648,27 @@ function onWeatherCitySelectChange(cityId) {
   renderWeatherCard(false);
 }
 
-function isTripUnlocked(tripUuid, tripPassword) {
+// 記憶體專屬已解鎖 PIN 映射表：不存入 LocalStorage/SessionStorage，關閉或重新整理即自動失效
+const memoryUnlockedPins = new Map(); // key: tripUuid, value: pin
+
+function isTripUnlocked(tripUuid, tripHasPassword) {
   if (!tripUuid) return true;
-  // 管理員尊榮特權：必須確實持有有效且未過期的 Google 登入 Token
+  // 管理員尊榮特權：持有有效 Token 直接放行
   if (userRole === "admin" && idToken && !isTokenExpired(idToken)) return true;
-  // 雙重校驗密碼：優先比對傳入密碼，若無則查詢本機已知加密紀錄，杜絕後端 tripsList 漏回密碼之破口
-  const pwd = (tripPassword !== undefined && tripPassword !== null && String(tripPassword).trim())
-    ? String(tripPassword).trim()
-    : getKnownTripPassword(tripUuid);
+  // 授權成員特權：後端授權 canEdit 者直接免 PIN 放行
+  const perm = tripPermissions.get(tripUuid);
+  if (perm && perm.canEdit && idToken && !isTokenExpired(idToken)) return true;
 
-  if (!pwd) return true; // 確認完全未設密碼的公開行程：免密碼直接唯讀瀏覽
-  // 改為 sessionStorage：關閉分頁、重啟瀏覽器或離開網頁即自動失效登出
-  const savedUnlock = sessionStorage.getItem("unlocked_trip_" + tripUuid);
-  return savedUnlock === pwd;
+  // 若未設密碼則直接放行
+  if (tripHasPassword === false) return true;
+
+  // 訪客模式：必須在當前記憶體中持有已驗證的 PIN
+  return memoryUnlockedPins.has(tripUuid);
 }
 
-// 記錄與讀取已知加密行程清單 (徹底解決線上 GAS 未部署時 tripsList 漏掉密碼的問題)
-function markTripHasPassword(uuid, password) {
-  if (!uuid) return;
-  try {
-    const list = JSON.parse(localStorage.getItem("known_locked_trips") || "{}");
-    list[uuid] = password || true;
-    localStorage.setItem("known_locked_trips", JSON.stringify(list));
-  } catch (e) {}
-}
-
-function getKnownTripPassword(uuid) {
-  if (!uuid) return "";
-  try {
-    const list = JSON.parse(localStorage.getItem("known_locked_trips") || "{}");
-    if (list[uuid] && typeof list[uuid] === "string") return list[uuid];
-  } catch (e) {}
-  try {
-    const cached = localStorage.getItem("cache_trip_" + uuid);
-    if (cached) {
-      const data = JSON.parse(cached);
-      if (data && data.password) return String(data.password).trim();
-    }
-  } catch (e) {}
-  return "";
-}
-
-function markTripUnlocked(tripUuid, tripPassword) {
-  const pwd = tripPassword !== undefined && tripPassword !== null ? String(tripPassword).trim() : "";
-  sessionStorage.setItem("unlocked_trip_" + tripUuid, pwd);
+function markTripUnlocked(tripUuid, pin) {
+  if (!tripUuid) return;
+  memoryUnlockedPins.set(tripUuid, pin || true);
 }
 
 function togglePasswordVisibility(inputId, btnEl) {
@@ -751,9 +732,8 @@ async function handleTripUnlockSubmit(e) {
     return;
   }
 
-  // 1. 若當前工作階段已驗證此密碼：直接秒開手冊
-  const savedUnlock = sessionStorage.getItem("unlocked_trip_" + currentTripUuid);
-  if (savedUnlock && savedUnlock === inputPwd) {
+  // 1. 若當前記憶體中已驗證此密碼：直接秒開手冊
+  if (memoryUnlockedPins.get(currentTripUuid) === inputPwd) {
     markTripUnlocked(currentTripUuid, inputPwd);
     const lockedView = document.getElementById("view-locked");
     if (lockedView) lockedView.style.display = "none";
@@ -792,15 +772,18 @@ async function handleTripUnlockSubmit(e) {
 
     if (result.status === "success") {
       markTripUnlocked(currentTripUuid, inputPwd);
-      markTripHasPassword(currentTripUuid, inputPwd);
+      if (result.canEdit !== undefined) {
+        tripPermissions.set(currentTripUuid, { canEdit: Boolean(result.canEdit) });
+      }
       showToast("密碼驗證成功，手冊已解鎖 ✓");
 
       tripData = sanitizeAndDeduplicateTrip(result.data);
       if (tripData && tripData.days) {
         sortTripDays(tripData.days);
       }
+      // 私密手冊僅存於 sessionStorage，關閉即失效，絕不長存於 localStorage
       try {
-        localStorage.setItem("cache_trip_" + currentTripUuid, JSON.stringify(tripData));
+        sessionStorage.setItem("session_trip_" + currentTripUuid, JSON.stringify(tripData));
       } catch (e) {}
 
       const lockedView = document.getElementById("view-locked");
@@ -962,36 +945,18 @@ function showTripView() {
   renderWeatherCard();
 }
 
-// 獨立專屬後台視圖 (完全獨立於所有旅遊行程之外，具備管理員身分持久保持保護)
-function showAdminView() {
-  // 雙重管理員身分判定：
-  let isKnownAdmin = userRole === "admin";
-  try {
-    const list = JSON.parse(localStorage.getItem("known_admin_emails") || "[]");
-    const cachedRole = localStorage.getItem("cache_userRole");
-    if (cachedRole === "admin") isKnownAdmin = true;
-    if (idToken) {
-      const info = parseJwt(idToken);
-      const email = info?.email?.toLowerCase().trim();
-      if (email && list.includes(email)) isKnownAdmin = true;
-    }
-  } catch (e) {}
-
-  // 只有在既非已知管理員、又無有效 Token 時才阻擋並導向登入
-  if (!isKnownAdmin && (!idToken || isTokenExpired(idToken))) {
+// 獨立專屬後台視圖 (具備防畫面跳動與捲動保留機制)
+function showAdminView(options = { resetScroll: false }) {
+  // 管理員身分嚴格校驗：必須持有未過期的有效 Token
+  const hasValidAdminToken = idToken && !isTokenExpired(idToken) && userRole === "admin";
+  if (!hasValidAdminToken) {
     showToast("此管理專區僅限系統管理員存取");
     triggerGoogleLogin();
     showHubView();
     return;
   }
 
-  // 穩定鎖定為管理員，絕不中途降級跳走
-  userRole = "admin";
-  try {
-    localStorage.setItem("cache_userRole", "admin");
-  } catch (e) {}
-
-  // 更新登入與身分狀態列 UI（修正函式名稱，確保後台顯示流程順暢）
+  // 更新登入與身分狀態列 UI
   updateAuthUI();
   document.getElementById("view-hub").style.display = "none";
   document.getElementById("view-trip").style.display = "none";
@@ -1018,21 +983,20 @@ function showAdminView() {
 
   const adminUserTag = document.getElementById("adminUserTag");
   if (adminUserTag) {
-    if (idToken) {
-      const userInfo = parseJwt(idToken);
-      const isExp = isTokenExpired(idToken);
-      const nameStr = userInfo?.name || userInfo?.email || "管理員";
-      adminUserTag.innerHTML = `👑 ${escapeHtml(nameStr)} ${isExp ? '<span style="font-size:11px;text-decoration:underline;cursor:pointer;margin-left:4px;color:#FEF08A;" onclick="triggerGoogleLogin()">[憑證過期點此續期]</span>' : '✓'}`;
-    } else {
-      adminUserTag.innerText = "👑 系統管理員已就緒";
-    }
+    const userInfo = parseJwt(idToken);
+    const isExp = isTokenExpired(idToken);
+    const nameStr = userInfo?.name || userInfo?.email || "管理員";
+    adminUserTag.innerHTML = `👑 ${escapeHtml(nameStr)} ${isExp ? '<span style="font-size:11px;text-decoration:underline;cursor:pointer;margin-left:4px;color:#FEF08A;" onclick="triggerGoogleLogin()">[憑證過期點此續期]</span>' : '✓'}`;
   }
 
-  window.scrollTo({
-    top: 0,
-    left: 0,
-    behavior: "instant",
-  });
+  // 防跳動優化：只有第一次主動進入後台時才重設捲軸至頂部，背景重繪或同步時嚴禁強制捲頂
+  if (options && options.resetScroll) {
+    window.scrollTo({
+      top: 0,
+      left: 0,
+      behavior: "instant",
+    });
+  }
 
   resetToDefaultTheme();
   renderAdminView();
@@ -1540,8 +1504,33 @@ function logout() {
   userRole = "guest";
   localStorage.removeItem("google_id_token");
   localStorage.removeItem("cache_userRole");
+
+  // 安全清理：清空記憶體中的權限與 PIN 解鎖狀態
+  tripPermissions.clear();
+  memoryUnlockedPins.clear();
+
+  // 清除 sessionStorage 中殘留的私密手冊
+  try {
+    Object.keys(sessionStorage).forEach((key) => {
+      if (key.startsWith("session_trip_") || key.startsWith("unlocked_trip_")) {
+        sessionStorage.removeItem(key);
+      }
+    });
+  } catch (e) {}
+
+  // 關閉任何開啟中的對話框
+  closeModal();
+
+  // 隱藏後台管理中心並重設網址
+  const adminView = document.getElementById("view-admin");
+  if (adminView) adminView.style.display = "none";
+  if (window.location.search.includes("admin=1")) {
+    history.replaceState(null, "", window.location.pathname);
+  }
+
   updateAuthUI();
-  showToast("已成功登出");
+  showToast("已安全登出，敏感手冊資料已清除 ✓");
+  showHubView();
   fetchTrips();
 }
 
@@ -1749,31 +1738,26 @@ async function fetchTrips() {
           userRole = "guest";
         }
       }
-      tripsList = result.trips || [];
-      tripsList.forEach((t) => {
-        if (t && t.uuid && t.password) {
-          markTripHasPassword(t.uuid, t.password);
+      // 記錄後端授權之 canEdit 旗標於記憶體 tripPermissions (絕不存入 localStorage)
+      tripsList = (result.trips || []).map((t) => {
+        if (t && t.uuid) {
+          if (t.canEdit !== undefined) {
+            tripPermissions.set(t.uuid, { canEdit: Boolean(t.canEdit) });
+          }
         }
+        return {
+          uuid: t.uuid,
+          name: t.name,
+          hasPassword: Boolean(t.hasPassword),
+          startDate: t.startDate || "",
+          endDate: t.endDate || "",
+          duration: t.duration || ""
+        };
       });
 
-      if (result.role === "admin" && idToken) {
-        const info = parseJwt(idToken);
-        if (info && info.email) {
-          try {
-            const list = JSON.parse(localStorage.getItem("known_admin_emails") || "[]");
-            const clean = info.email.toLowerCase().trim();
-            if (!list.includes(clean)) {
-              list.push(clean);
-              localStorage.setItem("known_admin_emails", JSON.stringify(list));
-            }
-          } catch (e) {}
-        }
-      }
-
-      // 儲存至本地快取
+      // 儲存至本地公開快取摘要（嚴禁存入密碼與 canEdit 帳號專屬權限）
       try {
         localStorage.setItem("cache_tripsList", JSON.stringify(tripsList));
-        localStorage.setItem("cache_userRole", userRole);
       } catch (e) {}
 
       updateAuthUI();
@@ -1781,13 +1765,21 @@ async function fetchTrips() {
         window.location.search.includes("admin=1") ||
         window.location.search.includes("trip=admin");
 
+      const adminViewEl = document.getElementById("view-admin");
+      const isAlreadyInAdmin = adminViewEl && adminViewEl.style.display !== "none";
+
       if (
         isAdminRoute &&
         userRole === "admin" &&
         idToken &&
         !isTokenExpired(idToken)
       ) {
-        showAdminView();
+        if (isAlreadyInAdmin) {
+          // 若已在後台，僅局部刷新列表，絕不重複捲頂跳動
+          renderAdminView();
+        } else {
+          showAdminView({ resetScroll: true });
+        }
       } else if (!currentTripUuid && !isAdminRoute) {
         renderHubTripsGrid();
       }
@@ -2026,14 +2018,16 @@ async function fetchTripData() {
     return false;
   }
 
-  // 1. 若本地快取存在且已確認通過門禁或為管理員，才從快取秒開
+  const requestedUuid = currentTripUuid;
+  const requestSequence = ++tripRequestSequence;
+
+  // 1. 若當前 Session 存在且已確認通過門禁或具備編輯權限，優先從 Session 快取秒開
   let hasCache = false;
   try {
-    const cached = localStorage.getItem("cache_trip_" + currentTripUuid);
+    const cached = sessionStorage.getItem("session_trip_" + currentTripUuid);
     if (cached) {
       const parsedData = JSON.parse(cached);
-      const cachedPwd = parsedData.password ? String(parsedData.password).trim() : "";
-      if (isAdmin || !cachedPwd || savedUnlockPwd === cachedPwd) {
+      if (isAdmin || canEditCurrentTrip() || memoryUnlockedPins.has(currentTripUuid)) {
         tripData = sanitizeAndDeduplicateTrip(parsedData);
         if (tripData && tripData.days) {
           sortTripDays(tripData.days);
@@ -2047,10 +2041,6 @@ async function fetchTripData() {
         showTripView();
         initCountdown();
         render();
-      } else {
-        // 快取含密碼且未解鎖：直接進入門禁鎖定畫面
-        showLockedView({ uuid: currentTripUuid, name: parsedData.name || currentTripUuid, password: cachedPwd });
-        return;
       }
     }
   } catch (e) {}
@@ -2061,10 +2051,11 @@ async function fetchTripData() {
     showLoading("正在載入旅程資料，請稍候...");
   }
 
-  // 2. 在背景向 Google 試算表靜默同步最新資料，同時帶上 Token 與 Session 解鎖密碼
+  // 2. 在背景向 Google 試算表靜默同步最新資料，同時帶上 Token 與記憶體中的 PIN
   try {
     const tokenParam = idToken ? `&token=${encodeURIComponent(idToken)}` : "";
-    const pwdParam = savedUnlockPwd ? `&tripPassword=${encodeURIComponent(savedUnlockPwd)}` : "";
+    const memPin = memoryUnlockedPins.get(currentTripUuid);
+    const pwdParam = memPin ? `&tripPassword=${encodeURIComponent(memPin)}` : "";
     const res = await fetch(
       `${GAS_API_URL}?action=getTripData&tripUuid=${encodeURIComponent(
         currentTripUuid,
@@ -2072,9 +2063,15 @@ async function fetchTripData() {
     );
     const result = await res.json();
 
+    // 關鍵 Race Condition 屏障：比對請求行程 UUID 與最新流水號，過期回應一律丟棄！
+    if (requestedUuid !== currentTripUuid || requestSequence !== tripRequestSequence) {
+      console.warn("丟棄過期的行程手冊回應:", { requestedUuid, requestSequence, currentTripUuid, tripRequestSequence });
+      return;
+    }
+
     // 關鍵門禁：若後端判定鎖定（未提供密碼或密碼錯誤）
     if (result.status === "locked") {
-      try { localStorage.removeItem("cache_trip_" + currentTripUuid); } catch (e) {}
+      try { sessionStorage.removeItem("session_trip_" + currentTripUuid); } catch (e) {}
       showLockedView({ uuid: currentTripUuid, name: result.name || currentTripUuid, hasPassword: true });
       return;
     }
@@ -2092,36 +2089,23 @@ async function fetchTripData() {
     }
 
     if (result.status === "success") {
+      // 記錄後端簽發的 canEdit 旗標於記憶體
+      if (result.canEdit !== undefined) {
+        tripPermissions.set(currentTripUuid, { canEdit: Boolean(result.canEdit) });
+      }
+
       tripData = sanitizeAndDeduplicateTrip(result.data);
-      // 權限穩固保護機制：若本地為 admin 且 Token 有效，絕不輕易降級為 guest
-      if (result.role) {
-        if (userRole === "admin" && result.role === "guest" && !isTokenExpired(idToken)) {
-          console.warn("後端暫時判定為 guest，但本地 Token 有效且為 admin，穩定保留 admin 狀態");
-        } else {
-          userRole = result.role;
-        }
-      }
-
-      if (tripData && tripData.password) {
-        markTripHasPassword(currentTripUuid, tripData.password);
-      }
-
-      // 前端二次安全確認：若資料含密碼且尚未解鎖，立即切換為鎖定門禁
-      if (!ensureTripUnlockedOrPrompt(tripData)) {
-        return;
-      }
 
       if (tripData && tripData.days) {
         sortTripDays(tripData.days);
       }
 
-      // 儲存至本地快取
+      // 私密完整手冊僅存於 sessionStorage，關閉即失效，絕不寫入 localStorage
       try {
-        localStorage.setItem("cache_trip_" + currentTripUuid, JSON.stringify(tripData));
-        localStorage.setItem("cache_userRole", userRole);
+        sessionStorage.setItem("session_trip_" + currentTripUuid, JSON.stringify(tripData));
       } catch (e) {}
 
-      // 自動同步日期與天數回 tripsList 與快取
+      // 自動同步日期與天數回公開 tripsList 與快取
       const tripObj = tripsList.find((t) => t.uuid === currentTripUuid);
       if (tripObj) {
         if (tripData.startDate) tripObj.startDate = tripData.startDate;
@@ -2299,49 +2283,51 @@ async function save() {
   // 寫入前執行去重與清洗
   tripData = sanitizeAndDeduplicateTrip(tripData);
 
-  // 立即寫入本地快取，保證下次開啟瞬間秒開
+  // 唯讀模式最高防護：非管理員且非授權成員嚴禁觸發寫入
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無權限修改手冊內容");
+    return false;
+  }
+
+  // 檢查登入憑證是否過期
+  if (isTokenExpired(idToken)) {
+    showToast("登入憑證已過期，請先重新登入以同步雲端");
+    triggerGoogleLogin();
+    return false;
+  }
+
+  // 立即寫入當前 session 快取
   try {
     if (currentTripUuid && tripData) {
-      localStorage.setItem("cache_trip_" + currentTripUuid, JSON.stringify(tripData));
+      sessionStorage.setItem("session_trip_" + currentTripUuid, JSON.stringify(tripData));
     }
   } catch (e) {}
 
-  if (userRole === "admin") {
-    // 檢查登入憑證是否過期，若過期則提示並喚醒登入彈窗續期
-    if (isTokenExpired(idToken)) {
-      showToast("登入憑證已過期，請先登入管理員以同步雲端");
-      triggerGoogleLogin();
+  showToast("正在同步至雲端試算表...");
+  try {
+    const res = await fetch(`${GAS_API_URL}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/plain;charset=utf-8",
+      },
+      body: JSON.stringify({
+        action: "updateTripData",
+        token: idToken,
+        tripUuid: currentTripUuid,
+        data: tripData,
+      }),
+    });
+    const result = await res.json();
+    if (result.status === "success") {
+      showToast("雲端同步成功 ✓");
+      return true;
+    } else {
+      showToast("⚠️ " + (result.message || "雲端儲存失敗"));
       return false;
     }
-    showToast("正在同步至雲端試算表...");
-    try {
-      const res = await fetch(`${GAS_API_URL}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "text/plain;charset=utf-8",
-        },
-        body: JSON.stringify({
-          action: "updateTripData",
-          token: idToken,
-          tripUuid: currentTripUuid,
-          data: tripData,
-        }),
-      });
-      const result = await res.json();
-      if (result.status === "success") {
-        showToast("雲端同步成功 ✓");
-        return true;
-      } else {
-        showToast(result.message || "雲端儲存失敗");
-        return false;
-      }
-    } catch (e) {
-      showToast("已暫存於本機（離線保護）");
-      return false;
-    }
-  } else {
-    showToast("訪客模式：已暫存於本機");
-    return true;
+  } catch (e) {
+    showToast("⚠️ 連線異常，雲端同步失敗");
+    return false;
   }
 }
 
@@ -2383,8 +2369,9 @@ function setFont(size, btn) {
   document.body.classList.toggle("large", size === "large");
 }
 
-// === 通用互動對話框 (Modal) 管理函式 ===
+// === 通用互動對話框 (Modal) 管理函式（防重複點擊、捲動位置保存與非同步 await）===
 let modalConfirmHandler = null;
+let savedScrollY = 0;
 
 function openConfirmModal({
   title = "操作確認",
@@ -2393,17 +2380,28 @@ function openConfirmModal({
   danger = false,
   onConfirm,
 }) {
+  savedScrollY = window.scrollY || window.pageYOffset || 0;
   document.getElementById("modalTitle").innerText = title;
   document.getElementById("modalBody").innerHTML =
     `<p style="font-size:14px;line-height:1.6;">${message}</p>`;
   const confirmBtn = document.getElementById("modalConfirmBtn");
   confirmBtn.innerText = confirmText;
-  confirmBtn.className = `modal-btn modal-btn-confirm ${danger ? "modal-btn-danger" : ""
-    }`;
+  confirmBtn.disabled = false;
+  confirmBtn.className = `modal-btn modal-btn-confirm ${danger ? "modal-btn-danger" : ""}`;
 
-  modalConfirmHandler = () => {
-    closeModal();
-    if (typeof onConfirm === "function") onConfirm();
+  modalConfirmHandler = async () => {
+    confirmBtn.disabled = true;
+    confirmBtn.innerText = "處理中...";
+    try {
+      if (typeof onConfirm === "function") {
+        await onConfirm();
+      }
+      closeModal();
+    } catch (err) {
+      console.error("操作確認失敗:", err);
+      confirmBtn.disabled = false;
+      confirmBtn.innerText = confirmText;
+    }
   };
 
   confirmBtn.onclick = modalConfirmHandler;
@@ -2416,17 +2414,32 @@ function openFormModal({
   confirmText = "確定儲存",
   onConfirm,
 }) {
+  savedScrollY = window.scrollY || window.pageYOffset || 0;
   document.getElementById("modalTitle").innerText = title;
   document.getElementById("modalBody").innerHTML = bodyHtml;
   const confirmBtn = document.getElementById("modalConfirmBtn");
   confirmBtn.innerText = confirmText;
+  confirmBtn.disabled = false;
   confirmBtn.className = "modal-btn modal-btn-confirm";
 
-  modalConfirmHandler = () => {
+  modalConfirmHandler = async () => {
     if (typeof onConfirm === "function") {
-      const isValid = onConfirm();
-      if (isValid !== false) {
-        closeModal();
+      confirmBtn.disabled = true;
+      const originalText = confirmText;
+      confirmBtn.innerText = "儲存中...";
+      try {
+        const isValid = await onConfirm();
+        if (isValid !== false) {
+          closeModal();
+        } else {
+          confirmBtn.disabled = false;
+          confirmBtn.innerText = originalText;
+        }
+      } catch (err) {
+        console.error("儲存失敗:", err);
+        showToast("⚠️ 儲存時發生錯誤，請檢查內容");
+        confirmBtn.disabled = false;
+        confirmBtn.innerText = originalText;
       }
     } else {
       closeModal();
@@ -2440,6 +2453,14 @@ function openFormModal({
 function closeModal() {
   document.getElementById("commonModal").style.display = "none";
   modalConfirmHandler = null;
+  // 關閉時精確還原捲動高度，徹底杜絕彈窗關閉後視窗跳頂
+  if (savedScrollY !== undefined && savedScrollY >= 0) {
+    window.scrollTo({
+      top: savedScrollY,
+      left: 0,
+      behavior: "instant"
+    });
+  }
 }
 
 // =========================================================================
@@ -2448,12 +2469,12 @@ function closeModal() {
 function renderChecklist() {
   if (!tripData) return;
   const list = tripData.checklist || [];
-  const isAdmin = userRole === "admin";
+  const canEdit = canEditCurrentTrip();
 
   const doneCount = list.filter((i) => i.done).length;
   const percent = list.length ? Math.round((doneCount / list.length) * 100) : 0;
 
-  const addBtn = isAdmin
+  const addBtn = canEdit
     ? `<button class="glass-btn" style="background:var(--moss-gradient);color:#fff;width:100%;margin-top:16px;justify-content:center;" onclick="openAddChecklistModal()">＋ 新增必備項目</button>`
     : "";
 
@@ -2482,7 +2503,7 @@ function renderChecklist() {
       const groupItems = catGroups[cName];
       const gDone = groupItems.filter(g => g.item.done).length;
       const gRows = groupItems.map(({ item, originalIdx: i }) => {
-        const adminActions = isAdmin
+        const editActions = canEdit
           ? `<div class="item-actions">
                <button class="btn-mini" onclick="editChecklistItem(${i})">✏️ 修改</button>
                <button class="btn-mini btn-mini-danger" onclick="deleteChecklistItem(${i})">🗑️ 刪除</button>
@@ -2493,11 +2514,11 @@ function renderChecklist() {
         const safeLink = sanitizeUrl(item.link);
         return `
           <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid rgba(220, 226, 222, 0.45);transition:all 0.2s;">
-            <input type="checkbox" style="width:18px;height:18px;accent-color:var(--moss);margin-top:2px;cursor:pointer;border-radius:6px;flex-shrink:0;" ${item.done ? "checked" : ""} onclick="toggleChecklistItem(${i})">
+            <input type="checkbox" style="width:18px;height:18px;accent-color:var(--moss);margin-top:2px;cursor:${canEdit ? "pointer" : "default"};border-radius:6px;flex-shrink:0;" ${item.done ? "checked" : ""} ${canEdit ? `onclick="toggleChecklistItem(${i})"` : "disabled"}>
             <div style="flex:1;min-width:0;${item.done ? "text-decoration:line-through;opacity:0.45;" : ""}">
               <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
                 <div style="font-size:14px;font-weight:800;color:var(--moss);">${safeTitle}</div>
-                ${adminActions}
+                ${editActions}
               </div>
               ${safeNote ? `<div style="font-size:12px;color:#555;margin-top:3px;line-height:1.4;">${safeNote}</div>` : ""}
               ${safeLink && safeLink !== "#" ? `<a class="ext-link" href="${safeLink}" target="_blank" rel="noopener noreferrer">🔗 點擊查看/預約</a>` : ""}
@@ -2526,7 +2547,7 @@ function renderChecklist() {
   } else {
     // 單一類別卡片
     const rows = list.map((item, i) => {
-      const adminActions = isAdmin
+      const editActions = canEdit
         ? `<div class="item-actions">
              <button class="btn-mini" onclick="editChecklistItem(${i})">✏️ 修改</button>
              <button class="btn-mini btn-mini-danger" onclick="deleteChecklistItem(${i})">🗑️ 刪除</button>
@@ -2538,11 +2559,11 @@ function renderChecklist() {
       const safeLink = sanitizeUrl(item.link);
       return `
         <div style="display:flex;align-items:flex-start;gap:14px;padding:14px 0;border-bottom:1px solid rgba(220, 226, 222, 0.45);transition:all 0.2s;">
-          <input type="checkbox" style="width:20px;height:20px;accent-color:var(--moss);margin-top:2px;cursor:pointer;border-radius:6px;" ${item.done ? "checked" : ""} onclick="toggleChecklistItem(${i})">
+          <input type="checkbox" style="width:20px;height:20px;accent-color:var(--moss);margin-top:2px;cursor:${canEdit ? "pointer" : "default"};border-radius:6px;" ${item.done ? "checked" : ""} ${canEdit ? `onclick="toggleChecklistItem(${i})"` : "disabled"}>
           <div style="flex:1;${item.done ? "text-decoration:line-through;opacity:0.45;" : ""}">
             <div style="display:flex;justify-content:space-between;align-items:center;">
               <span style="font-size:10px;font-weight:800;color:#6B5A2A;background:var(--gold-soft);padding:3px 9px;border-radius:8px;letter-spacing:0.5px;border:1px solid rgba(197, 160, 89, 0.3);">${safeCat}</span>
-              ${adminActions}
+              ${editActions}
             </div>
             <div style="font-size:15px;font-weight:800;color:var(--moss);margin-top:5px;">${safeTitle}</div>
             ${safeNote ? `<div style="font-size:12px;color:#555;margin-top:3px;line-height:1.5;">${safeNote}</div>` : ""}
@@ -2584,12 +2605,21 @@ function renderChecklist() {
 }
 
 function toggleChecklistItem(index) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法變更勾選狀態");
+    return;
+  }
   tripData.checklist[index].done = !tripData.checklist[index].done;
   save();
   renderChecklist();
 }
 
 function editChecklistItem(index) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   const item = tripData.checklist[index];
   const formHtml = `
     <div class="ef-wrap">
@@ -2638,6 +2668,11 @@ function editChecklistItem(index) {
 }
 
 function deleteChecklistItem(index) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   const item = tripData.checklist[index];
   openConfirmModal({
     title: "刪除必備項目確認",
@@ -2653,6 +2688,11 @@ function deleteChecklistItem(index) {
 }
 
 function openAddChecklistModal() {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   const formHtml = `
     <div class="ef-wrap">
       <div class="ef-label">類別標籤（如：證件票券、電器裝備、隨身衣物）</div>
@@ -2709,11 +2749,11 @@ function openAddChecklistModal() {
 // =========================================================================
 function renderFlights() {
   if (!tripData) return;
-  const isAdmin = userRole === "admin";
+  const canEdit = canEditCurrentTrip();
 
   function fc(title, f, type) {
     if (!f) f = {};
-    const editBtn = isAdmin
+    const editBtn = canEdit
       ? `<button class="card-header-btn" onclick="openEditFlightModal('${type}')">✏️ 編輯</button>`
       : "";
 
@@ -2817,7 +2857,7 @@ function renderFlights() {
               hotelQuery
               : "";
 
-          const adminActions = isAdmin
+          const editActions = canEdit
             ? `<div class="item-actions">
                    <button class="btn-mini" onclick="openEditHotelModal(${idx})">✏️ 修改</button>
                    <button class="btn-mini btn-mini-danger" onclick="deleteHotel(${idx})">🗑️ 刪除</button>
@@ -2840,7 +2880,7 @@ function renderFlights() {
               <div class="hotel-card">
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;">
                   <div class="hotel-name">🏨 ${safeName}</div>
-                  ${adminActions}
+                  ${editActions}
                 </div>
                 <div class="hotel-meta">📍 ${safeAddr}</div>
                 <div class="hotel-meta">${safeDateLine}</div>
@@ -2874,7 +2914,7 @@ function renderFlights() {
     <div class="card" style="margin-bottom: 24px;">
       <div class="card-header">
         <span class="card-title">🏨 飯店住宿清單</span>
-        ${isAdmin ? `<button class="card-header-btn" onclick="openAddHotelModal()">＋ 新增住宿</button>` : ""}
+        ${canEdit ? `<button class="card-header-btn" onclick="openAddHotelModal()">＋ 新增住宿</button>` : ""}
       </div>
       <div class="hotels-container-grid">
         ${hotelCards}
@@ -2885,6 +2925,11 @@ function renderFlights() {
 }
 
 function openEditFlightModal(type) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   if (!tripData.flights) tripData.flights = { out: {}, in: {} };
   const f = tripData.flights[type] || {};
   const title = type === "out" ? "去程航班" : "回程航班";
@@ -2964,6 +3009,11 @@ function autoSyncNights(inId, outId, nightsId) {
 }
 
 function openAddHotelModal() {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   const formHtml = `
     <div class="ef-wrap">
       <div class="ef-label">飯店名稱 <span style="color:var(--red);">*</span></div>
@@ -3039,6 +3089,11 @@ function openAddHotelModal() {
 }
 
 function openEditHotelModal(index) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   const hotels =
     tripData.hotels ||
     (tripData.hotel && tripData.hotel.name ? [tripData.hotel] : []);
@@ -3131,6 +3186,11 @@ function openEditHotelModal(index) {
 }
 
 function deleteHotel(index) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   const hotels =
     tripData.hotels ||
     (tripData.hotel && tripData.hotel.name ? [tripData.hotel] : []);
@@ -3202,7 +3262,7 @@ function renderItinerary() {
   }
   if (selectedDay < 0) selectedDay = 0;
 
-  const isAdmin = userRole === "admin";
+  const canEdit = canEditCurrentTrip();
 
   // 天數切換按鈕列表
   const dayBtns = tripData.days
@@ -3217,7 +3277,7 @@ function renderItinerary() {
     })
     .join("");
 
-  const addDayBtn = isAdmin
+  const addDayBtn = canEdit
     ? `<button class="day-add-btn" onclick="openAddDayModal()">＋ 新增天數</button>`
     : "";
 
@@ -3247,7 +3307,7 @@ function renderItinerary() {
     }
   });
 
-  const dayActions = isAdmin
+  const dayActions = canEdit
     ? `<div class="item-actions">
          ${hasSkippedDays ? `<button class="btn-mini" style="background:var(--gold-soft);color:#6B5A2A;border-color:var(--gold);" onclick="resequenceAllDays()" title="偵測到天數跳號，點擊自動連續編號">⚡ 連續重編天數</button>` : ""}
          <button class="btn-mini" onclick="openEditDayTitleModal(${selectedDay})">✏️ 編輯主題</button>
@@ -3312,7 +3372,7 @@ function renderItinerary() {
         ? "https://www.google.com/maps/search/?api=1&query=" + mapQuery
         : "";
 
-      const adminActions = isAdmin
+      const editActions = canEdit
         ? `<div class="item-actions">
              <button class="btn-mini" onclick="openEditItineraryModal(${selectedDay}, ${j})">✏️ 修改</button>
              <button class="btn-mini btn-mini-danger" onclick="deleteItineraryItem(${selectedDay}, ${j})">🗑️ 刪除</button>
@@ -3331,7 +3391,7 @@ function renderItinerary() {
           <div class="tl-content">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">
               <div class="tl-place" style="flex:1;min-width:140px;word-break:break-word;">${safePlace}</div>
-              ${adminActions}
+              ${editActions}
             </div>
             ${safeDesc ? `<div class="tl-desc">${safeDesc}</div>` : ""}
             ${safeImgUrl && safeImgUrl !== "#"
@@ -3354,7 +3414,7 @@ function renderItinerary() {
     })
     .join("");
 
-  const addBtn = isAdmin
+  const addBtn = canEdit
     ? `<button class="glass-btn" style="background:var(--moss-gradient);color:#fff;width:100%;margin-top:16px;justify-content:center;" onclick="openAddItineraryModal(${selectedDay})">＋ 新增景點</button>`
     : "";
 
@@ -3382,6 +3442,11 @@ function renderItinerary() {
 
 // 智慧一鍵連續重編所有天數序號 (如 Day 1, Day 2, Day 4, Day 8 重新順序排列為 Day 1 ~ Day 4)
 function resequenceAllDays() {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   if (!tripData || !Array.isArray(tripData.days) || tripData.days.length <= 1) {
     showToast("目前天數無需重整序號");
     return;
@@ -3584,6 +3649,11 @@ window.onEditDayPickerChange = function (newDateStr) {
 
 // 新增行程天數對話框 (全自動計算日期與星期，免手動輸入)
 function openAddDayModal() {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   if (!tripData.days) tripData.days = [];
   const nextDayNum = Math.min(getSuggestedNextDayNum(tripData.days), 14);
   const nextDayId = `Day ${nextDayNum}`;
@@ -3655,6 +3725,11 @@ function openAddDayModal() {
 
 // 刪除指定天數
 function deleteCurrentDay(dayIdx) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   const day = tripData.days[dayIdx];
   if (!day) return;
 
@@ -3676,6 +3751,11 @@ function deleteCurrentDay(dayIdx) {
 }
 
 function openEditDayTitleModal(dayIdx) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   const day = tripData.days[dayIdx];
   
   // 優先從現有日期文字精準反推 ISO 日期，若無文字再以出發日期推算
@@ -3780,6 +3860,11 @@ function openEditDayTitleModal(dayIdx) {
 }
 
 function openEditItineraryModal(dayIdx, itemIdx) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   const item = tripData.days[dayIdx].items[itemIdx];
   const formHtml = `
     <div class="ef-wrap">
@@ -3924,6 +4009,11 @@ function compressImage(file, maxWidth = 1600, quality = 0.82) {
 }
 
 function removeModalImage(imgUrlInputId, previewDivId) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   document.getElementById(imgUrlInputId).value = "";
   document.getElementById(previewDivId).innerHTML =
     "<span style='font-size:12px;color:#888;'>已標記移除照片，點擊確認後生效</span>";
@@ -3934,8 +4024,12 @@ async function uploadImageInModal(input, imgUrlInputId, previewDivId) {
   if (!file) return;
 
   // 權限與憑證檢查
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法上傳照片");
+    return;
+  }
   if (isTokenExpired(idToken)) {
-    showToast("登入憑證已逾期，請先登入管理員以授權上傳照片");
+    showToast("登入憑證已逾期，請先登入帳號以授權上傳照片");
     triggerGoogleLogin();
     return;
   }
@@ -3993,6 +4087,11 @@ async function uploadImageInModal(input, imgUrlInputId, previewDivId) {
 }
 
 function deleteItineraryItem(dayIdx, itemIdx) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   const item = tripData.days[dayIdx].items[itemIdx];
   openConfirmModal({
     title: "刪除景點確認",
@@ -4009,6 +4108,11 @@ function deleteItineraryItem(dayIdx, itemIdx) {
 
 // 手動調整景點前後順序 (上移 / 下移)
 function moveItineraryItem(dayIdx, itemIdx, offset) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   const day = tripData && tripData.days && tripData.days[dayIdx];
   if (!day || !Array.isArray(day.items)) return;
   const targetIdx = itemIdx + offset;
@@ -4023,6 +4127,11 @@ function moveItineraryItem(dayIdx, itemIdx, offset) {
 
 // 依時段自動排序當日所有景點
 function autoSortCurrentDayItems(dayIdx) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   const day = tripData && tripData.days && tripData.days[dayIdx];
   if (!day || !Array.isArray(day.items) || day.items.length <= 1) {
     showToast("景點數量無需排序");
@@ -4035,6 +4144,11 @@ function autoSortCurrentDayItems(dayIdx) {
 }
 
 function openAddItineraryModal(dayIdx) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   const currentDay = tripData.days[dayIdx];
   const dayTitle = currentDay ? currentDay.id : `Day ${dayIdx + 1}`;
 
@@ -4168,7 +4282,7 @@ function renderFood() {
   // 安全去重顯示：僅在畫面渲染時智慧過濾重複店家，絕不自動觸發全量 save() 覆蓋雲端行程
   const list = deduplicateFoodList(tripData.food);
   tripData.food = list;
-  const isAdmin = userRole === "admin";
+  const canEdit = canEditCurrentTrip();
 
   const totalCount = list.length;
   const mustCount = list.filter((it) => it.must).length;
@@ -4222,7 +4336,7 @@ function renderFood() {
 
   const itemsHtml = filteredItems
     .map(({ item, originalIndex: i }) => {
-      const adminActions = isAdmin
+      const editActions = canEdit
         ? `<div class="item-actions">
              <button class="btn-mini" onclick="openEditFoodModal(${i})">✏️ 修改</button>
              <button class="btn-mini btn-mini-danger" onclick="deleteFoodItem(${i})">🗑️ 刪除</button>
@@ -4249,6 +4363,7 @@ function renderFood() {
             <span class="food-name ${item.done ? "done-text" : ""}">
               ${safeName}
             </span>
+            ${editActions}
           </div>
 
           <!-- 第二層：標籤與操作按鈕分流列 (左側必吃/地區標籤，右側想吃按鈕) -->
@@ -4264,7 +4379,7 @@ function renderFood() {
         }
             </div>
             <div class="food-btns-wrap">
-              <button onclick="toggleFoodDone(${i})" class="food-status-btn ${item.done ? "done" : ""}">
+              <button onclick="${canEdit ? `toggleFoodDone(${i})` : "showToast('唯讀模式無法修改狀態')"}" class="food-status-btn ${item.done ? "done" : ""}" ${!canEdit ? "style='opacity:0.8;cursor:default;'" : ""}>
                 ${item.done ? "已品嚐 ✓" : "想吃"}
               </button>
             </div>
@@ -4289,7 +4404,7 @@ function renderFood() {
     })
     .join("");
 
-  const addBtn = isAdmin
+  const addBtn = canEdit
     ? `<button class="glass-btn" style="background:var(--moss);color:#fff;width:100%;margin-top:16px;justify-content:center;" onclick="openAddFoodModal()">＋ 新增美食</button>`
     : "";
 
@@ -4320,12 +4435,21 @@ function renderFood() {
 }
 
 function toggleFoodDone(index) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改品嚐狀態");
+    return;
+  }
   tripData.food[index].done = !tripData.food[index].done;
   save();
   renderFood();
 }
 
 function openEditFoodModal(index) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   const item = tripData.food[index];
   const formHtml = `
     <div class="ef-wrap">
@@ -4395,6 +4519,11 @@ function openEditFoodModal(index) {
 }
 
 function deleteFoodItem(index) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   const item = tripData.food[index];
   openConfirmModal({
     title: "刪除美食確認",
@@ -4410,6 +4539,11 @@ function deleteFoodItem(index) {
 }
 
 function openAddFoodModal() {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   const formHtml = `
     <div class="ef-wrap">
       <div class="ef-label">美食圖示 (Emoji)</div>
@@ -4520,7 +4654,7 @@ function setShoppingFilter(filterId) {
 function renderShopping() {
   if (!tripData) return;
   const list = tripData.shopping || [];
-  const isAdmin = userRole === "admin";
+  const canEdit = canEditCurrentTrip();
 
   const totalCount = list.length;
   const doneCount = list.filter((it) => it.done).length;
@@ -4585,7 +4719,7 @@ function renderShopping() {
       const safeQty = escapeHtml(item.qty || "1");
       const safeNote = escapeHtml(item.note || "");
 
-      const adminActions = isAdmin
+      const editActions = canEdit
         ? `<div class="item-actions">
              <button class="btn-mini" onclick="openEditShoppingModal(${i})">✏️ 修改</button>
              <button class="btn-mini btn-mini-danger" onclick="deleteShoppingItem(${i})">🗑️ 刪除</button>
@@ -4599,12 +4733,12 @@ function renderShopping() {
           <!-- 頂部列：左側核取方塊 + 委託人膠囊 + 數量，右側想買按鈕 (單行彈性排版，永不折行重疊) -->
           <div class="shopping-header-row">
             <div class="shopping-header-left">
-              <input type="checkbox" class="shopping-check" ${item.done ? "checked" : ""} onclick="toggleShoppingDone(${i})">
+              <input type="checkbox" class="shopping-check" ${item.done ? "checked" : ""} ${canEdit ? `onclick="toggleShoppingDone(${i})"` : "disabled"}>
               <span class="buyer-badge">👤 ${safeBuyer}</span>
               <span class="qty-badge">🔢 ${safeQty}</span>
               ${safePrice ? `<span class="price-badge">💰 ${safePrice}</span>` : ""}
             </div>
-            <button onclick="toggleShoppingDone(${i})" class="shopping-status-btn ${item.done ? "done" : ""}">
+            <button onclick="${canEdit ? `toggleShoppingDone(${i})` : "showToast('唯讀模式無法修改狀態')"}" class="shopping-status-btn ${item.done ? "done" : ""}" ${!canEdit ? "style='opacity:0.8;cursor:default;'" : ""}>
               ${item.done ? "已買齊 ✓" : "想買"}
             </button>
           </div>
@@ -4646,14 +4780,14 @@ function renderShopping() {
             </div>
           </div>
 
-          <!-- 底部列：若有管理權限，管理微型按鈕統一沉底靠右，絕不飄在上方重疊折行 -->
-          ${adminActions ? `<div class="shopping-footer-row">${adminActions}</div>` : ""}
+          <!-- 底部列：若有編輯權限，微型按鈕統一沉底靠右 -->
+          ${editActions ? `<div class="shopping-footer-row">${editActions}</div>` : ""}
         </div>
       `;
     })
     .join("");
 
-  const addBtn = isAdmin
+  const addBtn = canEdit
     ? `<button class="glass-btn" style="background:var(--moss-gradient);color:#fff;width:100%;margin-top:16px;justify-content:center;" onclick="openAddShoppingModal()">＋ 新增代購商品</button>`
     : "";
 
@@ -4684,6 +4818,10 @@ function renderShopping() {
 }
 
 function toggleShoppingDone(index) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改代購狀態");
+    return;
+  }
   if (!tripData.shopping || !tripData.shopping[index]) return;
   tripData.shopping[index].done = !tripData.shopping[index].done;
   save();
@@ -4691,6 +4829,11 @@ function toggleShoppingDone(index) {
 }
 
 function openAddShoppingModal() {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   const buyerTags = getBuyerTagsHtml("addShoppingBuyer");
   const formHtml = `
     <div class="ef-wrap">
@@ -4775,6 +4918,11 @@ function openAddShoppingModal() {
 }
 
 function openEditShoppingModal(index) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   const item = tripData.shopping[index];
   const buyerTags = getBuyerTagsHtml("editShoppingBuyer");
   const formHtml = `
@@ -4853,6 +5001,11 @@ function openEditShoppingModal(index) {
 }
 
 function deleteShoppingItem(index) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   const item = tripData.shopping[index];
   openConfirmModal({
     title: "刪除代購商品確認",
@@ -5258,24 +5411,35 @@ function openEditTripMetaModal(uuid) {
           trip.startDate = startDate;
           trip.endDate = endDate;
           trip.duration = duration;
-          trip.password = password;
+          trip.hasPassword = Boolean(password);
+          delete trip.password;
+          delete trip.canEdit;
           trip.theme = theme;
           trip.allowed_users = allowedUsers;
 
-          // 同步更新本地快取
+          // 同步更新安全快取（嚴禁將密碼或 canEdit 寫入 localStorage）
           try {
-            const c = localStorage.getItem("cache_trip_" + uuid);
+            const c = sessionStorage.getItem("session_trip_" + uuid);
             if (c) {
               const d = JSON.parse(c);
               d.name = name;
               d.startDate = startDate;
               d.endDate = endDate;
               d.duration = duration;
-              d.password = password;
               d.theme = theme;
-              localStorage.setItem("cache_trip_" + uuid, JSON.stringify(d));
+              delete d.password;
+              delete d.canEdit;
+              sessionStorage.setItem("session_trip_" + uuid, JSON.stringify(d));
             }
-            localStorage.setItem("cache_tripsList", JSON.stringify(tripsList));
+            localStorage.removeItem("cache_trip_" + uuid);
+            localStorage.setItem("cache_tripsList", JSON.stringify(tripsList.map((t) => ({
+              uuid: t.uuid,
+              name: t.name,
+              hasPassword: Boolean(t.hasPassword),
+              startDate: t.startDate || "",
+              endDate: t.endDate || "",
+              duration: t.duration || ""
+            }))));
           } catch(e) {}
 
           // 若修改的是當前行程，同步更新記憶體資料並即時變換主題色
@@ -5338,7 +5502,7 @@ function renderTransport() {
   if (!tripData) return;
   ensureTransportData();
   const transport = tripData.transport;
-  const isAdmin = userRole === "admin";
+  const canEdit = canEditCurrentTrip();
   const routes = transport.routes || [];
   const passes = transport.passes || [];
   const maps = transport.maps || [];
@@ -5375,7 +5539,7 @@ function renderTransport() {
     const safeTitle = escapeHtml(m.title || "主要交通路線圖");
     const safeNote = escapeHtml(m.note || "");
     const safeUrl = sanitizeUrl(m.url);
-    const adminActions = isAdmin
+    const editActions = canEdit
       ? `
         <div class="item-actions">
           <button class="btn-mini" style="background:var(--moss);color:#FFF;padding:5px 12px;" onclick="openAddRouteMapModal()">＋ 新增第 2 張地圖</button>
@@ -5391,7 +5555,7 @@ function renderTransport() {
           <span class="card-title">🗺️ ${safeTitle}</span>
           ${safeNote ? `<div style="font-size:12px;color:var(--gold);font-weight:700;margin-top:2px;">${safeNote}</div>` : ""}
         </div>
-        ${adminActions}
+        ${editActions}
       </div>
       <div class="route-map-preview-wrap" onclick="openMapLightbox(0)">
         <img src="${safeUrl}" class="route-map-preview" referrerpolicy="no-referrer" loading="lazy" onerror="handleImgError(this)" alt="${safeTitle}">
@@ -5399,7 +5563,7 @@ function renderTransport() {
       </div>
     `;
   } else if (maps.length > 1) {
-    const adminHeaderAction = isAdmin
+    const editHeaderAction = canEdit
       ? `<button class="btn-mini" style="background:var(--moss);color:#FFF;padding:5px 12px;" onclick="openAddRouteMapModal()">＋ 新增路線圖</button>`
       : "";
 
@@ -5409,14 +5573,14 @@ function renderTransport() {
           <span class="card-title">🗺️ 旅程交通地圖相簿</span>
           <div style="font-size:12px;color:var(--gold);font-weight:700;margin-top:2px;">已收藏 ${maps.length} 張交通路線圖 (點擊查看高清大圖與切換)</div>
         </div>
-        ${adminHeaderAction}
+        ${editHeaderAction}
       </div>
       <div class="route-maps-grid">
         ${maps.map((m, idx) => {
           const safeTitle = escapeHtml(m.title || `路線圖 ${idx + 1}`);
           const safeNote = escapeHtml(m.note || "");
           const safeUrl = sanitizeUrl(m.url);
-          const adminMapActions = isAdmin
+          const editMapActions = canEdit
             ? `
               <div class="item-actions" onclick="event.stopPropagation()">
                 <button class="btn-mini" onclick="openEditRouteMapModal(${idx})">✏️ 編輯</button>
@@ -5434,7 +5598,7 @@ function renderTransport() {
               <div class="route-map-info-body">
                 <div class="route-map-title-row">
                   <div class="route-map-item-title">🗺️ ${safeTitle}</div>
-                  ${adminMapActions}
+                  ${editMapActions}
                 </div>
                 ${safeNote ? `<div class="route-map-item-note">📝 ${safeNote}</div>` : ""}
               </div>
@@ -5445,7 +5609,7 @@ function renderTransport() {
     `;
   } else {
     // 尚未上傳任何地圖時的引導介面
-    const adminUploadBtn = isAdmin
+    const editUploadBtn = canEdit
       ? `<button class="glass-btn" style="background:var(--moss-gradient);color:#fff;display:inline-flex;" onclick="openAddRouteMapModal()">＋ 上傳第一張地鐵/JR路線圖</button>`
       : "";
 
@@ -5456,7 +5620,7 @@ function renderTransport() {
       <div style="text-align:center;padding:36px 16px;color:#888;border:1.5px dashed var(--mist);border-radius:18px;margin-top:14px;background:rgba(255,255,255,0.4);">
         <p style="font-size:13px;margin-bottom:8px;font-weight:700;color:var(--moss);">目前尚未上傳交通路線圖</p>
         <p style="font-size:12px;color:#888;margin-bottom:12px;">可上傳地下鐵、JR 鐵路、景點觀光巴士等高清路線地圖，方便全體團員離線與隨時放大檢視！</p>
-        ${adminUploadBtn}
+        ${editUploadBtn}
       </div>
     `;
   }
@@ -5485,7 +5649,7 @@ function renderTransport() {
         }
       }
 
-      const adminPassActions = isAdmin
+      const editPassActions = canEdit
         ? `
           <div style="display:inline-flex;align-items:center;gap:4px;margin-left:8px;">
             <button class="btn-mini" style="background:rgba(255,255,255,0.25);color:#fff;border-color:rgba(255,255,255,0.4);padding:2px 7px;font-size:11px;" onclick="event.stopPropagation();openEditTransitPassModal(${idx})">✏️ 修改</button>
@@ -5495,11 +5659,11 @@ function renderTransport() {
         : "";
 
       return `
-      <div style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);padding:6px 12px;border-radius:12px;display:inline-flex;align-items:center;margin-top:6px;margin-right:6px;flex-wrap:wrap;max-width:100%;${isAdmin ? 'cursor:pointer;' : ''}" ${isAdmin ? `onclick="openEditTransitPassModal(${idx})"` : ""}>
+      <div style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);padding:6px 12px;border-radius:12px;display:inline-flex;align-items:center;margin-top:6px;margin-right:6px;flex-wrap:wrap;max-width:100%;${canEdit ? 'cursor:pointer;' : ''}" ${canEdit ? `onclick="openEditTransitPassModal(${idx})"` : ""}>
         <span style="font-weight:800;font-size:12px;">🎟️ ${safePassName}</span>
         ${safeCost ? `<span style="font-size:11px;margin-left:6px;opacity:0.95;font-weight:700;">(${safeCost} ${safeCurr})</span>` : ""}
         ${noteContent}
-        ${adminPassActions}
+        ${editPassActions}
       </div>
     `;
     })
@@ -5514,7 +5678,7 @@ function renderTransport() {
             💰 預估交通總花費/人：${totalCostYen ? `¥${totalCostYen.toLocaleString()}` : ""}${totalCostYen && totalCostNtd ? " ＋ " : ""}${totalCostNtd ? `NT$${totalCostNtd.toLocaleString()}` : ""}${!totalCostYen && !totalCostNtd ? "¥0" : ""}
           </div>
         </div>
-        ${isAdmin ? `<button class="btn-mini" style="background:rgba(255,255,255,0.25);color:#fff;" onclick="openAddTransitPassModal()">＋ 新增周遊券</button>` : ""}
+        ${canEdit ? `<button class="btn-mini" style="background:rgba(255,255,255,0.25);color:#fff;" onclick="openAddTransitPassModal()">＋ 新增周遊券</button>` : ""}
       </div>
       ${passes.length ? `<div style="margin-top:8px;display:flex;flex-wrap:wrap;">${passesHtml}</div>` : ""}
     </div>
@@ -5552,7 +5716,7 @@ function renderTransport() {
             const safeNote = escapeHtml(item.note || "");
             const origIdx = item.originalIdx;
 
-            const adminActions = isAdmin
+            const editActions = canEdit
               ? `
               <div class="item-actions">
                 <button class="btn-mini" onclick="openEditTransportModal(${origIdx})">✏️ 修改</button>
@@ -5570,7 +5734,7 @@ function renderTransport() {
                   </div>
                   <div style="display:flex;align-items:center;gap:6px;">
                     ${safeTime ? `<span class="transit-time-tag">🕒 ${safeTime}</span>` : ""}
-                    ${adminActions}
+                    ${editActions}
                   </div>
                 </div>
                 <div class="transit-tags-row">
@@ -5596,7 +5760,7 @@ function renderTransport() {
       .join("")
     : `<div class="card" style="text-align:center;padding:36px 16px;"><p style="color:#888;font-size:13px;">目前尚未新增每日乘車行程</p></div>`;
 
-  const addRouteBtn = isAdmin
+  const addRouteBtn = canEdit
     ? `
     <button class="glass-btn" style="background:var(--moss-gradient);color:#fff;width:100%;margin-top:16px;justify-content:center;" onclick="openAddTransportModal()">＋ 新增乘車行程</button>
   `
@@ -5850,6 +6014,11 @@ window.addEventListener("keydown", function (e) {
 
 // 新增交通路線圖對話框
 function openAddRouteMapModal() {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   ensureTransportData();
   const formHtml = `
     <div class="ef-wrap">
@@ -5906,6 +6075,11 @@ function openAddRouteMapModal() {
 
 // 編輯指定交通路線圖對話框
 function openEditRouteMapModal(idx) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   ensureTransportData();
   const map = tripData.transport.maps[idx];
   if (!map) return;
@@ -5970,6 +6144,11 @@ function openEditRouteMapModal(idx) {
 
 // 刪除指定路線圖
 function deleteRouteMap(idx) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   ensureTransportData();
   const map = tripData.transport.maps[idx];
   if (!map) return;
@@ -6001,6 +6180,11 @@ function openUploadRouteMapModal() {
 
 // 新增乘車行程對話框
 function openAddTransportModal() {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   if (!tripData.transport) {
     tripData.transport = { mapImgUrl: "", mapNote: "", passes: [], routes: [] };
   }
@@ -6132,6 +6316,11 @@ function openAddTransportModal() {
 
 // 編輯乘車行程對話框
 function openEditTransportModal(idx) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   const item = tripData.transport.routes[idx];
   if (!item) return;
 
@@ -6224,6 +6413,11 @@ function openEditTransportModal(idx) {
 
 // 刪除乘車行程
 function deleteTransportItem(idx) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   const item = tripData.transport.routes[idx];
   openConfirmModal({
     title: "刪除乘車行程確認",
@@ -6240,6 +6434,11 @@ function deleteTransportItem(idx) {
 
 // 新增周遊券對話框
 function openAddTransitPassModal() {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   if (!tripData.transport) {
     tripData.transport = { mapImgUrl: "", mapNote: "", passes: [], routes: [] };
   }
@@ -6298,6 +6497,11 @@ function openAddTransitPassModal() {
 
 // 編輯周遊券對話框
 function openEditTransitPassModal(idx) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   if (!tripData.transport || !tripData.transport.passes || !tripData.transport.passes[idx]) return;
   const pass = tripData.transport.passes[idx];
 
@@ -6356,6 +6560,11 @@ function openEditTransitPassModal(idx) {
 }
 
 function deleteTransitPass(idx) {
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
   const pass = tripData.transport.passes[idx];
   openConfirmModal({
     title: "刪除周遊券確認",

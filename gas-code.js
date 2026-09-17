@@ -177,8 +177,8 @@ function getUserAccess(email) {
       duration = calcTripDurationInGas(startDate, endDate);
     }
 
-    // 如果是管理員，可以看到所有行程
-    // 如果是一般人，檢查其 Email 是否在 allowedUsersStr 清單內，或是公開行程
+    // 如果是管理員，可以看到所有行程並可編輯
+    // 如果是一般人，檢查其 Email 是否在 allowedUsersStr 清單內
     if (isAdmin) {
       allowedTrips.push({ 
         uuid: uuid, 
@@ -186,23 +186,27 @@ function getUserAccess(email) {
         sheet_id: sheetId, 
         folder_id: folderId, 
         allowed_users: allowedUsersStr, 
-        password: password,
+        hasPassword: Boolean(password),
+        canEdit: true,
         startDate: startDate,
         endDate: endDate,
         duration: duration
       });
     } else {
       const allowedEmails = allowedUsersStr.toLowerCase().split(",").map(e => normalizeEmail(e));
+      const isMember = Boolean(cleanEmail && allowedEmails.includes(cleanEmail));
       const isPublic = !allowedUsersStr || allowedEmails.includes("*") || allowedEmails.includes("public");
-      if (isPublic || (cleanEmail && allowedEmails.includes(cleanEmail))) {
+      // 只要是公開行程或授權成員均可看見卡片
+      if (isPublic || isMember) {
         allowedTrips.push({ 
           uuid: uuid, 
           name: name, 
           hasPassword: Boolean(password),
+          canEdit: isMember,
           startDate: startDate,
           endDate: endDate,
           duration: duration
-        }); // 資安防禦：訪客模式嚴禁回傳明文 password，僅回傳 hasPassword 狀態供前端介面呈現
+        }); // 資安防禦：訪客模式與手冊清單嚴禁回傳明文 password，僅回傳 hasPassword 狀態供前端介面呈現
       }
     }
   }
@@ -257,8 +261,8 @@ function doGet(e) {
         publicTrips.push({
           uuid: uuid,
           name: name,
-          hasPassword: !!password,
-          password: password,
+          hasPassword: Boolean(password),
+          canEdit: false,
           startDate: startDate,
           endDate: endDate,
           duration: duration
@@ -307,32 +311,26 @@ function doGet(e) {
                            .setMimeType(ContentService.MimeType.JSON);
     }
     
-    // 權限檢查：若非管理員，檢查是否允許存取
-    const allowedEmails = allowedUsersStr.toLowerCase().split(",").map(s => s.trim());
-    const isPublic = !allowedUsersStr || allowedEmails.includes("*") || allowedEmails.includes("public");
-    const isMember = email && allowedEmails.includes(email);
+    // 權限檢查：閱讀手冊門禁判定（PIN 與成員名單解耦）
+    const allowedList = (allowedUsersStr || "").toLowerCase().split(",").map(s => normalizeEmail(s));
+    const isMember = Boolean(email && allowedList.includes(normalizeEmail(email)));
     const isAdmin = access.role === "admin";
-    
-    // 若該行程為私人專屬且目前訪客/使用者無權限
-    if (!isPublic && !isMember && !isAdmin) {
-      return ContentService.createTextOutput(JSON.stringify({ 
-        status: "error", 
-        message: "此行程為私人專屬手冊，請先登入已被授權的 Google 帳號。" 
-      })).setMimeType(ContentService.MimeType.JSON);
-    }
+    const canEdit = Boolean(isAdmin || isMember);
 
-    // 關鍵資安門禁：若行程設有密碼且非管理員，後端嚴格校驗密碼，未通過絕不發送手冊數據！
-    if (tripPassword && !isAdmin) {
-      const clientPwd = String(e.parameter.tripPassword || e.parameter.password || "").trim();
-      if (clientPwd !== tripPassword) {
-        return ContentService.createTextOutput(JSON.stringify({
-          status: "locked",
-          uuid: tripUuid,
-          name: tripName,
-          hasPassword: true,
-          message: "此旅程設有專屬密碼保護，請輸入密碼以解鎖手冊內容。"
-        })).setMimeType(ContentService.MimeType.JSON);
-      }
+    const clientPin = String(e.parameter.tripPassword || e.parameter.password || "").trim();
+    const hasValidPin = Boolean(tripPassword && clientPin === tripPassword);
+    const isPublicWithoutPin = !tripPassword;
+
+    // 門禁校驗：管理員、成員、正確 PIN、或未設 PIN 的行程放行閱讀手冊
+    if (!isAdmin && !isMember && !hasValidPin && !isPublicWithoutPin) {
+      return ContentService.createTextOutput(JSON.stringify({
+        status: "locked",
+        uuid: tripUuid,
+        name: tripName,
+        hasPassword: true,
+        canEdit: false,
+        message: "此旅程設有專屬密碼保護，請輸入密碼以解鎖手冊內容。"
+      })).setMimeType(ContentService.MimeType.JSON);
     }
     
     // 讀取該旅遊專屬試算表的資料
@@ -346,8 +344,19 @@ function doGet(e) {
       if (!data.duration && data.startDate && data.endDate) {
         data.duration = calcTripDurationInGas(data.startDate, data.endDate);
       }
-      return ContentService.createTextOutput(JSON.stringify({ status: "success", role: access.role, data: data }))
-                           .setMimeType(ContentService.MimeType.JSON);
+
+      // 資安強化：一般手冊資料一律清除 password 及敏感試算表 ID，嚴禁外洩 PIN
+      delete data.password;
+      delete data.allowed_users;
+      delete data.sheet_id;
+      delete data.folder_id;
+
+      return ContentService.createTextOutput(JSON.stringify({ 
+        status: "success", 
+        role: access.role, 
+        canEdit: canEdit,
+        data: data 
+      })).setMimeType(ContentService.MimeType.JSON);
     } catch (err) {
       return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "讀取資料庫失敗: " + err.message }))
                            .setMimeType(ContentService.MimeType.JSON);
@@ -397,8 +406,57 @@ function doPost(e) {
   }
   
   const masterSpreadsheet = SpreadsheetApp.openById(MASTER_SHEET_ID);
+  const tripSheet = masterSpreadsheet.getSheetByName("Trips");
+  const tripRows = tripSheet.getDataRange().getValues();
+
+  // 1. 儲存/更新行程詳細旅遊資料（允許 admin 或被該行程授權的 member 編輯手冊內容）
+  if (action === "updateTripData") {
+    const tripUuid = postData.tripUuid;
+    const data = postData.data;
+    
+    // 查詢該行程的試算表 ID 與授權成員清單
+    let targetSheetId = "";
+    let allowedUsersStr = "";
+    for (let i = 1; i < tripRows.length; i++) {
+      if (tripRows[i][0] === tripUuid) {
+        targetSheetId = tripRows[i][2];
+        allowedUsersStr = tripRows[i][4] || "";
+        break;
+      }
+    }
+    
+    if (!targetSheetId) {
+      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "找不到該行程試算表" }))
+                           .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    const isAdmin = access.role === "admin";
+    const allowedList = (allowedUsersStr || "").toLowerCase().split(",").map(s => normalizeEmail(s));
+    const isMember = Boolean(email && allowedList.includes(normalizeEmail(email)));
+
+    if (!isAdmin && !isMember) {
+      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "您未被授權編輯此行程手冊" }))
+                           .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (isAdmin) {
+      saveTripDetails(targetSheetId, data);
+    } else {
+      // 授權成員專屬儲存：完全不觸碰 Info/Meta 分頁，僅清洗並更新七類內容工作表
+      saveTripContentOnly(targetSheetId, data);
+    }
+
+    return ContentService.createTextOutput(JSON.stringify({ status: "success", message: "Cloud sync success" }))
+                         .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  // 門禁保護：除 updateTripData 外，所有管理操作 (createTrip, updateTripMeta, uploadImage) 嚴格僅限系統管理員！
+  if (access.role !== "admin") {
+    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "此操作僅限系統管理員 (Admin privileges required)" }))
+                         .setMimeType(ContentService.MimeType.JSON);
+  }
   
-  // 1. 建立新行程與初始化 (支援自動建立 Google 雲端硬碟資料夾與試算表)
+  // 2. 建立新行程與初始化 (支援自動建立 Google 雲端硬碟資料夾與試算表)
   if (action === "createTrip") {
     const uuid = postData.uuid;
     const name = postData.name;
@@ -472,31 +530,7 @@ function doPost(e) {
     }
   }
   
-  // 2. 儲存/更新行程詳細旅遊資料
-  if (action === "updateTripData") {
-    const tripUuid = postData.tripUuid;
-    const data = postData.data;
-    
-    // 找出對應的 Sheet ID
-    const tripSheet = masterSpreadsheet.getSheetByName("Trips");
-    const tripRows = tripSheet.getDataRange().getValues();
-    let targetSheetId = "";
-    for (let i = 1; i < tripRows.length; i++) {
-      if (tripRows[i][0] === tripUuid) {
-        targetSheetId = tripRows[i][2];
-        break;
-      }
-    }
-    
-    if (targetSheetId) {
-      saveTripDetails(targetSheetId, data);
-      return ContentService.createTextOutput(JSON.stringify({ status: "success", message: "Cloud sync success" }))
-                           .setMimeType(ContentService.MimeType.JSON);
-    } else {
-      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Trip not found" }))
-                           .setMimeType(ContentService.MimeType.JSON);
-    }
-  }
+
 
   // 3. 修改行程基本設定（名稱、出發/結束日期、天數、主題色彩、授權名單）
   if (action === "updateTripMeta") {
@@ -1286,6 +1320,195 @@ function saveTripDetails(sheetId, data) {
       }
     });
 
+    batchWriteSheetRows(transSheet, transRows);
+  }
+}
+
+// 專供授權成員 (Member) 使用的內容儲存函式
+// 實體隔離：完全不讀寫 Info 工作表，僅更新七類內容工作表，徹底防止 PIN、名稱、天數被意外清空或竄改
+function saveTripContentOnly(sheetId, rawData) {
+  if (!sheetId || !rawData) return;
+  const ss = SpreadsheetApp.openById(sheetId);
+
+  // 1. Checklist (行前準備與行李清單)
+  if (Array.isArray(rawData.checklist)) {
+    let checklistSheet = ss.getSheetByName("Checklist");
+    if (!checklistSheet) checklistSheet = ss.insertSheet("Checklist");
+    const rowsChecklist = [["id", "cat", "title", "note", "link", "done"]];
+    rawData.checklist.forEach(item => {
+      if (!item || (!item.title && !item.id)) return;
+      rowsChecklist.push([
+        item.id || "",
+        item.cat || "",
+        item.title || "",
+        item.note || "",
+        item.link || "",
+        item.done ? "TRUE" : "FALSE"
+      ]);
+    });
+    batchWriteSheetRows(checklistSheet, rowsChecklist);
+  }
+
+  // 2. Flights (航班資訊)
+  if (rawData.flights) {
+    let flightsSheet = ss.getSheetByName("Flights");
+    if (!flightsSheet) flightsSheet = ss.insertSheet("Flights");
+    const rowsFlights = [["Type", "airline", "no", "from", "to", "date", "dep", "arr", "note"]];
+    if (rawData.flights.out) {
+      const f = rawData.flights.out;
+      rowsFlights.push(["out", f.airline || "", f.no || "", f.from || "", f.to || "", f.date || "", f.dep || "", f.arr || "", f.note || ""]);
+    }
+    if (rawData.flights.in) {
+      const f = rawData.flights.in;
+      rowsFlights.push(["in", f.airline || "", f.no || "", f.from || "", f.to || "", f.date || "", f.dep || "", f.arr || "", f.note || ""]);
+    }
+    batchWriteSheetRows(flightsSheet, rowsFlights);
+  }
+
+  // 3. Hotel (支援多筆飯店住宿)
+  if (rawData.hotels || rawData.hotel) {
+    let hotelSheet = ss.getSheetByName("Hotel");
+    if (!hotelSheet) hotelSheet = ss.insertSheet("Hotel");
+    const rowsHotel = [["name", "addr", "checkin", "checkout", "nights", "note"]];
+    const hotelList = rawData.hotels || (rawData.hotel ? [rawData.hotel] : []);
+    hotelList.forEach(h => {
+      if (h && (h.name || h.addr)) {
+        rowsHotel.push([
+          h.name || "",
+          h.addr || "",
+          h.checkin || "",
+          h.checkout || "",
+          h.nights || "",
+          h.note || ""
+        ]);
+      }
+    });
+    batchWriteSheetRows(hotelSheet, rowsHotel);
+  }
+
+  // 4. Days (每日景點行程規劃)
+  if (Array.isArray(rawData.days)) {
+    let daysSheet = ss.getSheetByName("Days");
+    if (!daysSheet) daysSheet = ss.insertSheet("Days");
+    const rowsDays = [["dayId", "date", "title", "time", "place", "desc", "imgUrl", "link"]];
+    rawData.days.forEach(day => {
+      if (!day) return;
+      const dId = day.id || "";
+      const dDate = day.date || "";
+      const dTitle = day.title || "";
+      const activities = day.items || day.activities || [];
+      if (activities.length === 0) {
+        rowsDays.push([dId, dDate, dTitle, "", "", "", "", ""]);
+      } else {
+        const seenDayItems = new Set();
+        activities.forEach(act => {
+          if (!act) return;
+          const p = (act.place || "").trim();
+          if (!p) return;
+          const t = (act.time || "").trim();
+          const itemKey = t.toLowerCase() + "___" + p.toLowerCase();
+          if (!seenDayItems.has(itemKey)) {
+            seenDayItems.add(itemKey);
+            rowsDays.push([
+              dId,
+              dDate,
+              dTitle,
+              t,
+              p,
+              act.desc || "",
+              act.imgUrl || "",
+              act.link || ""
+            ]);
+          }
+        });
+      }
+    });
+    batchWriteSheetRows(daysSheet, rowsDays);
+  }
+
+  // 5. Food (精選美食清單)
+  if (Array.isArray(rawData.food)) {
+    let foodSheet = ss.getSheetByName("Food");
+    if (!foodSheet) foodSheet = ss.insertSheet("Food");
+    const rowsFood = [["id", "emoji", "name", "area", "desc", "must", "done", "imgUrl"]];
+    rawData.food.forEach(item => {
+      if (!item || (!item.name && !item.id)) return;
+      rowsFood.push([
+        item.id || "",
+        item.emoji || "🍽️",
+        item.name || "",
+        item.area || "",
+        item.desc || "",
+        item.must ? "TRUE" : "FALSE",
+        item.done ? "TRUE" : "FALSE",
+        item.imgUrl || ""
+      ]);
+    });
+    batchWriteSheetRows(foodSheet, rowsFood);
+  }
+
+  // 6. Shopping (代購清單)
+  if (Array.isArray(rawData.shopping)) {
+    let shoppingSheet = ss.getSheetByName("Shopping");
+    if (!shoppingSheet) shoppingSheet = ss.insertSheet("Shopping");
+    const rowsShopping = [["id", "buyer", "name", "location", "price", "qty", "link", "imgUrl", "note", "done"]];
+    rawData.shopping.forEach(item => {
+      if (!item || (!item.name && !item.id)) return;
+      rowsShopping.push([
+        item.id || "",
+        item.buyer || "自己",
+        item.name || "",
+        item.location || "",
+        item.price || "",
+        item.qty || "1",
+        item.link || "",
+        item.imgUrl || "",
+        item.note || "",
+        item.done ? "TRUE" : "FALSE"
+      ]);
+    });
+    batchWriteSheetRows(shoppingSheet, rowsShopping);
+  }
+
+  // 7. 交通 (Transport)
+  if (rawData.transport) {
+    let transSheet = ss.getSheetByName("交通") || ss.getSheetByName("Transport");
+    if (!transSheet) transSheet = ss.insertSheet("交通");
+    const transRows = [["日期", "行程", "起訖點/內容", "時間", "預估費用/人", "幣別", "車種資訊", "備註"]];
+    const maps = rawData.transport.maps || [];
+    if (maps.length > 0) {
+      maps.forEach(m => {
+        if (m.url) {
+          transRows.push(["地圖", m.url, m.title || "路線地圖", "", "", "", "", m.note || ""]);
+        }
+      });
+    } else if (rawData.transport.mapImgUrl) {
+      transRows.push(["地圖", rawData.transport.mapImgUrl, rawData.transport.mapNote || "主要交通路線圖", "", "", "", "", rawData.transport.mapNote || ""]);
+    }
+    (rawData.transport.passes || []).forEach(p => {
+      transRows.push(["周遊券", p.name || "", "", "", p.cost || "", p.currency || "日円", "", p.note || ""]);
+    });
+    const seenRoutes = new Set();
+    (rawData.transport.routes || []).forEach(r => {
+      const ft = (r.fromTo || "").trim();
+      const ti = (r.trainInfo || "").trim();
+      const nt = (r.note || "").trim();
+      if (!ft && !ti && !nt) return;
+      const rKey = (r.dayTag || "") + "___" + ft + "___" + (r.time || "");
+      if (!seenRoutes.has(rKey)) {
+        seenRoutes.add(rKey);
+        transRows.push([
+          r.dayTag || "",
+          ft,
+          ti,
+          r.time || "",
+          r.cost || "",
+          r.currency || "日円",
+          r.seatInfo || "",
+          nt
+        ]);
+      }
+    });
     batchWriteSheetRows(transSheet, transRows);
   }
 }
