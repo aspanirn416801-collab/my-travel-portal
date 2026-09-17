@@ -30,26 +30,28 @@ function normalizeEmail(email) {
   return email.toString().toLowerCase().replace(/[\u200B-\u200D\uFEFF\u00A0\s]/g, "");
 }
 
-// 輔助函式：安全解碼 JWT Payload（作為 Google Tokeninfo API 網路延遲或逾時時的強健備援）
-function decodeJwtPayload(token) {
-  try {
-    if (!token) return null;
-    const parts = token.split(".");
-    if (parts.length !== 3) return null;
-    const decodedBytes = Utilities.base64DecodeWebSafe(parts[1]);
-    const decodedString = Utilities.newBlob(decodedBytes).getDataAsString("UTF-8");
-    return JSON.parse(decodedString);
-  } catch (e) {
-    return null;
-  }
+// 產生安全 Token 雜湊鍵 (避免將完整憑證直接當作快取鍵)
+function hashToken(token) {
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, token);
+  return digest.map(function(byte) {
+    var v = (byte < 0 ? byte + 256 : byte).toString(16);
+    return v.length === 1 ? "0" + v : v;
+  }).join("");
 }
 
-// 驗證前端傳過來的 Google ID Token (JWT)
-// 透過 Google Tokeninfo API 安全解析出使用者的 Email，並驗證 Audience
+// 驗證前端傳過來的 Google ID Token (嚴格僅透過 Google 官方 Tokeninfo 驗證，並使用 CacheService 暫存 300 秒)
 function verifyIdToken(token) {
   if (!token) return null;
   
-  // 1. 優先透過 Google 官方 Tokeninfo 端點進行在線驗證
+  // 1. 優先查詢伺服器快取 (以 Token SHA-256 雜湊為鍵，時效 300 秒)
+  const tokenKey = "auth_" + hashToken(token);
+  const cache = CacheService.getScriptCache();
+  const cachedEmail = cache.get(tokenKey);
+  if (cachedEmail) {
+    return cachedEmail;
+  }
+
+  // 2. 線上請求 Google 官方 Tokeninfo 驗證簽章與發行方 (拒絕未經簽章驗證之本地解碼)
   try {
     const url = "https://oauth2.googleapis.com/tokeninfo?id_token=" + encodeURIComponent(token);
     const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
@@ -62,29 +64,16 @@ function verifyIdToken(token) {
         }
       }
       if (json.email) {
-        return normalizeEmail(json.email);
+        const cleanEmail = normalizeEmail(json.email);
+        // 驗證成功後短暫快取 300 秒，避免高頻請求重複連線 Google 造成卡頓
+        try {
+          cache.put(tokenKey, cleanEmail, 300);
+        } catch (cErr) {}
+        return cleanEmail;
       }
     }
   } catch (e) {
     Logger.log("Tokeninfo 線上驗證異常: " + e.message);
-  }
-
-  // 2. 強健備援：若官方端點因暫時性網路抖動或微小過期拋錯，從 JWT 本地解碼驗證發行人與 Audience
-  try {
-    const payload = decodeJwtPayload(token);
-    if (payload && payload.email) {
-      const validIssuers = ["accounts.google.com", "https://accounts.google.com"];
-      if (validIssuers.includes(payload.iss)) {
-        if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_ID !== "YOUR_GOOGLE_CLIENT_ID_HERE") {
-          if (payload.aud !== GOOGLE_CLIENT_ID) {
-            return null;
-          }
-        }
-        return normalizeEmail(payload.email);
-      }
-    }
-  } catch (err) {
-    Logger.log("Token 本地解析失敗: " + err.message);
   }
 
   return null;
@@ -266,6 +255,75 @@ function doGet(e) {
     access = { role: "guest", trips: publicTrips };
   }
   
+  // 一次性初始化合併端點：整合角色、行程清單與目前手冊資料，解決冷啟動兩段式等待過長問題
+  if (action === "bootstrap") {
+    const tripUuid = e.parameter.tripUuid;
+    let currentTripData = null;
+    let canEditCurrent = false;
+
+    if (tripUuid) {
+      let targetSheetId = "";
+      let allowedUsersStr = "";
+      let tripPassword = "";
+      let tripName = "";
+      let tripStartDate = "";
+      let tripEndDate = "";
+      let tripDuration = "";
+
+      for (let i = 1; i < tripRows.length; i++) {
+        if (tripRows[i][0] === tripUuid) {
+          tripName = tripRows[i][1];
+          targetSheetId = tripRows[i][2];
+          allowedUsersStr = tripRows[i][4] || "";
+          tripPassword = tripRows[i][5] ? String(tripRows[i][5]).trim() : "";
+          tripStartDate = tripRows[i][6] ? String(tripRows[i][6]).trim() : "";
+          tripEndDate = tripRows[i][7] ? String(tripRows[i][7]).trim() : "";
+          tripDuration = tripRows[i][8] ? String(tripRows[i][8]).trim() : "";
+          break;
+        }
+      }
+
+      if (targetSheetId) {
+        const allowedList = (allowedUsersStr || "").toLowerCase().split(",").map(s => normalizeEmail(s));
+        const isMember = Boolean(email && allowedList.includes(normalizeEmail(email)));
+        const isAdmin = access.role === "admin";
+        canEditCurrent = Boolean(isAdmin || isMember);
+
+        const clientPin = String(e.parameter.tripPassword || e.parameter.password || "").trim();
+        const hasValidPin = Boolean(tripPassword && clientPin === tripPassword);
+        const isPublicWithoutPin = !tripPassword;
+
+        if (isAdmin || isMember || hasValidPin || isPublicWithoutPin) {
+          try {
+            const data = loadTripDetails(targetSheetId);
+            if (!data.name && tripName) data.name = tripName;
+            if (!data.startDate && tripStartDate) data.startDate = tripStartDate;
+            if (!data.endDate && tripEndDate) data.endDate = tripEndDate;
+            if (!data.duration && tripDuration) data.duration = tripDuration;
+            if (!data.duration && data.startDate && data.endDate) {
+              data.duration = calcTripDurationInGas(data.startDate, data.endDate);
+            }
+            delete data.password;
+            delete data.allowed_users;
+            delete data.sheet_id;
+            delete data.folder_id;
+            currentTripData = data;
+          } catch (loadErr) {}
+        }
+      }
+    }
+
+    const responseData = {
+      status: "success",
+      role: access.role,
+      trips: access.trips,
+      currentTrip: currentTripData,
+      canEdit: canEditCurrent
+    };
+    return ContentService.createTextOutput(JSON.stringify(responseData))
+                         .setMimeType(ContentService.MimeType.JSON);
+  }
+
   if (action === "getTrips") {
     const responseData = {
       status: "success",
@@ -600,17 +658,26 @@ function doPost(e) {
     
     const password = (postData.password || "").trim();
     
+    // P2: 行程識別碼 (UUID) 防重複檢查
+    for (let i = 1; i < tripRows.length; i++) {
+      if (tripRows[i][0] === uuid) {
+        return ContentService.createTextOutput(JSON.stringify({
+          status: "error",
+          message: "行程識別碼 (UUID)「" + uuid + "」已存在，請使用不同識別碼！"
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
+    }
+
     let finalDuration = duration;
     if (!finalDuration && startDate && endDate) {
       finalDuration = calcTripDurationInGas(startDate, endDate);
     }
     
-    const tripSheet = masterSpreadsheet.getSheetByName("Trips");
-    tripSheet.appendRow([uuid, name, sheetId, folderId, allowedUsers, password, startDate, endDate, finalDuration]);
-    
-    // 初始化關聯試算表的結構與分頁
+    // P2: 先確保關聯試算表結構與分頁初始化成功，最後才寫入 Trips 主表，防呆防孤立紀錄
     try {
       initializeSubSheet(sheetId, name, startDate, endDate, finalDuration, password, theme);
+      const tripSheet = masterSpreadsheet.getSheetByName("Trips");
+      tripSheet.appendRow([uuid, name, sheetId, folderId, allowedUsers, password, startDate, endDate, finalDuration]);
       return ContentService.createTextOutput(JSON.stringify({ 
         status: "success", 
         sheetId: sheetId,

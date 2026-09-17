@@ -1,9 +1,19 @@
+// 安全跳脫 HTML 屬性 (防止雙引號與單引號破壞屬性邊界或產生 XSS)
+function escapeAttribute(str) {
+  if (str === null || str === undefined) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
 // =========================================================================
 // 公版設定：請填入您的 Google Client ID 與 GAS API URL
 // =========================================================================
 const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
-const APP_BUILD_VERSION = "20260917_07";
+const APP_BUILD_VERSION = "20260917_08";
 
 // 智能行程顯示名稱轉換 (將舊版 ID 或技術命名轉換為溫暖手帳風格名稱，技術 ID 留存於後台編輯中)
 function getTripDisplayName(name = "", uuid = "") {
@@ -1279,7 +1289,11 @@ function updateAuthUI() {
 
     if (loginBtn) loginBtn.style.display = "none";
 
-    if (userRole === "admin") {
+    if (userRole === "verifying") {
+      badge.className = "user-badge badge-user";
+      badge.innerHTML = `⏳ 正在驗證帳號權限... (${escapeHtml(userName)})`;
+      if (adminHubActions) adminHubActions.style.display = "none";
+    } else if (userRole === "admin") {
       badge.className = "user-badge badge-admin";
       if (expired) {
         // 憑證真過期時才提示續期
@@ -1416,8 +1430,9 @@ function handleCredentialResponse(response) {
   const userName = userInfo?.name || userEmail.split("@")[0] || "使用者";
 
   // 身分完全以 Google Apps Script 後端回應為唯一依據，絕不信任本地快取提權
+  userRole = "verifying";
   updateAuthUI();
-  showToast(`歡迎 ${userName}，正在向後端驗證身分權限...`);
+  showToast(`歡迎 ${userName}，正在向伺服器確認帳號權限...`);
 
   // 復原登入前的網址狀態（若在手冊內，確保行程 ID 與分頁完全保留）
   try {
@@ -1665,9 +1680,14 @@ function getAutoCoverInfo(name = "", uuid = "", customUrl = "") {
   };
 }
 
-// 取得行程清單 (SWR 0 秒瞬間秒開快取機制)
-async function fetchTrips() {
-  // 1. 優先從本地快取瞬間秒開大廳，0 等待！(僅讀取公開摘要，絕不快取角色權限)
+// In-flight Promise 管理：禁止同時間發送重複請求，顯著降低 GAS 冷啟動延遲
+let inFlightTripsPromise = null;
+let inFlightTripsToken = null;
+let tripsRequestSeq = 0;
+
+// 取得行程清單與初始化 (支援一次性 bootstrap 合併請求與 In-flight 合併機制)
+async function fetchTrips({ force = false } = {}) {
+  // 1. 優先從本地快取瞬間秒開大廳，0 等待！
   try {
     const cached = localStorage.getItem("cache_tripsList");
     if (cached) {
@@ -1678,82 +1698,114 @@ async function fetchTrips() {
     }
   } catch (e) {}
 
-  // 2. 背景向 Google 試算表靜默同步最新清單
-  try {
-    const tokenParam = idToken ? `&token=${encodeURIComponent(idToken)}` : "";
-    const res = await fetch(`${GAS_API_URL}?action=getTrips${tokenParam}`);
-    const result = await res.json();
-
-    if (result.status === "success") {
-      // 身分角色一律以 GAS 後端簽發之 result.role 為準
-      if (result.role) {
-        userRole = result.role;
-      } else {
-        userRole = "guest";
-      }
-      // 記錄後端授權之 canEdit 旗標於記憶體 tripPermissions (絕不存入 localStorage)
-      tripsList = (result.trips || []).map((t) => {
-        if (t && t.uuid) {
-          if (t.canEdit !== undefined) {
-            tripPermissions.set(t.uuid, { canEdit: Boolean(t.canEdit) });
-          }
-        }
-        return {
-          uuid: t.uuid,
-          name: t.name,
-          hasPassword: Boolean(t.hasPassword),
-          startDate: t.startDate || "",
-          endDate: t.endDate || "",
-          duration: t.duration || ""
-        };
-      });
-
-      // 儲存至本地公開快取摘要（嚴禁存入密碼與 canEdit 帳號專屬權限）
-      try {
-        localStorage.setItem("cache_tripsList", JSON.stringify(tripsList));
-      } catch (e) {}
-
-      updateAuthUI();
-      const isAdminRoute =
-        window.location.search.includes("admin=1") ||
-        window.location.search.includes("trip=admin");
-
-      const adminViewEl = document.getElementById("view-admin");
-      const isAlreadyInAdmin = adminViewEl && adminViewEl.style.display !== "none";
-
-      if (
-        isAdminRoute &&
-        userRole === "admin" &&
-        idToken &&
-        !isTokenExpired(idToken)
-      ) {
-        if (isAlreadyInAdmin) {
-          // 若已在後台，僅局部刷新列表，絕不重複捲頂跳動
-          renderAdminView();
-        } else {
-          showAdminView({ resetScroll: true });
-        }
-      } else if (!currentTripUuid && !isAdminRoute) {
-        renderHubTripsGrid();
-      }
-
-      // 若當前有在特定行程手冊中，更新其資料
-      if (currentTripUuid) {
-        fetchTripData();
-      }
-    }
-  } catch (e) {
-    console.warn("連線後端狀態:", e);
-    const container = document.getElementById("hubTripsGrid");
-    if (container && tripsList.length === 0) {
-      container.innerHTML = `
-        <div style="text-align:center;padding:40px 10px;color:#888;grid-column:1/-1;background:var(--glass-bg);border-radius:20px;border:1.5px dashed rgba(200, 59, 43, 0.4);backdrop-filter:blur(16px);">
-          <p style="font-size:14px;margin-bottom:12px;font-weight:700;color:var(--red);">⚠️ 伺服器連線延遲，請點擊下方按鈕重試</p>
-          <button class="glass-btn" style="background:var(--moss-gradient);color:#fff;display:inline-flex;" onclick="fetchTrips()">🔄 重新載入行程</button>
-        </div>
-      `;
-    }
+  // 若目前有相同憑證的請求正在連線中且非強制重刷，直接共用 Promise，不打第二遍 GAS
+  if (inFlightTripsPromise && !force && inFlightTripsToken === idToken) {
+    return inFlightTripsPromise;
   }
+
+  const currentSeq = ++tripsRequestSeq;
+  inFlightTripsToken = idToken;
+
+  inFlightTripsPromise = (async () => {
+    try {
+      const tokenParam = idToken ? `&token=${encodeURIComponent(idToken)}` : "";
+      const currentPin = currentTripUuid ? (memoryUnlockedPins.get(currentTripUuid) || "") : "";
+      const tripParam = currentTripUuid ? `&tripUuid=${encodeURIComponent(currentTripUuid)}&tripPassword=${encodeURIComponent(currentPin)}` : "";
+      
+      // 當前如果在行程手冊中，使用 bootstrap 端點一次取回清單、角色與手冊資料
+      const actionName = currentTripUuid ? "bootstrap" : "getTrips";
+      const res = await fetch(`${GAS_API_URL}?action=${actionName}${tokenParam}${tripParam}`);
+      const result = await res.json();
+
+      // 若後續已有新請求發出，放棄過期回應
+      if (currentSeq !== tripsRequestSeq) return;
+
+      if (result.status === "success") {
+        userRole = result.role || "guest";
+
+        tripsList = (result.trips || []).map((t) => {
+          if (t && t.uuid) {
+            if (t.canEdit !== undefined) {
+              tripPermissions.set(t.uuid, { canEdit: Boolean(t.canEdit) });
+            }
+          }
+          return {
+            uuid: t.uuid,
+            name: t.name,
+            hasPassword: Boolean(t.hasPassword),
+            startDate: t.startDate || "",
+            endDate: t.endDate || "",
+            duration: t.duration || ""
+          };
+        });
+
+        try {
+          localStorage.setItem("cache_tripsList", JSON.stringify(tripsList));
+        } catch (e) {}
+
+        updateAuthUI();
+
+        // 若 bootstrap 端點同時回傳了當前手冊資料，立即更新畫面
+        if (result.currentTrip && currentTripUuid) {
+          if (result.canEdit !== undefined) {
+            tripPermissions.set(currentTripUuid, { canEdit: Boolean(result.canEdit) });
+          }
+          tripData = sanitizeAndDeduplicateTrip(result.currentTrip);
+          if (tripData && tripData.days) sortTripDays(tripData.days);
+          try {
+            sessionStorage.setItem("session_trip_" + currentTripUuid, JSON.stringify(tripData));
+          } catch (e) {}
+          showTripView();
+          initCountdown();
+          render();
+        } else if (currentTripUuid && !result.currentTrip) {
+          // 若無合裝手冊資料，維持既有取得
+          fetchTripData();
+        }
+
+        const isAdminRoute =
+          window.location.search.includes("admin=1") ||
+          window.location.search.includes("trip=admin");
+
+        const adminViewEl = document.getElementById("view-admin");
+        const isAlreadyInAdmin = adminViewEl && adminViewEl.style.display !== "none";
+
+        if (
+          isAdminRoute &&
+          userRole === "admin" &&
+          idToken &&
+          !isTokenExpired(idToken)
+        ) {
+          if (isAlreadyInAdmin) {
+            renderAdminView();
+          } else {
+            showAdminView({ resetScroll: true });
+          }
+        } else if (!currentTripUuid && !isAdminRoute) {
+          renderHubTripsGrid();
+        }
+      }
+    } catch (e) {
+      console.warn("連線後端狀態:", e);
+      if (userRole === "verifying") {
+        userRole = "guest";
+        updateAuthUI();
+      }
+      const container = document.getElementById("hubTripsGrid");
+      if (container && tripsList.length === 0) {
+        container.innerHTML = `
+          <div style="text-align:center;padding:40px 10px;color:#888;grid-column:1/-1;background:var(--glass-bg);border-radius:20px;border:1.5px dashed rgba(200, 59, 43, 0.4);backdrop-filter:blur(16px);">
+            <p style="font-size:14px;margin-bottom:12px;font-weight:700;color:var(--red);">⚠️ 伺服器連線延遲，請點擊下方按鈕重試</p>
+            <button class="glass-btn" style="background:var(--moss-gradient);color:#fff;display:inline-flex;" onclick="fetchTrips({force:true})">🔄 重新載入行程</button>
+          </div>
+        `;
+      }
+    } finally {
+      inFlightTripsPromise = null;
+    }
+  })();
+
+  return inFlightTripsPromise;
 }
 
 // 渲染首頁行程大廳卡片網格 (根據目的地自動智能適配城市封面)
@@ -2232,6 +2284,9 @@ async function save() {
     return false;
   }
 
+  // 失敗回滾防護：建立修改前之深拷貝快照
+  const backupSnapshot = JSON.stringify(tripData);
+
   // 寫入前執行去重與清洗
   tripData = sanitizeAndDeduplicateTrip(tripData);
 
@@ -2274,11 +2329,23 @@ async function save() {
       showToast("雲端同步成功 ✓");
       return true;
     } else {
-      showToast("⚠️ " + (result.message || "雲端儲存失敗"));
+      showToast("⚠️ " + (result.message || "雲端儲存失敗，已還原變更"));
+      try {
+        if (backupSnapshot) {
+          tripData = JSON.parse(backupSnapshot);
+          render();
+        }
+      } catch (err) {}
       return false;
     }
   } catch (e) {
-    showToast("⚠️ 連線異常，雲端同步失敗");
+    showToast("⚠️ 連線異常，雲端同步失敗，已還原變更");
+    try {
+      if (backupSnapshot) {
+        tripData = JSON.parse(backupSnapshot);
+        render();
+      }
+    } catch (err) {}
     return false;
   }
 }
@@ -2800,9 +2867,7 @@ function renderFlights() {
     tripData.hotels ||
     (tripData.hotel && tripData.hotel.name ? [tripData.hotel] : []);
 
-  const addHotelBtn = isAdmin
-    ? `<button class="glass-btn" style="background:var(--moss-gradient);color:#fff;width:100%;margin-top:14px;justify-content:center;" onclick="openAddHotelModal()">＋ 新增飯店住宿</button>`
-    : "";
+
 
   const hotelCards =
     hotels.length > 0
@@ -2879,7 +2944,7 @@ function renderFlights() {
       <div class="hotels-container-grid">
         ${hotelCards}
       </div>
-      ${addHotelBtn}
+      
     </div>
   `;
 }
@@ -3685,10 +3750,15 @@ function openAddDayModal() {
   });
 }
 
-// 刪除指定天數
+// 刪除指定天數 (防呆保護：行程至少需保留一天，禁止刪除最後一天)
 function deleteCurrentDay(dayIdx) {
   if (!canEditCurrentTrip()) {
     showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+
+  if (!tripData || !Array.isArray(tripData.days) || tripData.days.length <= 1) {
+    alert("旅程手冊至少需保留一天行程，無法刪除最後一天！");
     return;
   }
 
@@ -3707,7 +3777,8 @@ function deleteCurrentDay(dayIdx) {
         selectedDay = Math.max(0, tripData.days.length - 1);
       }
       renderItinerary();
-      save();
+      const ok = await save();
+      return ok !== false;
     },
   });
 }
@@ -6570,9 +6641,11 @@ function openEditTransitPassModal(idx) {
       tripData.transport.passes[idx].note = note;
 
       renderTransport();
-      save();
-      showToast("周遊券已更新 ✓");
-      return true;
+      const ok = await save();
+      if (ok !== false) {
+        showToast("周遊券已更新 ✓");
+      }
+      return ok !== false;
     },
   });
 }
