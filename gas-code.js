@@ -169,12 +169,35 @@ function invalidateCaches(options) {
   }
 }
 
+// 輔助函式：標準化試算表讀出之日期為 YYYY-MM-DD 格式 (防 Google Sheets 原始 Date 物件轉為超長時區字串)
+function normalizeDateStr(val) {
+  if (!val) return "";
+  if (val instanceof Date) {
+    const y = val.getFullYear();
+    const m = String(val.getMonth() + 1).padStart(2, "0");
+    const d = String(val.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  const s = String(val).trim();
+  if (!s) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if (s.includes("T")) return s.split("T")[0].trim();
+  const parsed = new Date(s);
+  if (!isNaN(parsed.getTime()) && s.length > 10 && (s.includes("GMT") || s.includes(":") || s.includes(" "))) {
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, "0");
+    const d = String(parsed.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  return s;
+}
+
 // 自動根據出發與結束日期推算天數晚數 (例如: 8天7夜)
 function calcTripDurationInGas(startDate, endDate) {
-  if (!startDate || !endDate) return "";
+  const s = normalizeDateStr(startDate);
+  const e = normalizeDateStr(endDate);
+  if (!s || !e) return "";
   try {
-    const s = String(startDate).split("T")[0].trim();
-    const e = String(endDate).split("T")[0].trim();
     const d1 = new Date(s + "T00:00:00");
     const d2 = new Date(e + "T00:00:00");
     if (isNaN(d1.getTime()) || isNaN(d2.getTime())) return "";
@@ -370,8 +393,8 @@ function doGet(e) {
       const uuid = tripRows[i][0];
       const name = tripRows[i][1];
       const password = tripRows[i][5] ? String(tripRows[i][5]).trim() : "";
-      const startDate = tripRows[i][6] ? String(tripRows[i][6]).trim() : "";
-      const endDate = tripRows[i][7] ? String(tripRows[i][7]).trim() : "";
+      const startDate = normalizeDateStr(tripRows[i][6]);
+      const endDate = normalizeDateStr(tripRows[i][7]);
       let duration = tripRows[i][8] ? String(tripRows[i][8]).trim() : "";
       if (!duration && startDate && endDate) {
         duration = calcTripDurationInGas(startDate, endDate);
@@ -414,8 +437,8 @@ function doGet(e) {
           targetSheetId = tripRows[i][2];
           allowedUsersStr = tripRows[i][4] || "";
           tripPassword = tripRows[i][5] ? String(tripRows[i][5]).trim() : "";
-          tripStartDate = tripRows[i][6] ? String(tripRows[i][6]).trim() : "";
-          tripEndDate = tripRows[i][7] ? String(tripRows[i][7]).trim() : "";
+          tripStartDate = normalizeDateStr(tripRows[i][6]);
+          tripEndDate = normalizeDateStr(tripRows[i][7]);
           tripDuration = tripRows[i][8] ? String(tripRows[i][8]).trim() : "";
           break;
         }
@@ -489,8 +512,8 @@ function doGet(e) {
     for (let i = 1; i < tripRows.length; i++) {
       if (tripRows[i][0] === tripUuid) {
         const password = tripRows[i][5] ? String(tripRows[i][5]).trim() : "";
-        const startDate = tripRows[i][6] ? String(tripRows[i][6]).trim() : "";
-        const endDate = tripRows[i][7] ? String(tripRows[i][7]).trim() : "";
+        const startDate = normalizeDateStr(tripRows[i][6]);
+        const endDate = normalizeDateStr(tripRows[i][7]);
         let duration = tripRows[i][8] ? String(tripRows[i][8]).trim() : "";
         if (!duration && startDate && endDate) {
           duration = calcTripDurationInGas(startDate, endDate);
@@ -554,8 +577,8 @@ function doGet(e) {
         targetSheetId = tripRows[i][2];
         allowedUsersStr = tripRows[i][4] || "";
         tripPassword = tripRows[i][5] ? String(tripRows[i][5]).trim() : "";
-        tripStartDate = tripRows[i][6] ? String(tripRows[i][6]).trim() : "";
-        tripEndDate = tripRows[i][7] ? String(tripRows[i][7]).trim() : "";
+        tripStartDate = normalizeDateStr(tripRows[i][6]);
+        tripEndDate = normalizeDateStr(tripRows[i][7]);
         tripDuration = tripRows[i][8] ? String(tripRows[i][8]).trim() : "";
         break;
       }

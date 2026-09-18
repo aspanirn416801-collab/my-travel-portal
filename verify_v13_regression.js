@@ -260,7 +260,7 @@ assertCheck(
   const hasNoHardcodedTrips = !appCode.includes("PUBLIC_TRIP_SUMMARIES");
   const hasLoadCachedTrips = appCode.includes("let tripsList = loadCachedTrips();");
   const hasDisplayNameDynamic = appCode.includes('return String(name || uuid || "未命名旅程").trim();');
-  const fallbackMatch = appCode.match(/startDate:\s*t\.startDate\s*\|\|\s*\(existing\s*\?\s*existing\.startDate\s*:\s*""\)\s*\|\|\s*""/);
+  const fallbackMatch = appCode.match(/startDate:\s*formatDateSimple\(\s*t\.startDate\s*\|\|\s*\(existing\s*\?\s*existing\.startDate\s*:\s*""\)\s*\|\|\s*""\s*\)/);
 
   const allPassed = hasNoHardcodedTrips && hasLoadCachedTrips && hasDisplayNameDynamic && fallbackMatch !== null;
 

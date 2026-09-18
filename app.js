@@ -41,6 +41,23 @@ function getTripDisplayName(name = "", uuid = "") {
   return String(name || uuid || "未命名旅程").trim();
 }
 
+// 輔助函式：標準化日期格式為 YYYY-MM-DD (防 Google Sheets 原始 Date 物件轉出超長 GMT 時區字串)
+function formatDateSimple(dateStr) {
+  if (!dateStr) return "";
+  const s = String(dateStr).trim();
+  if (!s) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if (s.includes("T")) return s.split("T")[0].trim();
+  const parsed = new Date(s);
+  if (!isNaN(parsed.getTime()) && s.length > 10 && (s.includes("GMT") || s.includes(":") || s.includes(" "))) {
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, "0");
+    const d = String(parsed.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  return s;
+}
+
 // 前端全局狀態管理：身分雙軌架構 (authStatus 控制顯示，verifiedRole 控制實質權限)
 let idToken = localStorage.getItem("google_id_token") || null;
 let authStatus = (idToken && !isTokenExpired(idToken)) ? "verifying" : "guest"; // 'guest' | 'verifying' | 'authenticated' | 'auth-error'
@@ -1746,8 +1763,8 @@ async function fetchTrips({ force = false } = {}) {
             uuid: t.uuid,
             name: t.name,
             hasPassword: Boolean(t.hasPassword),
-            startDate: t.startDate || (existing ? existing.startDate : "") || "",
-            endDate: t.endDate || (existing ? existing.endDate : "") || "",
+            startDate: formatDateSimple(t.startDate || (existing ? existing.startDate : "") || ""),
+            endDate: formatDateSimple(t.endDate || (existing ? existing.endDate : "") || ""),
             duration: t.duration || (existing ? existing.duration : "") || ""
           };
         });
@@ -1900,8 +1917,8 @@ function renderHubTripsGrid() {
         const c = localStorage.getItem("cache_trip_" + t.uuid);
         if (c) cachedData = JSON.parse(c);
       } catch (e) {}
-      const sDate = t.startDate || (cachedData ? cachedData.startDate : "");
-      const eDate = t.endDate || (cachedData ? cachedData.endDate : "");
+      const sDate = formatDateSimple(t.startDate || (cachedData ? cachedData.startDate : ""));
+      const eDate = formatDateSimple(t.endDate || (cachedData ? cachedData.endDate : ""));
       const calculatedDur = calculateTripDuration(sDate, eDate);
       const rawDur = t.duration || (cachedData ? cachedData.duration : "");
       const dur = (rawDur && rawDur.trim() && rawDur.trim() !== "未註記天數") ? rawDur.trim() : (calculatedDur || "");
@@ -5167,8 +5184,8 @@ function renderAdminView() {
         if (c) cachedData = JSON.parse(c);
       } catch (e) {}
 
-      const sDate = t.startDate || (cachedData ? cachedData.startDate : "") || (tripData && currentTripUuid === t.uuid ? tripData.startDate : "");
-      const eDate = t.endDate || (cachedData ? cachedData.endDate : "") || (tripData && currentTripUuid === t.uuid ? tripData.endDate : "");
+      const sDate = formatDateSimple(t.startDate || (cachedData ? cachedData.startDate : "") || (tripData && currentTripUuid === t.uuid ? tripData.startDate : ""));
+      const eDate = formatDateSimple(t.endDate || (cachedData ? cachedData.endDate : "") || (tripData && currentTripUuid === t.uuid ? tripData.endDate : ""));
       const calculatedDur = calculateTripDuration(sDate, eDate);
       const rawDur = t.duration || (cachedData ? cachedData.duration : "") || (tripData && currentTripUuid === t.uuid ? tripData.duration : "");
       const dur = (rawDur && rawDur.trim() && rawDur.trim() !== "未註記天數") ? rawDur.trim() : (calculatedDur || "未註記天數");
@@ -5419,8 +5436,8 @@ async function openEditTripMetaModal(uuid) {
     hideLoading();
   }
 
-  const currentStartDate = (fullMeta && fullMeta.startDate) || trip.startDate || "";
-  const currentEndDate = (fullMeta && fullMeta.endDate) || trip.endDate || "";
+  const currentStartDate = formatDateSimple((fullMeta && fullMeta.startDate) || trip.startDate || "");
+  const currentEndDate = formatDateSimple((fullMeta && fullMeta.endDate) || trip.endDate || "");
   const currentDuration = (fullMeta && fullMeta.duration) || trip.duration || calculateTripDuration(currentStartDate, currentEndDate);
   const currentTheme = (fullMeta && fullMeta.theme !== undefined) ? fullMeta.theme : (trip.theme || "");
   const currentAllowedUsers = (fullMeta && fullMeta.allowed_users) || trip.allowed_users || "";
