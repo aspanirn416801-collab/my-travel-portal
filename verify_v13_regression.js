@@ -81,7 +81,7 @@ assertCheck(
 );
 
 // ----------------------------------------------------
-// 測試 2：身分雙軌架構審查 (authStatus 顯示軌 與 verifiedRole 實質權限軌分離)
+// 測試 2：身分雙軌架構審查與行為實測 (authStatus 顯示軌 與 verifiedRole 實質權限軌分離，新登入 verifying 阻斷舊權限)
 // ----------------------------------------------------
 (function testDualTrackAuth() {
   const hasAuthStatusVar = appCode.includes('let authStatus = (idToken && !isTokenExpired(idToken)) ? "verifying" : "guest";');
@@ -91,10 +91,65 @@ assertCheck(
   const hasAuthErrorHandle = appCode.includes('authStatus = "auth-error"');
   const hasLogoutHintClear = appCode.includes('sessionStorage.removeItem("auth_role_hint")');
 
+  // 動態行為檢驗：模擬 handleCredentialResponse 與 canEditCurrentTrip 門禁阻斷
+  const authSandbox = {
+    TripState,
+    tripPermissions: new Map(),
+    currentTripUuid: "trip-test",
+    authStatus: "guest",
+    verifiedRole: "guest",
+    userRole: "guest",
+    idToken: null,
+    authGeneration: 0,
+    isTokenExpired: () => false,
+    parseJwt: () => ({ email: "test@example.com", name: "測試員" }),
+    closeGoogleLoginModal: () => {},
+    localStorage: new MockStorage(),
+    sessionStorage: new MockStorage(),
+    updateAuthUI: () => {},
+    showToast: () => {},
+    showAdminView: () => {},
+    window: {
+      location: { origin: "http://localhost", pathname: "/", search: "" }
+    },
+    history: { replaceState: () => {} },
+    fetchTrips: () => Promise.resolve(),
+    console
+  };
+
+  // 注入 canEditCurrentTrip
+  const canEditCode = appCode.slice(appCode.indexOf('function canEditCurrentTrip()'), appCode.indexOf('// 預設安全之公開行程摘要骨架'));
+  vm.createContext(authSandbox);
+  vm.runInContext(canEditCode, authSandbox);
+
+  // 注入 handleCredentialResponse
+  const handleCredCode = appCode.slice(appCode.indexOf('function handleCredentialResponse('), appCode.indexOf('function logout()'));
+  vm.runInContext(handleCredCode, authSandbox);
+
+  // 1. 預置舊帳號殘留之編輯權限與假性狀態
+  authSandbox.tripPermissions.set("trip-test", { canEdit: true });
+  authSandbox.authStatus = "authenticated";
+  authSandbox.verifiedRole = "user";
+  authSandbox.userRole = "user";
+  authSandbox.idToken = "old_token";
+  const beforeCanEdit = authSandbox.canEditCurrentTrip(); // 應為 true
+
+  // 2. 模擬新使用者點擊 Google 登入 (觸發 handleCredentialResponse)
+  authSandbox.handleCredentialResponse({ credential: "new_valid_token" });
+
+  const isStatusVerifying = authSandbox.authStatus === "verifying";
+  const isRoleGuest = authSandbox.verifiedRole === "guest" && authSandbox.userRole === "guest";
+  const isPermCleared = authSandbox.tripPermissions.size === 0;
+  const isBlockedDuringVerify = authSandbox.canEditCurrentTrip() === false; // 驗證中嚴格禁止編輯！
+
+  const dualTrackPassed = hasAuthStatusVar && hasVerifiedRoleVar && hasUserRoleSync &&
+    hasRoleHintRead && hasAuthErrorHandle && hasLogoutHintClear &&
+    beforeCanEdit === true && isStatusVerifying && isRoleGuest && isPermCleared && isBlockedDuringVerify;
+
   assertCheck(
-    "[架構審查] 身分雙軌化：authStatus 顯示軌 與 verifiedRole 實質權限軌徹底分離",
-    hasAuthStatusVar && hasVerifiedRoleVar && hasUserRoleSync && hasRoleHintRead && hasAuthErrorHandle && hasLogoutHintClear,
-    "本機有效 Token 初始為 verifying，異常時為 auth-error，實質權限 verifiedRole 嚴格依後端回應更新"
+    "[身分雙軌行為實測] 新登入即刻設定 authStatus=verifying、清空舊授權，驗證完成前 100% 阻斷編輯",
+    dualTrackPassed,
+    `靜態架構符合: true, 登入前可編輯: ${beforeCanEdit}, 登入觸發後 authStatus: ${authSandbox.authStatus}, 權限清空: ${isPermCleared}, 驗證期間門禁阻斷: ${isBlockedDuringVerify}`
   );
 })();
 
@@ -211,19 +266,126 @@ assertCheck(
 })();
 
 // ----------------------------------------------------
-// 測試 7：GAS 快取檢查嚴格前置於 SpreadsheetApp.openById 之前
+// 測試 7：操作型行為實測 - Cache Hit 0 開表驗證 (SpreadsheetApp.openById 拋錯仍能成功回應，loadTripDetails 0 呼叫)
 // ----------------------------------------------------
-(function testGasCachePrecedence() {
-  const doGetIdx = gasCode.indexOf('function doGet(e) {');
-  const cacheCheckIdx = gasCode.indexOf('safeGetCache("public_trips_v1")', doGetIdx);
-  const openByIdIdx = gasCode.indexOf('SpreadsheetApp.openById(MASTER_SHEET_ID)', doGetIdx);
+(function testGasCacheHitZeroSpreadsheetOpen() {
+  const cacheMap = new Map();
+  let loadTripDetailsCalls = 0;
 
-  const isPreceded = doGetIdx !== -1 && cacheCheckIdx !== -1 && openByIdIdx !== -1 && cacheCheckIdx < openByIdIdx;
+  // 預先暖機快取
+  cacheMap.set("public_trips_v1", JSON.stringify([{ uuid: "trip_demo", name: "公開行程" }]));
+  cacheMap.set("trip_meta_trip_demo", JSON.stringify({
+    uuid: "trip_demo",
+    name: "公開行程",
+    sheet_id: "sheet_demo",
+    password: "123",
+    allowed_users: "member@example.com"
+  }));
+  cacheMap.set("trip_content_trip_demo", JSON.stringify({
+    name: "公開行程",
+    days: [{ day: 1, title: "第 1 天" }]
+  }));
+  cacheMap.set("access_token_hash_rev1", JSON.stringify({
+    role: "admin",
+    trips: [{ uuid: "trip_demo", name: "公開行程" }]
+  }));
+
+  const gasSandbox = {
+    MASTER_SHEET_ID: "MOCK_MASTER_ID",
+    GOOGLE_CLIENT_ID: "MOCK_CLIENT_ID",
+    PropertiesService: {
+      getScriptProperties: () => ({
+        getProperty: (k) => k === "ACCESS_REVISION" ? "rev1" : null,
+        setProperty: () => {}
+      })
+    },
+    CacheService: {
+      getScriptCache: () => ({
+        get: (k) => cacheMap.has(k) ? cacheMap.get(k) : null,
+        put: (k, v) => cacheMap.set(k, String(v)),
+        remove: (k) => cacheMap.delete(k)
+      })
+    },
+    SpreadsheetApp: {
+      openById: (id) => {
+        throw new Error(`CRITICAL: Cache Hit 時不應開啟試算表！(ID: ${id})`);
+      }
+    },
+    loadTripDetails: (sheetId) => {
+      loadTripDetailsCalls++;
+      return { name: "直讀試算表手冊", days: [] };
+    },
+    verifyIdToken: (t) => "admin@example.com",
+    hashToken: (t) => "token_hash",
+    normalizeEmail: (e) => String(e).toLowerCase().trim(),
+    calcTripDurationInGas: () => "5天4夜",
+    ContentService: {
+      MimeType: { JSON: "application/json" },
+      createTextOutput: (text) => ({
+        setMimeType: () => ({ text: () => text })
+      })
+    },
+    Logger: { log: () => {} }
+  };
+
+  // 從 gasCode 擷取輔助快取函式與 doGet (包含 getAccessRevision)
+  const functionsToRun = `
+    ${gasCode.slice(gasCode.indexOf('function getAccessRevision'), gasCode.indexOf('// 自動根據出發與結束日期'))}
+    ${gasCode.slice(gasCode.indexOf('function findTripMetaFromRows'), gasCode.indexOf('// 處理 POST 請求'))}
+  `;
+
+  vm.createContext(gasSandbox);
+  vm.runInContext(functionsToRun, gasSandbox);
+
+  let guestTripsPassed = false;
+  let pinTripDataPassed = false;
+  let adminBootstrapPassed = false;
+
+  try {
+    // 情境 1：訪客首頁第二次讀取 (public_trips_v1 命中)
+    const res1 = gasSandbox.doGet({ parameter: { action: "getTrips" } });
+    const json1 = JSON.parse(res1.text());
+    guestTripsPassed = json1.status === "success" && json1.trips.length === 1;
+  } catch (e) {
+    guestTripsPassed = false;
+  }
+
+  try {
+    // 情境 2：PIN 第二次開啟 (trip_meta + trip_content 命中，只驗證 PIN，不讀試算表)
+    const res2 = gasSandbox.doGet({
+      parameter: {
+        action: "getTripData",
+        tripUuid: "trip_demo",
+        tripPassword: "123"
+      }
+    });
+    const json2 = JSON.parse(res2.text());
+    pinTripDataPassed = json2.status === "success" && json2.data && json2.data.days.length === 1;
+  } catch (e) {
+    pinTripDataPassed = false;
+  }
+
+  try {
+    // 情境 3：管理員返回行程 (access + meta + content 命中，不開主控表/子表)
+    const res3 = gasSandbox.doGet({
+      parameter: {
+        action: "bootstrap",
+        tripUuid: "trip_demo",
+        token: "admin_valid_token"
+      }
+    });
+    const json3 = JSON.parse(res3.text());
+    adminBootstrapPassed = json3.status === "success" && json3.currentTrip && json3.currentTrip.days.length === 1;
+  } catch (e) {
+    adminBootstrapPassed = false;
+  }
+
+  const allZeroOpenPassed = guestTripsPassed && pinTripDataPassed && adminBootstrapPassed && loadTripDetailsCalls === 0;
 
   assertCheck(
-    "[架構審查] GAS doGet 快取檢查嚴格前置於 SpreadsheetApp.openById 之前",
-    isPreceded,
-    `快取檢查位置: index ${cacheCheckIdx} < 開啟試算表位置: index ${openByIdIdx} (快取命中時 100% 避免開表)`
+    "[操作型行為實測] Cache Hit 時 SpreadsheetApp.openById 拋錯仍能成功回應，loadTripDetails 呼叫 0 次",
+    allZeroOpenPassed,
+    `訪客大廳 0 開表: ${guestTripsPassed}, PIN 解鎖 0 開表: ${pinTripDataPassed}, 管理員 bootstrap 0 開表: ${adminBootstrapPassed}, 子表載入呼叫: ${loadTripDetailsCalls} 次`
   );
 })();
 

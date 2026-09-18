@@ -182,9 +182,9 @@ function calcTripDurationInGas(startDate, endDate) {
   return "";
 }
 
-// 取得使用者角色與可存取行程列表
-function getUserAccess(email) {
-  const masterSpreadsheet = SpreadsheetApp.openById(MASTER_SHEET_ID);
+// 取得使用者角色與可存取行程列表 (支援傳入既有 masterSpreadsheet 與 tripRows 避免重複開表)
+function getUserAccess(email, optSpreadsheet, optTripRows) {
+  const masterSpreadsheet = optSpreadsheet || SpreadsheetApp.openById(MASTER_SHEET_ID);
   const cleanEmail = normalizeEmail(email);
   const allowedTrips = [];
   
@@ -231,9 +231,12 @@ function getUserAccess(email) {
     }
   }
   
-  // 2. 檢索可存取行程
-  const tripSheet = masterSpreadsheet.getSheetByName("Trips");
-  const tripRows = tripSheet.getDataRange().getValues();
+  // 2. 檢索可存取行程 (重用傳入的 tripRows，未傳入時才查表)
+  const tripRows = optTripRows || (function() {
+    const tripSheet = masterSpreadsheet.getSheetByName("Trips");
+    return tripSheet ? tripSheet.getDataRange().getValues() : [];
+  })();
+
   for (let i = 1; i < tripRows.length; i++) {
     const uuid = tripRows[i][0];
     const name = tripRows[i][1];
@@ -288,6 +291,53 @@ function getUserAccess(email) {
   };
 }
 
+// 從試算表 Rows 提取單一行程之 Meta
+function findTripMetaFromRows(tripUuid, tripRows) {
+  if (!tripRows || !tripUuid) return null;
+  for (let i = 1; i < tripRows.length; i++) {
+    if (tripRows[i][0] === tripUuid) {
+      const password = tripRows[i][5] ? String(tripRows[i][5]).trim() : "";
+      const startDate = tripRows[i][6] ? String(tripRows[i][6]).trim() : "";
+      const endDate = tripRows[i][7] ? String(tripRows[i][7]).trim() : "";
+      let duration = tripRows[i][8] ? String(tripRows[i][8]).trim() : "";
+      if (!duration && startDate && endDate) {
+        duration = calcTripDurationInGas(startDate, endDate);
+      }
+      return {
+        uuid: tripRows[i][0],
+        name: tripRows[i][1],
+        sheet_id: tripRows[i][2],
+        folder_id: tripRows[i][3],
+        allowed_users: tripRows[i][4] || "",
+        password: password,
+        hasPassword: Boolean(password),
+        startDate: startDate,
+        endDate: endDate,
+        duration: duration
+      };
+    }
+  }
+  return null;
+}
+
+// 取得行程 Meta (共用快取函式：bootstrap 與 getTripData 統一使用，快取 600 秒)
+function getTripMetaCached(tripUuid, tripRows) {
+  const key = "trip_meta_" + tripUuid;
+  const cached = safeGetCache(key);
+
+  if (cached) return cached;
+
+  if (!tripRows) return null;
+
+  const meta = findTripMetaFromRows(tripUuid, tripRows);
+
+  if (meta) {
+    safePutCache(key, meta, 600);
+  }
+
+  return meta;
+}
+
 // 處理 GET 請求 (支援已登入管理員/團員，以及未登入訪客唯讀瀏覽)
 function doGet(e) {
   try {
@@ -300,11 +350,11 @@ function doGet(e) {
     let token = authHeader;
 
     // =========================================================================
-    // 快取前置檢查 (CacheService 前置於 SpreadsheetApp.openById 之前)
+    // 快取前置檢查 (CacheService 嚴格前置於 SpreadsheetApp.openById 之前)
     // =========================================================================
 
     // 1. 訪客公開大廳端點 (getTrips 且無 Token)：
-    // 快取命中時直接回傳，避免執行 SpreadsheetApp.openById()！實際速度依 GAS 冷啟動及網路狀態而異。
+    // 快取命中時直接回傳，避免執行 SpreadsheetApp.openById()！
     if (action === "getTrips" && !token) {
       const cachedPublic = safeGetCache("public_trips_v1");
       if (cachedPublic) {
@@ -329,7 +379,7 @@ function doGet(e) {
       const cachedAccess = safeGetCache(accessCacheKey);
       if (cachedAccess) {
         access = cachedAccess;
-        // 若 action 為 getTrips 且權限快取命中，直接回傳，無需開表！
+        // 若 action 為 getTrips 且權限快取命中，直接回傳，0 開表！
         if (action === "getTrips") {
           return ContentService.createTextOutput(JSON.stringify({
             status: "success",
@@ -340,154 +390,179 @@ function doGet(e) {
       }
     }
 
-    // 3. Cache Miss 時才開啟主控試算表 (延遲載入)
-    const masterSpreadsheet = SpreadsheetApp.openById(MASTER_SHEET_ID);
-  const tripSheet = masterSpreadsheet.getSheetByName("Trips");
-  const tripRows = tripSheet.getDataRange().getValues();
-  
-  if (email) {
-    if (!access) {
-      access = getUserAccess(email);
-      // 成功讀取後安全存入權限快取 (綁定 accessRevision)
-      const accessCacheKey = "access_" + hashToken(email) + "_" + getAccessRevision();
-      safePutCache(accessCacheKey, access, 300);
-    }
-  } else {
-    // 訪客模式：讀取所有行程之公開摘要（絕不包含密碼與內部試算表 ID）
-    const publicTrips = [];
-    for (let i = 1; i < tripRows.length; i++) {
-      const uuid = tripRows[i][0];
-      const name = tripRows[i][1];
-      const password = tripRows[i][5] ? String(tripRows[i][5]).trim() : "";
-      const startDate = tripRows[i][6] ? String(tripRows[i][6]).trim() : "";
-      const endDate = tripRows[i][7] ? String(tripRows[i][7]).trim() : "";
-      let duration = tripRows[i][8] ? String(tripRows[i][8]).trim() : "";
-      if (!duration && startDate && endDate) {
-        duration = calcTripDurationInGas(startDate, endDate);
-      }
-      if (uuid) {
-        publicTrips.push({
-          uuid: uuid,
-          name: name,
-          hasPassword: Boolean(password),
-          canEdit: false,
-          startDate: startDate,
-          endDate: endDate,
-          duration: duration
-        });
+    // 延遲開表輔助函式：僅當快取未命中時才開啟主控試算表，且保證單次請求中只開一次
+    let masterSpreadsheet = null;
+    let tripRows = null;
+    function ensureMasterData() {
+      if (!masterSpreadsheet) {
+        masterSpreadsheet = SpreadsheetApp.openById(MASTER_SHEET_ID);
+        const tripSheet = masterSpreadsheet.getSheetByName("Trips");
+        tripRows = tripSheet.getDataRange().getValues();
       }
     }
-    access = { role: "guest", trips: publicTrips };
-    // 成功讀取後安全存入公開行程快取 (時效 600 秒)
-    safePutCache("public_trips_v1", publicTrips, 600);
-  }
-  
-  // 一次性初始化合併端點：整合角色、行程清單與目前手冊資料，解決冷啟動兩段式等待過長問題
-  if (action === "bootstrap") {
-    const tripUuid = e.parameter.tripUuid;
-    let currentTripData = null;
-    let canEditCurrent = false;
 
-    if (tripUuid) {
-      let targetSheetId = "";
-      let allowedUsersStr = "";
-      let tripPassword = "";
-      let tripName = "";
-      let tripStartDate = "";
-      let tripEndDate = "";
-      let tripDuration = "";
+    // 3. 一次性初始化合併端點 (bootstrap)
+    if (action === "bootstrap") {
+      const tripUuid = e.parameter.tripUuid;
+      let currentTripData = null;
+      let canEditCurrent = false;
 
-      for (let i = 1; i < tripRows.length; i++) {
-        if (tripRows[i][0] === tripUuid) {
-          tripName = tripRows[i][1];
-          targetSheetId = tripRows[i][2];
-          allowedUsersStr = tripRows[i][4] || "";
-          tripPassword = tripRows[i][5] ? String(tripRows[i][5]).trim() : "";
-          tripStartDate = tripRows[i][6] ? String(tripRows[i][6]).trim() : "";
-          tripEndDate = tripRows[i][7] ? String(tripRows[i][7]).trim() : "";
-          tripDuration = tripRows[i][8] ? String(tripRows[i][8]).trim() : "";
-          break;
-        }
-      }
-
-      if (targetSheetId) {
-        const allowedList = (allowedUsersStr || "").toLowerCase().split(",").map(s => normalizeEmail(s));
-        const isMember = Boolean(email && allowedList.includes(normalizeEmail(email)));
-        const isAdmin = access.role === "admin";
-        canEditCurrent = Boolean(isAdmin || isMember);
-
-        const clientPin = String(e.parameter.tripPassword || e.parameter.password || "").trim();
-        const hasValidPin = Boolean(tripPassword && clientPin === tripPassword);
-        const isPublicWithoutPin = !tripPassword;
-
-        if (isAdmin || isMember || hasValidPin || isPublicWithoutPin) {
-          try {
-            // 優先檢查手冊純內容快取
-            let data = safeGetCache("trip_content_" + tripUuid);
-            if (!data) {
-              data = loadTripDetails(targetSheetId);
-              if (!data.name && tripName) data.name = tripName;
-              if (!data.startDate && tripStartDate) data.startDate = tripStartDate;
-              if (!data.endDate && tripEndDate) data.endDate = tripEndDate;
-              if (!data.duration && tripDuration) data.duration = tripDuration;
-              if (!data.duration && data.startDate && data.endDate) {
-                data.duration = calcTripDurationInGas(data.startDate, data.endDate);
-              }
-              delete data.password;
-              delete data.allowed_users;
-              delete data.sheet_id;
-              delete data.folder_id;
-              // 成功讀取後安全存入手冊快取 (檢查 < 90KB)
-              safePutCache("trip_content_" + tripUuid, data, 300);
+      // 確保取得權限物件
+      if (email && !access) {
+        ensureMasterData();
+        access = getUserAccess(email, masterSpreadsheet, tripRows);
+        safePutCache("access_" + hashToken(email) + "_" + getAccessRevision(), access, 300);
+      } else if (!access) {
+        // 訪客 bootstrap，讀取或快取公開行程
+        const cachedPublic = safeGetCache("public_trips_v1");
+        if (cachedPublic) {
+          access = { role: "guest", trips: cachedPublic };
+        } else {
+          ensureMasterData();
+          const publicTrips = [];
+          for (let i = 1; i < tripRows.length; i++) {
+            const uuid = tripRows[i][0];
+            const name = tripRows[i][1];
+            const password = tripRows[i][5] ? String(tripRows[i][5]).trim() : "";
+            const startDate = tripRows[i][6] ? String(tripRows[i][6]).trim() : "";
+            const endDate = tripRows[i][7] ? String(tripRows[i][7]).trim() : "";
+            let duration = tripRows[i][8] ? String(tripRows[i][8]).trim() : "";
+            if (!duration && startDate && endDate) {
+              duration = calcTripDurationInGas(startDate, endDate);
             }
-            currentTripData = data;
-          } catch (loadErr) {}
+            if (uuid) {
+              publicTrips.push({
+                uuid: uuid,
+                name: name,
+                hasPassword: Boolean(password),
+                canEdit: false,
+                startDate: startDate,
+                endDate: endDate,
+                duration: duration
+              });
+            }
+          }
+          access = { role: "guest", trips: publicTrips };
+          safePutCache("public_trips_v1", publicTrips, 600);
         }
       }
-    }
 
-    const responseData = {
-      status: "success",
-      role: access.role,
-      trips: access.trips,
-      currentTrip: currentTripData,
-      canEdit: canEditCurrent
-    };
-    return ContentService.createTextOutput(JSON.stringify(responseData))
-                         .setMimeType(ContentService.MimeType.JSON);
-  }
+      if (tripUuid) {
+        let meta = getTripMetaCached(tripUuid, null);
+        if (!meta) {
+          ensureMasterData();
+          meta = getTripMetaCached(tripUuid, tripRows);
+        }
 
-  if (action === "getTrips") {
-    const responseData = {
-      status: "success",
-      role: access.role,
-      trips: access.trips
-    };
-    return ContentService.createTextOutput(JSON.stringify(responseData))
-                         .setMimeType(ContentService.MimeType.JSON);
-  }
+        if (meta && meta.sheet_id) {
+          const allowedList = (meta.allowed_users || "").toLowerCase().split(",").map(s => normalizeEmail(s));
+          const isMember = Boolean(email && allowedList.includes(normalizeEmail(email)));
+          const isAdmin = Boolean(access && access.role === "admin");
+          canEditCurrent = Boolean(isAdmin || isMember);
 
-  // 管理員專用端點：讀取指定行程之完整管理 Meta (包含原 PIN、授權成員名單、試算表與資料夾 ID)
-  if (action === "getTripMeta") {
-    if (access.role !== "admin") {
-      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Admin privileges required" }))
+          const clientPin = String(e.parameter.tripPassword || e.parameter.password || "").trim();
+          const hasValidPin = Boolean(meta.password && clientPin === meta.password);
+          const isPublicWithoutPin = !meta.password;
+
+          if (isAdmin || isMember || hasValidPin || isPublicWithoutPin) {
+            try {
+              // 優先讀取手冊純內容快取
+              let data = safeGetCache("trip_content_" + tripUuid);
+              if (!data) {
+                data = loadTripDetails(meta.sheet_id);
+                if (!data.name && meta.name) data.name = meta.name;
+                if (!data.startDate && meta.startDate) data.startDate = meta.startDate;
+                if (!data.endDate && meta.endDate) data.endDate = meta.endDate;
+                if (!data.duration && meta.duration) data.duration = meta.duration;
+                if (!data.duration && data.startDate && data.endDate) {
+                  data.duration = calcTripDurationInGas(data.startDate, data.endDate);
+                }
+                delete data.password;
+                delete data.allowed_users;
+                delete data.sheet_id;
+                delete data.folder_id;
+                safePutCache("trip_content_" + tripUuid, data, 300);
+              }
+              currentTripData = data;
+            } catch (loadErr) {}
+          }
+        }
+      }
+
+      const responseData = {
+        status: "success",
+        role: access.role,
+        trips: access.trips,
+        currentTrip: currentTripData,
+        canEdit: canEditCurrent
+      };
+      return ContentService.createTextOutput(JSON.stringify(responseData))
                            .setMimeType(ContentService.MimeType.JSON);
     }
-    const tripUuid = e.parameter.tripUuid;
-    let foundTrip = null;
-    for (let i = 1; i < tripRows.length; i++) {
-      if (tripRows[i][0] === tripUuid) {
-        const password = tripRows[i][5] ? String(tripRows[i][5]).trim() : "";
-        const startDate = tripRows[i][6] ? String(tripRows[i][6]).trim() : "";
-        const endDate = tripRows[i][7] ? String(tripRows[i][7]).trim() : "";
-        let duration = tripRows[i][8] ? String(tripRows[i][8]).trim() : "";
-        if (!duration && startDate && endDate) {
-          duration = calcTripDurationInGas(startDate, endDate);
+
+    // 4. 行程清單端點 (getTrips)
+    if (action === "getTrips") {
+      if (email && !access) {
+        ensureMasterData();
+        access = getUserAccess(email, masterSpreadsheet, tripRows);
+        safePutCache("access_" + hashToken(email) + "_" + getAccessRevision(), access, 300);
+      } else if (!access) {
+        ensureMasterData();
+        const publicTrips = [];
+        for (let i = 1; i < tripRows.length; i++) {
+          const uuid = tripRows[i][0];
+          const name = tripRows[i][1];
+          const password = tripRows[i][5] ? String(tripRows[i][5]).trim() : "";
+          const startDate = tripRows[i][6] ? String(tripRows[i][6]).trim() : "";
+          const endDate = tripRows[i][7] ? String(tripRows[i][7]).trim() : "";
+          let duration = tripRows[i][8] ? String(tripRows[i][8]).trim() : "";
+          if (!duration && startDate && endDate) {
+            duration = calcTripDurationInGas(startDate, endDate);
+          }
+          if (uuid) {
+            publicTrips.push({
+              uuid: uuid,
+              name: name,
+              hasPassword: Boolean(password),
+              canEdit: false,
+              startDate: startDate,
+              endDate: endDate,
+              duration: duration
+            });
+          }
         }
-        let themeVal = "";
-        try {
-          if (tripRows[i][2]) {
-            const subSs = SpreadsheetApp.openById(tripRows[i][2]);
+        access = { role: "guest", trips: publicTrips };
+        safePutCache("public_trips_v1", publicTrips, 600);
+      }
+      return ContentService.createTextOutput(JSON.stringify({
+        status: "success",
+        role: access.role,
+        trips: access.trips
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // 5. 管理員專用端點：讀取指定行程之完整管理 Meta (getTripMeta)
+    if (action === "getTripMeta") {
+      if (email && !access) {
+        ensureMasterData();
+        access = getUserAccess(email, masterSpreadsheet, tripRows);
+        safePutCache("access_" + hashToken(email) + "_" + getAccessRevision(), access, 300);
+      }
+      if (!access || access.role !== "admin") {
+        return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Admin privileges required" }))
+                             .setMimeType(ContentService.MimeType.JSON);
+      }
+      const tripUuid = e.parameter.tripUuid;
+      let meta = getTripMetaCached(tripUuid, null);
+      if (!meta) {
+        ensureMasterData();
+        meta = getTripMetaCached(tripUuid, tripRows);
+      }
+      if (meta) {
+        let themeVal = meta.theme || "";
+        if (!themeVal && meta.sheet_id) {
+          try {
+            const subSs = SpreadsheetApp.openById(meta.sheet_id);
             const infoSheet = subSs.getSheetByName("Info");
             if (infoSheet) {
               const infoData = infoSheet.getDataRange().getValues();
@@ -498,114 +573,103 @@ function doGet(e) {
                 }
               }
             }
+          } catch (e) {}
+        }
+        return ContentService.createTextOutput(JSON.stringify({
+          status: "success",
+          trip: Object.assign({}, meta, { theme: themeVal })
+        })).setMimeType(ContentService.MimeType.JSON);
+      } else {
+        return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Trip not found" }))
+                             .setMimeType(ContentService.MimeType.JSON);
+      }
+    }
+
+    // 6. 手冊內容端點 (getTripData)：PIN 訪客與成員解鎖手冊
+    if (action === "getTripData") {
+      const tripUuid = e.parameter.tripUuid;
+      if (!tripUuid) {
+        return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "缺少行程代碼" }))
+                             .setMimeType(ContentService.MimeType.JSON);
+      }
+
+      // 優先從 Meta 快取讀取，未命中才延遲開表
+      let meta = getTripMetaCached(tripUuid, null);
+      if (!meta) {
+        ensureMasterData();
+        meta = getTripMetaCached(tripUuid, tripRows);
+      }
+
+      if (!meta || !meta.sheet_id) {
+        return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "找不到該行程專屬試算表" }))
+                             .setMimeType(ContentService.MimeType.JSON);
+      }
+
+      // 身份檢查
+      if (email && !access) {
+        ensureMasterData();
+        access = getUserAccess(email, masterSpreadsheet, tripRows);
+        safePutCache("access_" + hashToken(email) + "_" + getAccessRevision(), access, 300);
+      }
+      const currentRole = access ? access.role : (email ? "user" : "guest");
+      const allowedList = (meta.allowed_users || "").toLowerCase().split(",").map(s => normalizeEmail(s));
+      const isMember = Boolean(email && allowedList.includes(normalizeEmail(email)));
+      const isAdmin = Boolean(currentRole === "admin");
+      const canEdit = Boolean(isAdmin || isMember);
+
+      const clientPin = String(e.parameter.tripPassword || e.parameter.password || "").trim();
+      const hasValidPin = Boolean(meta.password && clientPin === meta.password);
+      const isPublicWithoutPin = !meta.password;
+
+      // 門禁校驗：管理員、成員、正確 PIN、或未設 PIN 的行程放行閱讀手冊
+      if (!isAdmin && !isMember && !hasValidPin && !isPublicWithoutPin) {
+        return ContentService.createTextOutput(JSON.stringify({
+          status: "locked",
+          uuid: tripUuid,
+          name: meta.name,
+          hasPassword: true,
+          canEdit: false,
+          message: "此旅程設有專屬密碼保護，請輸入密碼以解鎖手冊內容。"
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
+
+      // 門禁通過後，使用手冊內容快取 (trip_content_<uuid>)
+      try {
+        const contentKey = "trip_content_" + tripUuid;
+        let data = safeGetCache(contentKey);
+
+        if (!data) {
+          data = loadTripDetails(meta.sheet_id);
+
+          if (!data.name && meta.name) data.name = meta.name;
+          if (!data.startDate && meta.startDate) data.startDate = meta.startDate;
+          if (!data.endDate && meta.endDate) data.endDate = meta.endDate;
+          if (!data.duration && meta.duration) data.duration = meta.duration;
+          if (!data.duration && data.startDate && data.endDate) {
+            data.duration = calcTripDurationInGas(data.startDate, data.endDate);
           }
-        } catch (e) {}
 
-        foundTrip = {
-          uuid: tripRows[i][0],
-          name: tripRows[i][1],
-          sheet_id: tripRows[i][2],
-          folder_id: tripRows[i][3],
-          allowed_users: tripRows[i][4] || "",
-          password: password,
-          hasPassword: Boolean(password),
-          startDate: startDate,
-          endDate: endDate,
-          duration: duration,
-          theme: themeVal
-        };
-        break;
+          // 資安強化：一般手冊資料一律清除 password 及敏感試算表 ID
+          delete data.password;
+          delete data.allowed_users;
+          delete data.sheet_id;
+          delete data.folder_id;
+
+          safePutCache(contentKey, data, 300);
+        }
+
+        return ContentService.createTextOutput(JSON.stringify({ 
+          status: "success", 
+          role: currentRole, 
+          canEdit: canEdit,
+          data: data,
+          trip: data
+        })).setMimeType(ContentService.MimeType.JSON);
+      } catch (err) {
+        return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "讀取資料庫失敗: " + err.message }))
+                             .setMimeType(ContentService.MimeType.JSON);
       }
     }
-    if (foundTrip) {
-      return ContentService.createTextOutput(JSON.stringify({ status: "success", trip: foundTrip }))
-                           .setMimeType(ContentService.MimeType.JSON);
-    } else {
-      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Trip not found" }))
-                           .setMimeType(ContentService.MimeType.JSON);
-    }
-  }
-  
-  if (action === "getTripData") {
-    const tripUuid = e.parameter.tripUuid;
-    let targetSheetId = "";
-    let allowedUsersStr = "";
-    let tripPassword = "";
-    let tripName = "";
-    let tripStartDate = "";
-    let tripEndDate = "";
-    let tripDuration = "";
-    
-    // 搜尋對應的 Sheet ID、授權名單與專屬密碼及 Meta
-    for (let i = 1; i < tripRows.length; i++) {
-      if (tripRows[i][0] === tripUuid) {
-        tripName = tripRows[i][1];
-        targetSheetId = tripRows[i][2];
-        allowedUsersStr = tripRows[i][4] || "";
-        tripPassword = tripRows[i][5] ? String(tripRows[i][5]).trim() : "";
-        tripStartDate = tripRows[i][6] ? String(tripRows[i][6]).trim() : "";
-        tripEndDate = tripRows[i][7] ? String(tripRows[i][7]).trim() : "";
-        tripDuration = tripRows[i][8] ? String(tripRows[i][8]).trim() : "";
-        break;
-      }
-    }
-    
-    if (!targetSheetId) {
-      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "找不到該行程專屬試算表" }))
-                           .setMimeType(ContentService.MimeType.JSON);
-    }
-    
-    // 權限檢查：閱讀手冊門禁判定（PIN 與成員名單解耦）
-    const allowedList = (allowedUsersStr || "").toLowerCase().split(",").map(s => normalizeEmail(s));
-    const isMember = Boolean(email && allowedList.includes(normalizeEmail(email)));
-    const isAdmin = access.role === "admin";
-    const canEdit = Boolean(isAdmin || isMember);
-
-    const clientPin = String(e.parameter.tripPassword || e.parameter.password || "").trim();
-    const hasValidPin = Boolean(tripPassword && clientPin === tripPassword);
-    const isPublicWithoutPin = !tripPassword;
-
-    // 門禁校驗：管理員、成員、正確 PIN、或未設 PIN 的行程放行閱讀手冊
-    if (!isAdmin && !isMember && !hasValidPin && !isPublicWithoutPin) {
-      return ContentService.createTextOutput(JSON.stringify({
-        status: "locked",
-        uuid: tripUuid,
-        name: tripName,
-        hasPassword: true,
-        canEdit: false,
-        message: "此旅程設有專屬密碼保護，請輸入密碼以解鎖手冊內容。"
-      })).setMimeType(ContentService.MimeType.JSON);
-    }
-    
-    // 讀取該旅遊專屬試算表的資料
-    try {
-      const data = loadTripDetails(targetSheetId);
-      // 雙向防呆對齊：若子表 Info 的 Name、日期或天數為空，自動以 Trips 總表登記資料作為強健備援
-      if (!data.name && tripName) data.name = tripName;
-      if (!data.startDate && tripStartDate) data.startDate = tripStartDate;
-      if (!data.endDate && tripEndDate) data.endDate = tripEndDate;
-      if (!data.duration && tripDuration) data.duration = tripDuration;
-      if (!data.duration && data.startDate && data.endDate) {
-        data.duration = calcTripDurationInGas(data.startDate, data.endDate);
-      }
-
-      // 資安強化：一般手冊資料一律清除 password 及敏感試算表 ID，嚴禁外洩 PIN
-      delete data.password;
-      delete data.allowed_users;
-      delete data.sheet_id;
-      delete data.folder_id;
-
-      return ContentService.createTextOutput(JSON.stringify({ 
-        status: "success", 
-        role: access.role, 
-        canEdit: canEdit,
-        data: data 
-      })).setMimeType(ContentService.MimeType.JSON);
-    } catch (err) {
-      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "讀取資料庫失敗: " + err.message }))
-                           .setMimeType(ContentService.MimeType.JSON);
-    }
-  }
   
     return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "無效的操作指令" }))
                          .setMimeType(ContentService.MimeType.JSON);

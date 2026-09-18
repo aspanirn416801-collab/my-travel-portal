@@ -15,7 +15,7 @@ const {
 
 // 統一門禁轉接函式：自動注入當前頁面的登入身分與憑證有效性，保留正式頁面現有兩參數呼叫慣例
 function isTripUnlocked(tripUuid, hasPassword) {
-  const role = typeof userRole !== "undefined" ? userRole : "guest";
+  const role = typeof verifiedRole !== "undefined" ? verifiedRole : (typeof userRole !== "undefined" ? userRole : "guest");
   const token = typeof idToken !== "undefined" ? idToken : null;
   const expired = typeof isTokenExpired === "function" ? isTokenExpired(token) : false;
   return isTripUnlockedCore(
@@ -83,10 +83,25 @@ let tripRequestSequence = 0; // 跨行程請求流水號，徹底杜絕 Race Con
 
 // 判定當前行程是否具備編輯權限 (管理員全權、或經後端認證的授權成員)
 function canEditCurrentTrip() {
-  if (userRole === "admin" && idToken && !isTokenExpired(idToken)) return true;
-  if (!currentTripUuid) return false;
+  if (authStatus !== "authenticated") return false;
+
+  if (
+    verifiedRole === "admin" &&
+    idToken &&
+    !isTokenExpired(idToken)
+  ) {
+    return true;
+  }
+
+  if (verifiedRole !== "user") return false;
+
   const perm = tripPermissions.get(currentTripUuid);
-  return Boolean(perm && perm.canEdit && idToken && !isTokenExpired(idToken));
+
+  return Boolean(
+    perm?.canEdit &&
+    idToken &&
+    !isTokenExpired(idToken)
+  );
 }
 
 // 預設安全之公開行程摘要骨架 (無快取或冷啟動時 0 秒立即呈現卡片，不含任何 PIN 密碼，大幅消弭等待焦慮)
@@ -960,7 +975,7 @@ function showTripView() {
 // 獨立專屬後台視圖 (具備防畫面跳動與捲動保留機制)
 function showAdminView(options = { resetScroll: false }) {
   // 管理員身分嚴格校驗：必須持有未過期的有效 Token
-  const hasValidAdminToken = idToken && !isTokenExpired(idToken) && userRole === "admin";
+  const hasValidAdminToken = idToken && !isTokenExpired(idToken) && verifiedRole === "admin";
   if (!hasValidAdminToken) {
     showToast("此管理專區僅限系統管理員存取");
     triggerGoogleLogin();
@@ -1349,7 +1364,7 @@ function updateAuthUI() {
 
 // 點擊頂部導覽列右上方「🛠️ 後台」按鈕 (獨立後台視圖，不在各旅遊行程中佔用分頁)
 function openAdminView() {
-  if (userRole !== "admin" || !idToken || isTokenExpired(idToken)) {
+  if (verifiedRole !== "admin" || !idToken || isTokenExpired(idToken)) {
     showToast("請先登入管理員帳號");
     triggerGoogleLogin();
     return;
@@ -1363,7 +1378,7 @@ function openAdminPanelFromHeader() {
 
 // 獨立管理中心 Modal (完全獨立於各旅遊行程之外)
 function openAdminCenterModal() {
-  if (userRole !== "admin" || !idToken || isTokenExpired(idToken)) {
+  if (verifiedRole !== "admin" || !idToken || isTokenExpired(idToken)) {
     showToast("請先登入管理員帳號");
     triggerGoogleLogin();
     return;
@@ -1446,8 +1461,14 @@ function handleCredentialResponse(response) {
   const userEmail = userInfo?.email ? userInfo.email.toLowerCase().trim() : "";
   const userName = userInfo?.name || userEmail.split("@")[0] || "使用者";
 
-  // 身分完全以 Google Apps Script 後端回應為唯一依據，絕不信任本地快取提權
-  userRole = "verifying";
+  // 開始驗證新帳號：遞增世代、清空舊授權，嚴格設定 verifying 顯示軌與 guest 權限軌
+  authGeneration++;
+  tripPermissions.clear();
+
+  authStatus = "verifying";
+  verifiedRole = "guest";
+  userRole = "guest";
+
   updateAuthUI();
   showToast(`歡迎 ${userName}，正在向伺服器確認帳號權限...`);
 
@@ -1478,7 +1499,7 @@ function handleCredentialResponse(response) {
 
     if (
       shouldOpenAdmin &&
-      userRole === "admin" &&
+      verifiedRole === "admin" &&
       idToken &&
       !isTokenExpired(idToken)
     ) {
@@ -1701,6 +1722,12 @@ let tripsRequestSeq = 0;
 
 // 取得行程清單與初始化 (支援一次性 bootstrap 合併請求與 In-flight 精準併發控制)
 async function fetchTrips({ force = false } = {}) {
+  // 強制重試時：若持有 Token 立即重設顯示軌為 verifying，避免顯示誤導
+  if (force) {
+    authStatus = (idToken && !isTokenExpired(idToken)) ? "verifying" : "guest";
+    updateAuthUI();
+  }
+
   // 1. 優先從本地快取瞬間秒開大廳，0 等待！
   try {
     const cached = localStorage.getItem("cache_tripsList");
@@ -1804,7 +1831,7 @@ async function fetchTrips({ force = false } = {}) {
 
         if (
           isAdminRoute &&
-          userRole === "admin" &&
+          verifiedRole === "admin" &&
           idToken &&
           !isTokenExpired(idToken)
         ) {
@@ -1826,6 +1853,7 @@ async function fetchTrips({ force = false } = {}) {
       }
       verifiedRole = "guest";
       userRole = "guest";
+      tripPermissions.clear(); // 驗證失敗清除舊授權，防舊介面殘留
       updateAuthUI();
       const container = document.getElementById("hubTripsGrid");
       if (container && tripsList.length === 0) {
