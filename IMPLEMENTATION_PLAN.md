@@ -33,7 +33,7 @@
 - 訪客公開大廳請求（`action === "getTrips"` 且未帶 token）：快取命中時直接回傳，**避免執行 `SpreadsheetApp.openById()`**；實際速度依 GAS 冷啟動及網路狀態而異。
 - 帶 Token 請求：先查 Token 驗證快取與 Email 權限快取，僅在 Cache Miss 時才開啟 `MASTER_SHEET_ID` 試算表。
 
-### 4. accessRevision 儲存於 ScriptProperties 並使用 LockService 併發保護
+### 4. 完整的快取失效矩陣與 accessRevision 併發保護
 - **持久化儲存**：權限版本號 `ACCESS_REVISION` 存放於 `PropertiesService.getScriptProperties()`，絕不依賴會被淘汰的 CacheService。
 - **LockService 併發鎖**：修改成員名單或行程權限時，使用 `LockService.getScriptLock()` 等待至多 10 秒，防止並發更新遺失版本號：
   ```javascript
@@ -54,6 +54,16 @@
     }
   }
   ```
+- **完整快取失效映射矩陣**：
+  | 寫入端點 | 成功後處理與清除 Key |
+  | :--- | :--- |
+  | **`createTrip`** | 移除 `public_trips_v1`、遞增 `ACCESS_REVISION`（確保登入者權限即時包含新行程） |
+  | **`updateTripData`** | 移除 `trip_content_<uuid>` |
+  | **`updateTripMeta`（修改名稱／日期／天數／主題）** | 移除 `public_trips_v1`、`trip_meta_<uuid>`、`trip_content_<uuid>`（同步手冊內部頂部資訊） |
+  | **`updateTripMeta`（修改 PIN 密碼）** | 移除 `public_trips_v1`、`trip_meta_<uuid>` |
+  | **`updateTripMeta`（修改成員名單 `allowedUsers`）** | 移除 `trip_meta_<uuid>`、遞增 `ACCESS_REVISION`（舊權限快取自動失效） |
+  | **修改 `sheet_id`** | 移除 `trip_meta_<uuid>`、`trip_content_<uuid>` |
+  | **圖片網址寫入手冊** | 移除 `trip_content_<uuid>` |
 
 ### 5. 嚴格固定的寫入與失效順序（防讀取異常與降級）
 - **操作順序**：
@@ -93,14 +103,23 @@
   ```
 - 保留完整降級備援，即便 Cache Miss 或超過 90KB，皆能正常從試算表讀取。
 
-### 7. PIN 門禁嚴格阻斷與雙重流水號防護
-- **未解鎖絕不 fetch**：
+### 7. PIN 門禁嚴格阻斷與端點選擇分流
+- **未解鎖絕不 fetch 手冊**：
   ```javascript
   if (hasPassword && !isTripUnlocked(currentTripUuid, hasPassword)) {
     showLockedView(trip || { uuid: currentTripUuid, name: (trip && trip.name) || currentTripUuid });
     return; // 嚴格 return，絕不呼叫 fetchTripData()！
   }
   ```
+- **依身分決定初始化端點（避免訪客呼叫昂貴的 bootstrap）**：
+  ```javascript
+  const hasValidToken = idToken && !isTokenExpired(idToken);
+  const shouldBootstrap = requestedTripUuid && hasValidToken;
+  const actionName = shouldBootstrap ? "bootstrap" : "getTrips";
+  ```
+  - **未登入訪客進入 PIN 行程**：發送 `getTrips`，直接命中 `public_trips_v1` 快取，0 開表開銷！
+  - **已登入但正在恢復身分／成員／管理員**：發送 `bootstrap`，一次取得權限與手冊。
+  - **訪客手動輸入 PIN**：送出單獨一支 `getTripData` 驗證請求。
 - **提交 PIN 雙重比對防競態**：
   ```javascript
   const requestedUuid = currentTripUuid;
@@ -127,26 +146,27 @@
 
 ## 二、變更檔案清單
 
-1. **[app.js](file:///c:/Users/ellaq/Downloads/my-travel-portal-main/app.js)**
+1. **[app.js](./app.js)**
    - 引進 `authStatus` 與 `verifiedRole` 雙軌管理。
    - `navigateTo` 鎖定分支加入 `return`，阻斷手冊提前加載。
+   - `fetchTrips` 依身分選擇 `actionName`（未登入 PIN 行程呼叫 `getTrips`，有 Token 才呼叫 `bootstrap`）。
    - 提交 PIN 加入雙重流水號防護。
    - bootstrap 結果處理加入解鎖狀態檢查與三層日期 fallback。
    - 未授權 Google 登入者文字顯示為「👤 已登入（未授權）」。
    - 版本號提升至 `20260918_13`。
-2. **[index.html](file:///c:/Users/ellaq/Downloads/my-travel-portal-main/index.html)**
+2. **[index.html](./index.html)**
    - 腳本標籤升級至 `?v=20260918_13`。
-3. **[trip-state.js](file:///c:/Users/ellaq/Downloads/my-travel-portal-main/trip-state.js)**
+3. **[trip-state.js](./trip-state.js)**
    - 版本號提升至 `20260918_13`。
-4. **[gas-code.js](file:///c:/Users/ellaq/Downloads/my-travel-portal-main/gas-code.js)**
+4. **[gas-code.js](./gas-code.js)**
    - `doGet` 開頭前置 CacheService 判斷，公開大廳直接命中回傳，跳過 `openById`。
    - 實作原子快取：`public_trips_v1`、`trip_meta_<uuid>`、`access_<emailHash>_<rev>`、`trip_content_<uuid>`。
    - 實作 `PropertiesService` + `LockService` 之 `getAccessRevision()` 與 `bumpAccessRevision()`。
    - 實作 90KB 容量檢查安全寫入函式 `safePutCache()`。
-   - 實作嚴格寫入成功後之快取清除順序。
-5. **[verify_v13_regression.js](file:///c:/Users/ellaq/Downloads/my-travel-portal-main/verify_v13_regression.js)**
-   - 包含 12 項測試：雙軌狀態分離、鎖定分支無 fetchTripData、90KB 快取防護、GAS 快取前置於 openById、LockService 併發鎖與三層日期 fallback 等。
-6. **[WALKTHROUGH.md](file:///c:/Users/ellaq/Downloads/my-travel-portal-main/WALKTHROUGH.md)**
+   - 實作完整快取失效矩陣：各寫入端點成功後精準清除對應 Key 並遞增版本。
+5. **[verify_v13_regression.js](./verify_v13_regression.js)**
+   - 包含 12 項測試：雙軌狀態分離、鎖定分支無 fetchTripData、未登入端點選擇分流、90KB 快取防護、GAS 快取前置於 openById、LockService 併發鎖與三層日期 fallback 等。
+6. **[WALKTHROUGH.md](./WALKTHROUGH.md)**
    - 更新版本紀錄與兩步部署操作指南。
 
 ---
@@ -167,10 +187,10 @@
 | :--- | :--- |
 | **有效 Token 返回網站** | 不顯示訪客，立即顯示「正在恢復身分...」 |
 | **GAS 暫時失敗** | 顯示「身分驗證逾時，點擊重試」，不清除有效 Token，不打回訪客 |
-| **訪客首頁** | GAS 快取命中時 100% 避免執行 `SpreadsheetApp.openById()` |
-| **PIN 鎖定頁** | 輸入 PIN 之前，Network 面板絕不發送 `getTripData` |
+| **訪客首頁與 PIN 行程** | 均發送 `getTrips`，命中快取時 100% 避免執行 `SpreadsheetApp.openById()` |
+| **PIN 鎖定頁** | 輸入 PIN 之前，Network 面板絕不發送 `getTripData`，亦不發動 `bootstrap` |
 | **PIN 送出** | 僅產生一支驗證請求，舊回應不回鎖畫面 |
-| **成員遭移除** | 試算表寫入成功後遞增 `ACCESS_REVISION`，舊快取即刻失效 |
+| **成員遭移除／新增行程** | 試算表寫入成功後遞增 `ACCESS_REVISION`，舊快取即刻失效 |
 | **冷快取** | Cache miss 或異常時順利回退讀取試算表，不報錯 |
 | **大型行程** | 超過 90KB 時安全略過快取，保留試算表正常讀寫 |
 | **空日期資料** | 試算表日期空白時，由三層 Fallback 自動填補，首頁天數絕不消失 |
