@@ -1299,14 +1299,20 @@ function updateAuthUI() {
       badge.innerHTML = `⏳ ${hintText} (${escapeHtml(userName)})`;
       if (adminHubActions) adminHubActions.style.display = "none";
     } else if (authStatus === "auth-error") {
-      badge.className = "user-badge badge-user";
+      badge.className = "user-badge badge-user badge-actionable";
       if (expired) {
-        badge.innerHTML = `⚠️ 登入憑證已過期 (${escapeHtml(userName)}) <span style="font-size:11px;text-decoration:underline;cursor:pointer;margin-left:4px;" onclick="triggerGoogleLogin()">[點此重新登入]</span>`;
+        badge.innerHTML = `⚠️ 憑證已過期 <span style="text-decoration:underline;margin-left:2px;">[點此重登]</span>`;
+        badge.title = `點擊重新登入 (${userName})`;
+        badge.onclick = () => triggerGoogleLogin();
       } else {
-        badge.innerHTML = `⚠️ 身分驗證暫時失敗 (${escapeHtml(userName)}) <span style="font-size:11px;text-decoration:underline;cursor:pointer;margin-left:4px;" onclick="fetchTrips({force:true})">[點此重新連線]</span>`;
+        badge.innerHTML = `⚠️ 驗證失敗 <span style="text-decoration:underline;margin-left:2px;">[點此重試]</span>`;
+        badge.title = `點擊重新連線 (${userName})`;
+        badge.onclick = () => fetchTrips({force:true});
       }
       if (adminHubActions) adminHubActions.style.display = "none";
     } else if (authStatus === "authenticated" && verifiedRole === "admin") {
+      badge.onclick = null;
+      badge.title = "";
       badge.className = "user-badge badge-admin";
       if (expired) {
         // 憑證真過期時才提示續期
@@ -1316,6 +1322,8 @@ function updateAuthUI() {
       }
       if (adminHubActions) adminHubActions.style.display = "block";
     } else if (authStatus === "authenticated" && verifiedRole === "user") {
+      badge.onclick = null;
+      badge.title = "";
       // 判定是否持有任一行程之編輯授權
       let hasAnyCanEdit = false;
       for (const [uuid, perm] of tripPermissions.entries()) {
@@ -1330,10 +1338,14 @@ function updateAuthUI() {
       }
       if (adminHubActions) adminHubActions.style.display = "none";
     } else {
+      badge.onclick = null;
+      badge.title = "";
       // 只有在 Token 真正過期時才顯示已逾期；Token 尚未過期時絕不誤報逾期！
       if (expired) {
-        badge.className = "user-badge badge-guest";
-        badge.innerHTML = `⚠️ 登入已逾期 (${escapeHtml(userName)}) <span style="font-size:11px;text-decoration:underline;cursor:pointer;margin-left:4px;" onclick="triggerGoogleLogin()">[點此重新登入]</span>`;
+        badge.className = "user-badge badge-guest badge-actionable";
+        badge.innerHTML = `⚠️ 登入已逾期 <span style="text-decoration:underline;margin-left:2px;">[點此重登]</span>`;
+        badge.title = `點擊重新登入 (${userName})`;
+        badge.onclick = () => triggerGoogleLogin();
       } else {
         badge.className = "user-badge badge-guest";
         badge.innerText = `👤 訪客已登入 (${userName})`;
@@ -1341,6 +1353,8 @@ function updateAuthUI() {
       if (adminHubActions) adminHubActions.style.display = "none";
     }
   } else {
+    badge.onclick = null;
+    badge.title = "";
     badge.className = "user-badge badge-guest";
     badge.innerText = "訪客模式 (唯讀)";
     if (logoutBtn) logoutBtn.style.display = "none";

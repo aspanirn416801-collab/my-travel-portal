@@ -1916,6 +1916,13 @@ body.large { font-size: 16px; }
     max-width: 1040px;
     margin: 0 auto;
   }
+  /* 電腦版黃框手冊主內容與天氣卡片：收攏置中 (1040px)，頂部紅框封面橫幅與頁籤列維持滿版大氣 */
+  #tripWeatherContainer,
+  #view-trip .main {
+    max-width: 1040px;
+    margin-left: auto;
+    margin-right: auto;
+  }
   /* 交通路線圖網格：桌機 2 欄寬幅展示 */
   .route-maps-grid {
     grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
@@ -2010,11 +2017,22 @@ body.large { font-size: 16px; }
   .user-badge {
     padding: 4px 8px;
     font-size: 10px;
-    max-width: 75px;
+    max-width: 95px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     flex-shrink: 0;
+  }
+  .user-badge.badge-actionable {
+    max-width: none !important;
+    cursor: pointer !important;
+    touch-action: manipulation;
+    padding: 4px 10px;
+    background: #FFF0EE !important;
+    border: 1px solid rgba(200, 59, 43, 0.4) !important;
+    color: var(--red) !important;
+    font-weight: 800;
+    box-shadow: 0 2px 6px rgba(200, 59, 43, 0.15);
   }
   #customLoginBtn, #logoutBtn {
     padding: 5px 8px !important;
@@ -2196,7 +2214,7 @@ body.large { font-size: 16px; }
   #currentTripIndicator {
     max-width: 65px;
   }
-  .user-badge {
+  .user-badge:not(.badge-actionable) {
     max-width: 55px;
     padding: 3px 5px;
     font-size: 9px;
