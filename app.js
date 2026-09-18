@@ -13,7 +13,7 @@ function escapeAttribute(str) {
 // =========================================================================
 const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
-const APP_BUILD_VERSION = "20260917_09";
+const APP_BUILD_VERSION = "20260917_10";
 
 // 智能行程顯示名稱轉換 (將舊版 ID 或技術命名轉換為溫暖手帳風格名稱，技術 ID 留存於後台編輯中)
 function getTripDisplayName(name = "", uuid = "") {
@@ -837,15 +837,7 @@ function openTripByUuid(uuid) {
 }
 
 function showHubView() {
-  // 訪客跳離行程手冊返回大廳時，清空所有解鎖授權，確保再次進入時必須重新輸入密碼
-  const isAdmin = userRole === "admin" && idToken && !isTokenExpired(idToken);
-  if (!isAdmin) {
-    Object.keys(sessionStorage).forEach((key) => {
-      if (key.startsWith("unlocked_trip_")) {
-        sessionStorage.removeItem(key);
-      }
-    });
-  }
+  // 返回大廳：保留當前分頁之已解鎖記憶體狀態 (memoryUnlockedPins)，重整或關閉分頁即自動失效
   resetToDefaultTheme();
   document.getElementById("view-hub").style.display = "block";
   document.getElementById("view-trip").style.display = "none";
@@ -863,19 +855,16 @@ function showHubView() {
 // =========================================================================
 // 全方位跳離與防呆安全機制 (切換分頁、跳離網站、關閉分頁或 BFCache 返回立即鎖定)
 // =========================================================================
-// 1. 監聽切換到其他分頁或跳離本頁 (visibilitychange)
+// 1. 監聽切換到其他分頁或切回本頁 (visibilitychange，統一採用標準門禁函式 isTripUnlocked，成員絕不誤鎖)
 document.addEventListener("visibilitychange", function () {
-  if (document.visibilityState === "hidden") {
-    const isAdmin = userRole === "admin" && idToken && !isTokenExpired(idToken);
-    if (!isAdmin) {
-      Object.keys(sessionStorage).forEach((key) => {
-        if (key.startsWith("unlocked_trip_")) {
-          sessionStorage.removeItem(key);
-        }
-      });
-      if (currentTripUuid) {
+  if (document.visibilityState === "visible") {
+    if (currentTripUuid) {
+      const trip = tripsList.find((t) => t.uuid === currentTripUuid) || tripData;
+      const hasPassword = trip ? Boolean(trip.hasPassword || trip.password) : false;
+      // 統一門禁判斷：管理員、授權成員、無密碼行程以及當前分頁已解鎖的訪客，絕不誤跳鎖定畫面
+      if (!isTripUnlocked(currentTripUuid, hasPassword)) {
         document.getElementById("view-trip").style.display = "none";
-        showLockedView({ uuid: currentTripUuid, name: (tripData && tripData.name) || currentTripUuid });
+        showLockedView(trip || { uuid: currentTripUuid, name: (tripData && tripData.name) || currentTripUuid, hasPassword: true });
       }
     }
   }
@@ -1496,6 +1485,11 @@ function logout() {
   // 安全清理：清空記憶體中的權限與 PIN 解鎖狀態
   tripPermissions.clear();
   memoryUnlockedPins.clear();
+  confirmedSnapshots.clear(); // 徹底清空所有行程之確認快照
+  tripData = null;           // 清空當前手冊資料
+  currentTripUuid = "";      // 重設當前行程 ID
+  tripRequestSequence++;     // 推進流水號，使登出前尚未完成的手冊回應徹底失效
+  tripsRequestSeq++;         // 推進清單流水號
 
   // 清除 sessionStorage 中殘留的私密手冊
   try {
@@ -2308,6 +2302,9 @@ async function save() {
   // 寫入前執行去重與清洗
   tripData = sanitizeAndDeduplicateTrip(tripData);
 
+  // 關鍵非同步隔離：在連線發起前立即鎖定深拷貝 Payload，徹底防止儲存等待期間切換行程導致全域 tripData 污染
+  const savingPayload = JSON.parse(JSON.stringify(tripData));
+
   // 唯讀模式最高防護：非管理員且非授權成員嚴禁觸發寫入
   if (!canEditCurrentTrip()) {
     showToast("⚠️ 目前為唯讀模式，無權限修改手冊內容");
@@ -2333,25 +2330,33 @@ async function save() {
         action: "updateTripData",
         token: idToken,
         tripUuid: savingTripUuid,
-        data: tripData,
+        data: savingPayload, // 使用獨立 Payload，不使用易被切換干擾的全域 tripData
       }),
     });
     const result = await res.json();
     if (result.status === "success") {
-      // 雲端確認成功後，才以 savingTripUuid 寫入確認快照與 Session 快取
-      updateConfirmedSnapshot(savingTripUuid, tripData);
+      // 雲端確認成功後，以鎖定的 savingPayload 更新確認快照與 Session，絕不誤存當前其他行程之資料
+      updateConfirmedSnapshot(savingTripUuid, savingPayload);
       showToast("雲端同步成功 ✓");
       return true;
     } else {
       showToast("⚠️ " + (result.message || "雲端儲存失敗，已還原變更"));
       // 寫入失敗：嚴格僅還原目前 savingTripUuid 之快照，並同步覆蓋 Session 杜絕 F5 髒資料
-      rollbackTripState(savingTripUuid);
+      rollbackTripState(savingTripUuid, currentTripUuid, sessionStorage, (restored) => {
+        tripData = restored;
+        if (tripData && tripData.days) sortTripDays(tripData.days);
+        render();
+      });
       return false;
     }
   } catch (e) {
     showToast("⚠️ 連線異常，雲端同步失敗，已還原變更");
     // 網路異常：嚴格僅還原目前 savingTripUuid 之快照，並同步覆蓋 Session
-    rollbackTripState(savingTripUuid);
+    rollbackTripState(savingTripUuid, currentTripUuid, sessionStorage, (restored) => {
+      tripData = restored;
+      if (tripData && tripData.days) sortTripDays(tripData.days);
+      render();
+    });
     return false;
   }
 }
@@ -2425,7 +2430,7 @@ function openConfirmModal({
   savedScrollY = window.scrollY || window.pageYOffset || 0;
   document.getElementById("modalTitle").innerText = title;
   document.getElementById("modalBody").innerHTML =
-    `<p style="font-size:14px;line-height:1.6;">${message}</p>`;
+    `<p style="font-size:14px;line-height:1.6;">${escapeHtml(message)}</p>`;
   const confirmBtn = document.getElementById("modalConfirmBtn");
   confirmBtn.innerText = confirmText;
   confirmBtn.disabled = false;
@@ -3162,24 +3167,20 @@ function openEditHotelModal(index) {
   const formHtml = `
     <div class="ef-wrap">
       <div class="ef-label">飯店名稱 <span style="color:var(--red);">*</span></div>
-      <input type="text" id="editHotelName" class="ef-input" value="${h.name || ""
-    }">
+      <input type="text" id="editHotelName" class="ef-input" value="${escapeAttribute(h.name || "")}">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">飯店地址 (供導航使用)</div>
-      <input type="text" id="editHotelAddr" class="ef-input" value="${h.addr || ""
-    }">
+      <input type="text" id="editHotelAddr" class="ef-input" value="${escapeAttribute(h.addr || "")}">
     </div>
     <div style="display:flex;gap:10px;">
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">入住日</div>
-        <input type="date" id="editHotelCheckin" class="ef-input" value="${h.checkin || ""
-    }" onchange="autoSyncNights('editHotelCheckin','editHotelCheckout','editHotelNights')">
+        <input type="date" id="editHotelCheckin" class="ef-input" value="${escapeAttribute(h.checkin || "")}" onchange="autoSyncNights('editHotelCheckin','editHotelCheckout','editHotelNights')">
       </div>
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">退房日</div>
-        <input type="date" id="editHotelCheckout" class="ef-input" value="${h.checkout || ""
-    }" onchange="autoSyncNights('editHotelCheckin','editHotelCheckout','editHotelNights')">
+        <input type="date" id="editHotelCheckout" class="ef-input" value="${escapeAttribute(h.checkout || "")}" onchange="autoSyncNights('editHotelCheckin','editHotelCheckout','editHotelNights')">
       </div>
     </div>
     <div class="ef-wrap">
@@ -3188,8 +3189,7 @@ function openEditHotelModal(index) {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">備註說明</div>
-      <input type="text" id="editHotelNote" class="ef-input" placeholder="例如: 車站直結、附早餐、高樓層景觀" value="${h.note || ""
-    }">
+      <input type="text" id="editHotelNote" class="ef-input" placeholder="例如: 車站直結、附早餐、高樓層景觀" value="${escapeAttribute(h.note || "")}">
     </div>
   `;
 
@@ -3734,7 +3734,7 @@ function openAddDayModal() {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">選擇日期 (點選日曆，系統全自動重算星期) <span style="color:var(--red);">*</span></div>
-      <input type="date" id="addDayPicker" class="ef-input" value="${defaultIsoDate}" onchange="window.onAddDayPickerChange(this.value)">
+      <input type="date" id="addDayPicker" class="ef-input" value="${escapeAttribute(defaultIsoDate)}" onchange="window.onAddDayPickerChange(this.value)">
       <div id="addDayPreview" class="ef-preview-tag">📅 自動顯示：${defaultDateText || "請點選上方日曆選擇日期"}</div>
     </div>
     <div class="ef-wrap">
@@ -3845,7 +3845,7 @@ function openEditDayTitleModal(dayIdx) {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">選擇日期 (更換日曆自動重算星期) <span style="color:var(--red);">*</span></div>
-      <input type="date" id="editDayPicker" class="ef-input" value="${currentIsoDate}" onchange="window.onEditDayPickerChange(this.value)">
+      <input type="date" id="editDayPicker" class="ef-input" value="${escapeAttribute(currentIsoDate)}" onchange="window.onEditDayPickerChange(this.value)">
       <div id="editDayPreview" class="ef-preview-tag">📅 自動顯示：${currentDateDisplay}</div>
     </div>
     <div class="ef-wrap">
@@ -6634,21 +6634,21 @@ function openEditTransitPassModal(idx) {
   const formHtml = `
     <div class="ef-wrap">
       <div class="ef-label">周遊券 / 交通票券名稱 <span style="color:var(--red);">*</span></div>
-      <input type="text" id="editPassName" class="ef-input" value="${safeName}" placeholder="例如: 關西廣域鐵路周遊券">
+      <input type="text" id="editPassName" class="ef-input" value="${escapeAttribute(safeName)}" placeholder="例如: 關西廣域鐵路周遊券">
     </div>
     <div style="display:flex;gap:10px;">
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">票券費用 (純數字)</div>
-        <input type="text" id="editPassCost" class="ef-input" value="${safeCost}" placeholder="例如: 17000">
+        <input type="text" id="editPassCost" class="ef-input" value="${escapeAttribute(safeCost)}" placeholder="例如: 17000">
       </div>
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">幣別</div>
-        <input type="text" id="editPassCurr" class="ef-input" value="${safeCurr}">
+        <input type="text" id="editPassCurr" class="ef-input" value="${escapeAttribute(safeCurr)}">
       </div>
     </div>
     <div class="ef-wrap">
       <div class="ef-label">備註說明 / 官方購票或兌換網址</div>
-      <textarea id="editPassNote" class="ef-textarea" placeholder="例如: 兌換窗口或官方介紹網址">${safeNote}</textarea>
+      <textarea id="editPassNote" class="ef-textarea" placeholder="例如: 兌換窗口或官方介紹網址">${escapeHtml(safeNote)}</textarea>
     </div>
   `;
 
