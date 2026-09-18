@@ -41,20 +41,33 @@ function getTripDisplayName(name = "", uuid = "") {
   return String(name || uuid || "未命名旅程").trim();
 }
 
-// 輔助函式：標準化日期格式為 YYYY-MM-DD (防 Google Sheets 原始 Date 物件轉出超長 GMT 時區字串)
+// 輔助函式：標準化日期格式為 YYYY-MM-DD (徹底相容眼見純字串、斜線格式、ISO格式與歷史長日期)
 function formatDateSimple(dateStr) {
   if (!dateStr) return "";
   const s = String(dateStr).trim();
   if (!s) return "";
+  // 1. 若已經是標準 YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  if (s.includes("T")) return s.split("T")[0].trim();
-  const parsed = new Date(s);
-  if (!isNaN(parsed.getTime()) && s.length > 10 && (s.includes("GMT") || s.includes(":") || s.includes(" "))) {
-    const y = parsed.getFullYear();
-    const m = String(parsed.getMonth() + 1).padStart(2, "0");
-    const d = String(parsed.getDate()).padStart(2, "0");
+  // 2. 若是斜線 YYYY/MM/DD 或 YYYY/M/D，標準化為 YYYY-MM-DD
+  const slashMatch = s.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
+  if (slashMatch) {
+    const y = slashMatch[1];
+    const m = slashMatch[2].padStart(2, "0");
+    const d = slashMatch[3].padStart(2, "0");
     return `${y}-${m}-${d}`;
   }
+  // 3. 若是帶 T 的 ISO 格式 (例如 2027-08-05T...)
+  if (s.includes("T")) return s.split("T")[0].trim();
+  // 4. 若為長日期格式，嘗試解析
+  try {
+    const parsed = new Date(s);
+    if (!isNaN(parsed.getTime())) {
+      const y = parsed.getFullYear();
+      const m = String(parsed.getMonth() + 1).padStart(2, "0");
+      const d = String(parsed.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
+    }
+  } catch (e) {}
   return s;
 }
 

@@ -335,7 +335,7 @@ assertCheck(
 (function testSpreadsheetSingleSourceOfTruth() {
   const hasDirectOpenMaster = gasCode.includes('SpreadsheetApp.openById(MASTER_SHEET_ID)') &&
     gasCode.includes('masterSpreadsheet.getSheetByName("Trips")') &&
-    gasCode.includes('tripSheet.getDataRange().getValues()');
+    gasCode.includes('tripSheet.getDataRange().getDisplayValues()');
 
   const hasDirectGetUserAccess = gasCode.includes('function getUserAccess(email)') &&
     gasCode.includes('const masterSpreadsheet = SpreadsheetApp.openById(MASTER_SHEET_ID);');

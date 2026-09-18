@@ -169,7 +169,7 @@ function invalidateCaches(options) {
   }
 }
 
-// 輔助函式：標準化試算表讀出之日期為 YYYY-MM-DD 格式 (防 Google Sheets 原始 Date 物件轉為超長時區字串)
+// 輔助函式：標準化試算表讀出之日期為 YYYY-MM-DD 格式 (支援眼見純字串、Date物件、斜線與ISO字串)
 function normalizeDateStr(val) {
   if (!val) return "";
   if (val instanceof Date) {
@@ -180,15 +180,28 @@ function normalizeDateStr(val) {
   }
   const s = String(val).trim();
   if (!s) return "";
+  // 1. 若已經是標準 YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  if (s.includes("T")) return s.split("T")[0].trim();
-  const parsed = new Date(s);
-  if (!isNaN(parsed.getTime()) && s.length > 10 && (s.includes("GMT") || s.includes(":") || s.includes(" "))) {
-    const y = parsed.getFullYear();
-    const m = String(parsed.getMonth() + 1).padStart(2, "0");
-    const d = String(parsed.getDate()).padStart(2, "0");
+  // 2. 若是斜線 YYYY/MM/DD 或 YYYY/M/D，標準化為 YYYY-MM-DD
+  const slashMatch = s.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
+  if (slashMatch) {
+    const y = slashMatch[1];
+    const m = slashMatch[2].padStart(2, "0");
+    const d = slashMatch[3].padStart(2, "0");
     return `${y}-${m}-${d}`;
   }
+  // 3. 若是帶 T 的 ISO 格式 (例如 2027-08-05T...)
+  if (s.includes("T")) return s.split("T")[0].trim();
+  // 4. 若為長日期格式，嘗試解析
+  try {
+    const parsed = new Date(s);
+    if (!isNaN(parsed.getTime())) {
+      const y = parsed.getFullYear();
+      const m = String(parsed.getMonth() + 1).padStart(2, "0");
+      const d = String(parsed.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
+    }
+  } catch (e) {}
   return s;
 }
 
@@ -221,17 +234,16 @@ function getUserAccess(email) {
   // A. 最高管理員保護：若使用者帳號與此 GAS 應用程式部署者/擁有者本人一致，100% 給予管理員權限
   try {
     const ownerEmail = normalizeEmail(Session.getEffectiveUser().getEmail());
-    if (ownerEmail && cleanEmail && ownerEmail === cleanEmail) {
+    if (cleanEmail && ownerEmail && cleanEmail === ownerEmail) {
       isAdmin = true;
     }
   } catch (e) {
-    Logger.log("檢查 EffectiveUser 異常: " + e.message);
+    Logger.log("檢查部署者 Email 失敗: " + e.message);
   }
 
-  // B. 容錯比對 Admins 管理員工作表
-  if (!isAdmin && cleanEmail) {
+  // B. 檢查主控表「Admins」分頁
+  if (!isAdmin) {
     let adminSheet = masterSpreadsheet.getSheetByName("Admins");
-    // 若工作表名稱大小寫或命名有些微差異，自動容錯相容
     if (!adminSheet) {
       const allSheets = masterSpreadsheet.getSheets();
       for (let s of allSheets) {
@@ -259,9 +271,9 @@ function getUserAccess(email) {
     }
   }
   
-  // 2. 檢索可存取行程
+  // 2. 檢索可存取行程 (關鍵：全面改用 getDisplayValues 眼見即所得，100% 回傳人類肉眼看到的純字串，杜絕 Date 物件時區問題！)
   const tripSheet = masterSpreadsheet.getSheetByName("Trips");
-  const tripRows = tripSheet.getDataRange().getValues();
+  const tripRows = tripSheet.getDataRange().getDisplayValues();
   for (let i = 1; i < tripRows.length; i++) {
     const uuid = tripRows[i][0];
     const name = tripRows[i][1];
@@ -377,7 +389,7 @@ function doGet(e) {
     // 3. Cache Miss 時才開啟主控試算表 (延遲載入)
     const masterSpreadsheet = SpreadsheetApp.openById(MASTER_SHEET_ID);
   const tripSheet = masterSpreadsheet.getSheetByName("Trips");
-  const tripRows = tripSheet.getDataRange().getValues();
+  const tripRows = tripSheet.getDataRange().getDisplayValues();
   
   if (email) {
     if (!access) {
@@ -680,7 +692,7 @@ function doPost(e) {
   
   const masterSpreadsheet = SpreadsheetApp.openById(MASTER_SHEET_ID);
   const tripSheet = masterSpreadsheet.getSheetByName("Trips");
-  const tripRows = tripSheet.getDataRange().getValues();
+  const tripRows = tripSheet.getDataRange().getDisplayValues();
 
   // 1. 儲存/更新行程詳細旅遊資料（允許 admin 或被該行程授權的 member 編輯手冊內容）
   if (action === "updateTripData") {
