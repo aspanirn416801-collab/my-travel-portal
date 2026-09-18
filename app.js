@@ -13,7 +13,7 @@ function escapeAttribute(str) {
 // =========================================================================
 const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
-const APP_BUILD_VERSION = "20260917_08";
+const APP_BUILD_VERSION = "20260917_09";
 
 // 智能行程顯示名稱轉換 (將舊版 ID 或技術命名轉換為溫暖手帳風格名稱，技術 ID 留存於後台編輯中)
 function getTripDisplayName(name = "", uuid = "") {
@@ -89,7 +89,18 @@ const PUBLIC_TRIP_SUMMARIES = [
 let tripsList = [...PUBLIC_TRIP_SUMMARIES]; // 可存取的行程列表 (預設以公開摘要秒開大廳)
 let currentTripUuid = "";
 let tripData = null;
-let lastConfirmedTripData = null; // 最近一次經雲端確認或載入之手冊完整備份快照 (供失敗時精準回滾) // 當前行程詳細手冊資料
+// 跨行程確認快照字典：以 tripUuid 為唯一鍵進行物理隔離，徹底防止跨行程還原串錯 (例如岡山覆蓋奧捷)
+const confirmedSnapshots = new Map(); // key: tripUuid, value: deepClonedData
+
+// 統一更新確認快照與 Session 快取 (僅限經雲端確認成功或初次合法載入時調用)
+function updateConfirmedSnapshot(uuid, data) {
+  if (!uuid || !data) return;
+  try {
+    const cloned = JSON.parse(JSON.stringify(data));
+    confirmedSnapshots.set(uuid, cloned);
+    sessionStorage.setItem("session_trip_" + uuid, JSON.stringify(cloned));
+  } catch (e) {}
+} // 當前行程詳細手冊資料
 let currentTab = "checklist";
 let selectedDay = 0;
 let currentFoodFilter = "all"; // 美食分類過濾：'all' | 'must' | 'todo' | 'done' | 地區名稱
@@ -520,7 +531,7 @@ function openCustomWeatherCityModal() {
   const currentCity = WEATHER_CITY_PRESETS.find((c) => c.id === currentCityId) || WEATHER_CITY_PRESETS[0];
 
   const cityOptions = WEATHER_CITY_PRESETS.map(
-    (c) => `<option value="${c.id}" ${c.id === currentCity.id ? "selected" : ""}>${c.name}</option>`
+    (c) => `<option value="${escapeAttribute(c.id)}" ${c.id === currentCity.id ? "selected" : ""}>${escapeHtml(c.name)}</option>`
   ).join("");
 
   const modalHtml = `
@@ -792,10 +803,8 @@ async function handleTripUnlockSubmit(e) {
       if (tripData && tripData.days) {
         sortTripDays(tripData.days);
       }
-      // 私密手冊僅存於 sessionStorage，關閉即失效，絕不長存於 localStorage
-      try {
-        sessionStorage.setItem("session_trip_" + currentTripUuid, JSON.stringify(tripData));
-      } catch (e) {}
+      // 私密手冊同步存入確認快照與 sessionStorage
+      updateConfirmedSnapshot(currentTripUuid, tripData);
 
       const lockedView = document.getElementById("view-locked");
       if (lockedView) lockedView.style.display = "none";
@@ -895,14 +904,15 @@ window.addEventListener("beforeunload", function () {
   }
 });
 
-// 3. 監聽 pageshow (破除瀏覽器 BFCache 往返快取記憶體快照漏洞)
+// 3. 監聽 pageshow (破除瀏覽器 BFCache 往返快取記憶體快照漏洞，統一採用標準門禁函式 isTripUnlocked)
 window.addEventListener("pageshow", function () {
-  const isAdmin = userRole === "admin" && idToken && !isTokenExpired(idToken);
-  if (currentTripUuid && !isAdmin) {
-    const savedUnlock = sessionStorage.getItem("unlocked_trip_" + currentTripUuid);
-    if (!savedUnlock) {
+  if (currentTripUuid) {
+    const trip = tripsList.find((t) => t.uuid === currentTripUuid) || tripData;
+    const hasPassword = trip ? Boolean(trip.hasPassword || trip.password) : false;
+    // 統一門禁校驗：管理員、授權成員、無密碼行程以及已在記憶體中解鎖的訪客，絕不誤鎖
+    if (!isTripUnlocked(currentTripUuid, hasPassword)) {
       document.getElementById("view-trip").style.display = "none";
-      showLockedView({ uuid: currentTripUuid, name: (tripData && tripData.name) || currentTripUuid });
+      showLockedView(trip || { uuid: currentTripUuid, name: (tripData && tripData.name) || currentTripUuid, hasPassword: true });
     }
   }
 });
@@ -1755,11 +1765,8 @@ async function fetchTrips({ force = false } = {}) {
           }
           tripData = sanitizeAndDeduplicateTrip(result.currentTrip);
           if (tripData && tripData.days) sortTripDays(tripData.days);
-          // 同步更新上一次確認成功之快照
-          lastConfirmedTripData = JSON.parse(JSON.stringify(tripData));
-          try {
-            sessionStorage.setItem("session_trip_" + requestedTripUuid, JSON.stringify(tripData));
-          } catch (e) {}
+          // 以行程 UUID 隔離更新確認快照
+          updateConfirmedSnapshot(requestedTripUuid, tripData);
           showTripView();
           initCountdown();
           render();
@@ -2045,6 +2052,11 @@ async function fetchTripData() {
         if (tripData && tripData.days) {
           sortTripDays(tripData.days);
         }
+        if (!confirmedSnapshots.has(currentTripUuid)) {
+          try {
+            confirmedSnapshots.set(currentTripUuid, JSON.parse(JSON.stringify(tripData)));
+          } catch (e) {}
+        }
         hasCache = true;
         const indicator = document.getElementById("currentTripIndicator");
         if (indicator) {
@@ -2113,10 +2125,8 @@ async function fetchTripData() {
         sortTripDays(tripData.days);
       }
 
-      // 私密完整手冊僅存於 sessionStorage，關閉即失效，絕不寫入 localStorage
-      try {
-        sessionStorage.setItem("session_trip_" + currentTripUuid, JSON.stringify(tripData));
-      } catch (e) {}
+      // 私密完整手冊同步存入確認快照與 sessionStorage
+      updateConfirmedSnapshot(currentTripUuid, tripData);
 
       // 自動同步日期與天數回公開 tripsList 與快取
       const tripObj = tripsList.find((t) => t.uuid === currentTripUuid);
@@ -2293,12 +2303,7 @@ async function save() {
     return false;
   }
 
-  // 若尚未建立初始備份快照，立即初始化
-  if (!lastConfirmedTripData) {
-    try {
-      lastConfirmedTripData = JSON.parse(JSON.stringify(tripData));
-    } catch (e) {}
-  }
+  const savingTripUuid = currentTripUuid;
 
   // 寫入前執行去重與清洗
   tripData = sanitizeAndDeduplicateTrip(tripData);
@@ -2316,13 +2321,7 @@ async function save() {
     return false;
   }
 
-  // 立即寫入當前 session 快取
-  try {
-    if (currentTripUuid && tripData) {
-      sessionStorage.setItem("session_trip_" + currentTripUuid, JSON.stringify(tripData));
-    }
-  } catch (e) {}
-
+  // 安全設計：不在雲端確認前過早寫入 Session 快取，防止失敗時留下髒資料
   showToast("正在同步至雲端試算表...");
   try {
     const res = await fetch(`${GAS_API_URL}`, {
@@ -2333,41 +2332,45 @@ async function save() {
       body: JSON.stringify({
         action: "updateTripData",
         token: idToken,
-        tripUuid: currentTripUuid,
+        tripUuid: savingTripUuid,
         data: tripData,
       }),
     });
     const result = await res.json();
     if (result.status === "success") {
-      // 成功後更新確認快照
-      try {
-        lastConfirmedTripData = JSON.parse(JSON.stringify(tripData));
-      } catch (e) {}
+      // 雲端確認成功後，才以 savingTripUuid 寫入確認快照與 Session 快取
+      updateConfirmedSnapshot(savingTripUuid, tripData);
       showToast("雲端同步成功 ✓");
       return true;
     } else {
       showToast("⚠️ " + (result.message || "雲端儲存失敗，已還原變更"));
-      // 寫入失敗時精準回滾至上一次確認成功的快照
-      try {
-        if (lastConfirmedTripData) {
-          tripData = JSON.parse(JSON.stringify(lastConfirmedTripData));
-          if (tripData && tripData.days) sortTripDays(tripData.days);
-          render();
-        }
-      } catch (err) {}
+      // 寫入失敗：嚴格僅還原目前 savingTripUuid 之快照，並同步覆蓋 Session 杜絕 F5 髒資料
+      rollbackTripState(savingTripUuid);
       return false;
     }
   } catch (e) {
     showToast("⚠️ 連線異常，雲端同步失敗，已還原變更");
-    try {
-      if (lastConfirmedTripData) {
-        tripData = JSON.parse(JSON.stringify(lastConfirmedTripData));
+    // 網路異常：嚴格僅還原目前 savingTripUuid 之快照，並同步覆蓋 Session
+    rollbackTripState(savingTripUuid);
+    return false;
+  }
+}
+
+// 失敗精準回滾輔助函式：只還原目標行程，絕不跨行程串錯
+function rollbackTripState(uuid) {
+  if (!uuid) return;
+  try {
+    const confirmed = confirmedSnapshots.get(uuid);
+    if (confirmed) {
+      if (currentTripUuid === uuid) {
+        tripData = JSON.parse(JSON.stringify(confirmed));
         if (tripData && tripData.days) sortTripDays(tripData.days);
         render();
       }
-    } catch (err) {}
-    return false;
-  }
+      // 同步還原 Session 快取，防止重新整理後又讀到未成功儲存的版本
+      sessionStorage.setItem("session_trip_" + uuid, JSON.stringify(confirmed));
+    }
+  } catch (err) {}
 }
 
 function uid() {
@@ -3008,16 +3011,16 @@ function openEditFlightModal(type) {
     <div style="display:flex;gap:10px;">
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">出發時間</div>
-        <input type="text" id="editFlightDep" class="ef-input" placeholder="例如: 11:30" value="${f.dep || ""}">
+        <input type="text" id="editFlightDep" class="ef-input" placeholder="例如: 11:30" value="${escapeAttribute(f.dep || "")}">
       </div>
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">抵達時間</div>
-        <input type="text" id="editFlightArr" class="ef-input" placeholder="例如: 15:05" value="${f.arr || ""}">
+        <input type="text" id="editFlightArr" class="ef-input" placeholder="例如: 15:05" value="${escapeAttribute(f.arr || "")}">
       </div>
     </div>
     <div class="ef-wrap">
       <div class="ef-label">備註說明</div>
-      <input type="text" id="editFlightNote" class="ef-input" placeholder="例如: 第1航廈、準時登機" value="${f.note || ""}">
+      <input type="text" id="editFlightNote" class="ef-input" placeholder="例如: 第1航廈、準時登機" value="${escapeAttribute(f.note || "")}">
     </div>
   `;
 
@@ -3181,7 +3184,7 @@ function openEditHotelModal(index) {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">晚數說明 (自動計算，亦可手動修改)</div>
-      <input type="text" id="editHotelNights" class="ef-input" value="${currentNights}">
+      <input type="text" id="editHotelNights" class="ef-input" value="${escapeAttribute(currentNights)}">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">備註說明</div>
@@ -3830,7 +3833,7 @@ function openEditDayTitleModal(dayIdx) {
   let editPresetOptions = "";
   for (let d = 1; d <= 14; d++) {
     const dayVal = `Day ${d}`;
-    editPresetOptions += `<option value="${dayVal}" ${dayVal === day.id ? "selected" : ""}>${dayVal}</option>`;
+    editPresetOptions += `<option value="${escapeAttribute(dayVal)}" ${dayVal === day.id ? "selected" : ""}>${escapeHtml(dayVal)}</option>`;
   }
 
   const formHtml = `
@@ -3847,7 +3850,7 @@ function openEditDayTitleModal(dayIdx) {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">當日主題名稱 <span style="color:var(--red);">*</span></div>
-      <input type="text" id="editDayTitle" class="ef-input" value="${day.title || ""}">
+      <input type="text" id="editDayTitle" class="ef-input" value="${escapeAttribute(day.title || "")}">
     </div>
   `;
 
@@ -3942,7 +3945,7 @@ function openEditItineraryModal(dayIdx, itemIdx) {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">景點或活動名稱 <span style="color:var(--red);">*</span></div>
-      <input type="text" id="editItPlace" class="ef-input" value="${item.place || ""}">
+      <input type="text" id="editItPlace" class="ef-input" value="${escapeAttribute(item.place || "")}">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">參考網址 / 補充資料 (景點官網、門票預約、介紹等，選填)</div>
@@ -3950,12 +3953,12 @@ function openEditItineraryModal(dayIdx, itemIdx) {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">說明備忘事項</div>
-      <textarea id="editItDesc" class="ef-textarea" placeholder="例如: 門票預約、參拜動線、推薦拍照點">${item.desc || ""}</textarea>
+      <textarea id="editItDesc" class="ef-textarea" placeholder="例如: 門票預約、參拜動線、推薦拍照點">${escapeHtml(item.desc || "")}</textarea>
     </div>
     <div class="ef-wrap">
       <div class="ef-label">上傳/更換景點照片 (5MB內，選填)</div>
       <input type="file" accept="image/*" id="editItFile" onchange="uploadImageInModal(this, 'editItImgUrl', 'modalImgPreview')">
-      <input type="hidden" id="editItImgUrl" value="${item.imgUrl || ""}">
+      <input type="hidden" id="editItImgUrl" value="${escapeAttribute(item.imgUrl || "")}">
     </div>
     <div id="modalImgPreview" style="margin-top:6px;">
       ${item.imgUrl
@@ -4518,7 +4521,7 @@ function openEditFoodModal(index) {
   const formHtml = `
     <div class="ef-wrap">
       <div class="ef-label">美食圖示 (Emoji)</div>
-      <input type="text" id="editFoodEmoji" class="ef-input" value="${item.emoji || "🍴"}" style="width:60px;text-align:center;">
+      <input type="text" id="editFoodEmoji" class="ef-input" value="${escapeAttribute(item.emoji || "🍴")}" style="width:60px;text-align:center;">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">美食或店家名稱 <span style="color:var(--red);">*</span> (輸入後自動產生地圖導航)</div>
@@ -4530,7 +4533,7 @@ function openEditFoodModal(index) {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">特色說明或推薦菜色</div>
-      <input type="text" id="editFoodDesc" class="ef-input" value="${item.desc || ""}">
+      <input type="text" id="editFoodDesc" class="ef-input" value="${escapeAttribute(item.desc || "")}">
     </div>
     <label style="font-size:13px;color:var(--moss);font-weight:bold;display:flex;align-items:center;gap:6px;margin-top:10px;cursor:pointer;">
       <input type="checkbox" id="editFoodMust" ${item.must ? "checked" : ""}> 標記為必吃名店 🔥
@@ -4538,7 +4541,7 @@ function openEditFoodModal(index) {
     <div class="ef-wrap" style="margin-top:12px;">
       <div class="ef-label">上傳/更換美食照片 (5MB內，選填)</div>
       <input type="file" accept="image/*" id="editFoodFile" onchange="uploadImageInModal(this, 'editFoodImgUrl', 'editFoodModalImgPreview')">
-      <input type="hidden" id="editFoodImgUrl" value="${item.imgUrl || ""}">
+      <input type="hidden" id="editFoodImgUrl" value="${escapeAttribute(item.imgUrl || "")}">
     </div>
     <div id="editFoodModalImgPreview" style="margin-top:6px;">
       ${item.imgUrl
@@ -5008,7 +5011,7 @@ function openEditShoppingModal(index) {
     <div style="display:flex;gap:10px;">
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">數量 (例如: 1、2盒、3瓶)</div>
-        <input type="text" id="editShoppingQty" class="ef-input" value="${item.qty || "1"}">
+        <input type="text" id="editShoppingQty" class="ef-input" value="${escapeAttribute(item.qty || "1")}">
       </div>
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">預估價格 / 預算</div>
@@ -5025,12 +5028,12 @@ function openEditShoppingModal(index) {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">備註說明 (規格、色號、退稅注意事項等)</div>
-      <textarea id="editShoppingNote" class="ef-textarea">${item.note || ""}</textarea>
+      <textarea id="editShoppingNote" class="ef-textarea">${escapeHtml(item.note || "")}</textarea>
     </div>
     <div class="ef-wrap">
       <div class="ef-label">上傳/更換商品照片 (5MB內，選填)</div>
       <input type="file" accept="image/*" id="editShoppingFile" onchange="uploadImageInModal(this, 'editShoppingImgUrl', 'editShoppingModalImgPreview')">
-      <input type="hidden" id="editShoppingImgUrl" value="${item.imgUrl || ""}">
+      <input type="hidden" id="editShoppingImgUrl" value="${escapeAttribute(item.imgUrl || "")}">
     </div>
     <div id="editShoppingModalImgPreview" style="margin-top:6px;">
       ${item.imgUrl
@@ -5397,7 +5400,7 @@ async function openEditTripMetaModal(uuid) {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">行程名稱 <span style="color:var(--red);">*</span></div>
-      <input type="text" id="editTripName" class="ef-input" value="${(fullMeta && fullMeta.name) || trip.name || ""}">
+      <input type="text" id="editTripName" class="ef-input" value="${escapeAttribute((fullMeta && fullMeta.name) || trip.name || "")}">
     </div>
     <div style="display:flex;gap:10px;">
       <div class="ef-wrap" style="flex:1;">
@@ -5427,7 +5430,7 @@ async function openEditTripMetaModal(uuid) {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">授權人員 Email (以英文逗號分隔，授權成員登入後免輸密碼直接編輯手冊)</div>
-      <textarea id="editTripAllowedUsers" class="ef-textarea">${currentAllowedUsers}</textarea>
+      <textarea id="editTripAllowedUsers" class="ef-textarea">${escapeHtml(currentAllowedUsers)}</textarea>
     </div>
     <div class="ef-wrap" style="background:rgba(0,0,0,0.02);padding:12px;border-radius:10px;border:1px solid #E0E0E0;">
       <div class="ef-label" style="display:flex;justify-content:space-between;align-items:center;">
@@ -5451,7 +5454,7 @@ async function openEditTripMetaModal(uuid) {
         </label>
       </div>
       <div id="editPwdInputWrap" style="display:none;margin-top:10px;">
-        <input type="text" id="editTripPassword" class="ef-input" placeholder="請輸入新設定的 PIN 密碼" value="${currentPassword}">
+        <input type="text" id="editTripPassword" class="ef-input" placeholder="請輸入新設定的 PIN 密碼" value="${escapeAttribute(currentPassword)}">
       </div>
     </div>
   `;
@@ -6212,7 +6215,7 @@ function openEditRouteMapModal(idx) {
     <div class="ef-wrap">
       <div class="ef-label">更換高清路線地圖照片 (若不更換請留空)</div>
       <input type="file" accept="image/*" id="editMapFile" onchange="uploadImageInModal(this, 'editMapImgUrl', 'editMapPreviewDiv')">
-      <input type="hidden" id="editMapImgUrl" value="${currentImg}">
+      <input type="hidden" id="editMapImgUrl" value="${escapeAttribute(currentImg)}">
     </div>
     <div id="editMapPreviewDiv" style="margin-top:8px;">
       ${currentImg ? `<img src="${currentImg}" style="max-height:140px;border-radius:10px;border:1px solid #DDD;" onerror="handleImgError(this)">` : ""}
@@ -6353,7 +6356,7 @@ function openAddTransportModal() {
     : "";
 
   const selectOptionsHtml = `
-    ${dayOptions.map((opt) => `<option value="${opt.tag}" ${opt.tag === currentSelectedDayTag ? "selected" : ""}>${opt.label}</option>`).join("")}
+    ${dayOptions.map((opt) => `<option value="${escapeAttribute(opt.tag)}" ${opt.tag === currentSelectedDayTag ? "selected" : ""}>${escapeHtml(opt.label)}</option>`).join("")}
     <option value="主要交通" ${currentSelectedDayTag === "主要交通" ? "selected" : ""}>主要交通 (全程通用 / 機場接駁)</option>
   `;
 
@@ -6451,7 +6454,7 @@ function openEditTransportModal(idx) {
   });
 
   const selectOptionsHtml = `
-    ${dayOptions.map((opt) => `<option value="${opt.tag}" ${opt.tag === item.dayTag ? "selected" : ""}>${opt.label}</option>`).join("")}
+    ${dayOptions.map((opt) => `<option value="${escapeAttribute(opt.tag)}" ${opt.tag === item.dayTag ? "selected" : ""}>${escapeHtml(opt.label)}</option>`).join("")}
     <option value="主要交通" ${item.dayTag === "主要交通" ? "selected" : ""}>主要交通 (全程通用 / 機場接駁)</option>
   `;
 
@@ -6464,7 +6467,7 @@ function openEditTransportModal(idx) {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">乘車區間 / 路線 <span style="color:var(--red);">*</span></div>
-      <input type="text" id="editTransFromTo" class="ef-input" value="${item.fromTo || ""}">
+      <input type="text" id="editTransFromTo" class="ef-input" value="${escapeAttribute(item.fromTo || "")}">
     </div>
     <div style="display:flex;gap:10px;">
       <div class="ef-wrap" style="flex:1;">
@@ -6479,16 +6482,16 @@ function openEditTransportModal(idx) {
     <div style="display:flex;gap:10px;">
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">車種名稱</div>
-        <input type="text" id="editTransTrain" class="ef-input" value="${item.trainInfo || ""}">
+        <input type="text" id="editTransTrain" class="ef-input" value="${escapeAttribute(item.trainInfo || "")}">
       </div>
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">劃位/座位資訊</div>
-        <input type="text" id="editTransSeat" class="ef-input" value="${item.seatInfo || ""}">
+        <input type="text" id="editTransSeat" class="ef-input" value="${escapeAttribute(item.seatInfo || "")}">
       </div>
     </div>
     <div class="ef-wrap">
       <div class="ef-label">備註事項</div>
-      <textarea id="editTransNote" class="ef-textarea">${item.note || ""}</textarea>
+      <textarea id="editTransNote" class="ef-textarea">${escapeHtml(item.note || "")}</textarea>
     </div>
   `;
 
