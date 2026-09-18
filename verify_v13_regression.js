@@ -117,8 +117,9 @@ assertCheck(
     console
   };
 
-  // 注入 canEditCurrentTrip
-  const canEditCode = appCode.slice(appCode.indexOf('function canEditCurrentTrip()'), appCode.indexOf('// 預設安全之公開行程摘要骨架'));
+  // 注入 canEditCurrentTrip (使用正則精準截取函式本身)
+  const canEditMatch = appCode.match(/function canEditCurrentTrip\(\)\s*\{[\s\S]*?\n\}/);
+  const canEditCode = canEditMatch ? canEditMatch[0] : "";
   vm.createContext(authSandbox);
   vm.runInContext(canEditCode, authSandbox);
 
@@ -253,139 +254,42 @@ assertCheck(
 })();
 
 // ----------------------------------------------------
-// 測試 6：三層空日期 Fallback 機制 (防後端空白覆蓋首頁天數)
+// 測試 6：資料庫唯一真理源機制 (徹底移除 PUBLIC_TRIP_SUMMARIES 寫死行程，採用 loadCachedTrips 快取 + 空日期 Fallback)
 // ----------------------------------------------------
-(function testDateFallbackHierarchy() {
-  const fallbackMatch = appCode.match(/startDate:\s*t\.startDate\s*\|\|\s*\(existing\s*\?\s*existing\.startDate\s*:\s*""\)\s*\|\|\s*\(fallback\s*\?\s*fallback\.startDate\s*:\s*""\)\s*\|\|\s*""/);
-  
+(function testSingleSourceOfTruthAndFallback() {
+  const hasNoHardcodedTrips = !appCode.includes("PUBLIC_TRIP_SUMMARIES");
+  const hasLoadCachedTrips = appCode.includes("let tripsList = loadCachedTrips();");
+  const hasDisplayNameDynamic = appCode.includes('return String(name || uuid || "未命名旅程").trim();');
+  const fallbackMatch = appCode.match(/startDate:\s*t\.startDate\s*\|\|\s*\(existing\s*\?\s*existing\.startDate\s*:\s*""\)\s*\|\|\s*""/);
+
+  const allPassed = hasNoHardcodedTrips && hasLoadCachedTrips && hasDisplayNameDynamic && fallbackMatch !== null;
+
   assertCheck(
-    "[資料防護審查] 三層空日期 Fallback 機制完整落實",
-    fallbackMatch !== null,
-    "依序由 t.startDate ➔ existing.startDate ➔ fallback.startDate 自動填補，防空字串覆蓋"
+    "[資料庫唯一真理源審查] 徹底移除寫死行程清單，以 Trips 工作表為準並落實快取與 Fallback",
+    allPassed,
+    `移除寫死資料: ${hasNoHardcodedTrips}, 採用 loadCachedTrips: ${hasLoadCachedTrips}, 動態名稱解析: ${hasDisplayNameDynamic}, 空日期Fallback: ${fallbackMatch !== null}`
   );
 })();
 
 // ----------------------------------------------------
-// 測試 7：操作型行為實測 - Cache Hit 0 開表驗證 (SpreadsheetApp.openById 拋錯仍能成功回應，loadTripDetails 0 呼叫)
+// 測試 7：Google 認證快取動態 TTL (最長 55 分鐘) 與 auth_error 隔離審查
 // ----------------------------------------------------
-(function testGasCacheHitZeroSpreadsheetOpen() {
-  const cacheMap = new Map();
-  let loadTripDetailsCalls = 0;
+(function testAuthCacheTtlAndAuthErrorIsolation() {
+  const hasDynamicTtl = gasCode.includes('Math.min(remainingSec - 60, 3300)') &&
+    gasCode.includes('cache.put(tokenKey, cleanEmail, ttl)');
+  
+  const hasDoGetAuthError = gasCode.includes('status: "auth_error"') &&
+    gasCode.includes('Google 身分驗證暫時失敗，請重新嘗試');
 
-  // 預先暖機快取
-  cacheMap.set("public_trips_v1", JSON.stringify([{ uuid: "trip_demo", name: "公開行程" }]));
-  cacheMap.set("trip_meta_trip_demo", JSON.stringify({
-    uuid: "trip_demo",
-    name: "公開行程",
-    sheet_id: "sheet_demo",
-    password: "123",
-    allowed_users: "member@example.com"
-  }));
-  cacheMap.set("trip_content_trip_demo", JSON.stringify({
-    name: "公開行程",
-    days: [{ day: 1, title: "第 1 天" }]
-  }));
-  cacheMap.set("access_token_hash_rev1", JSON.stringify({
-    role: "admin",
-    trips: [{ uuid: "trip_demo", name: "公開行程" }]
-  }));
+  const hasAppAuthErrorHandle = appCode.includes('result.status === "auth_error"') &&
+    appCode.includes('authStatus = "auth-error"');
 
-  const gasSandbox = {
-    MASTER_SHEET_ID: "MOCK_MASTER_ID",
-    GOOGLE_CLIENT_ID: "MOCK_CLIENT_ID",
-    PropertiesService: {
-      getScriptProperties: () => ({
-        getProperty: (k) => k === "ACCESS_REVISION" ? "rev1" : null,
-        setProperty: () => {}
-      })
-    },
-    CacheService: {
-      getScriptCache: () => ({
-        get: (k) => cacheMap.has(k) ? cacheMap.get(k) : null,
-        put: (k, v) => cacheMap.set(k, String(v)),
-        remove: (k) => cacheMap.delete(k)
-      })
-    },
-    SpreadsheetApp: {
-      openById: (id) => {
-        throw new Error(`CRITICAL: Cache Hit 時不應開啟試算表！(ID: ${id})`);
-      }
-    },
-    loadTripDetails: (sheetId) => {
-      loadTripDetailsCalls++;
-      return { name: "直讀試算表手冊", days: [] };
-    },
-    verifyIdToken: (t) => "admin@example.com",
-    hashToken: (t) => "token_hash",
-    normalizeEmail: (e) => String(e).toLowerCase().trim(),
-    calcTripDurationInGas: () => "5天4夜",
-    ContentService: {
-      MimeType: { JSON: "application/json" },
-      createTextOutput: (text) => ({
-        setMimeType: () => ({ text: () => text })
-      })
-    },
-    Logger: { log: () => {} }
-  };
-
-  // 從 gasCode 擷取輔助快取函式與 doGet (包含 getAccessRevision)
-  const functionsToRun = `
-    ${gasCode.slice(gasCode.indexOf('function getAccessRevision'), gasCode.indexOf('// 自動根據出發與結束日期'))}
-    ${gasCode.slice(gasCode.indexOf('function findTripMetaFromRows'), gasCode.indexOf('// 處理 POST 請求'))}
-  `;
-
-  vm.createContext(gasSandbox);
-  vm.runInContext(functionsToRun, gasSandbox);
-
-  let guestTripsPassed = false;
-  let pinTripDataPassed = false;
-  let adminBootstrapPassed = false;
-
-  try {
-    // 情境 1：訪客首頁第二次讀取 (public_trips_v1 命中)
-    const res1 = gasSandbox.doGet({ parameter: { action: "getTrips" } });
-    const json1 = JSON.parse(res1.text());
-    guestTripsPassed = json1.status === "success" && json1.trips.length === 1;
-  } catch (e) {
-    guestTripsPassed = false;
-  }
-
-  try {
-    // 情境 2：PIN 第二次開啟 (trip_meta + trip_content 命中，只驗證 PIN，不讀試算表)
-    const res2 = gasSandbox.doGet({
-      parameter: {
-        action: "getTripData",
-        tripUuid: "trip_demo",
-        tripPassword: "123"
-      }
-    });
-    const json2 = JSON.parse(res2.text());
-    pinTripDataPassed = json2.status === "success" && json2.data && json2.data.days.length === 1;
-  } catch (e) {
-    pinTripDataPassed = false;
-  }
-
-  try {
-    // 情境 3：管理員返回行程 (access + meta + content 命中，不開主控表/子表)
-    const res3 = gasSandbox.doGet({
-      parameter: {
-        action: "bootstrap",
-        tripUuid: "trip_demo",
-        token: "admin_valid_token"
-      }
-    });
-    const json3 = JSON.parse(res3.text());
-    adminBootstrapPassed = json3.status === "success" && json3.currentTrip && json3.currentTrip.days.length === 1;
-  } catch (e) {
-    adminBootstrapPassed = false;
-  }
-
-  const allZeroOpenPassed = guestTripsPassed && pinTripDataPassed && adminBootstrapPassed && loadTripDetailsCalls === 0;
+  const allPassed = hasDynamicTtl && hasDoGetAuthError && hasAppAuthErrorHandle;
 
   assertCheck(
-    "[操作型行為實測] Cache Hit 時 SpreadsheetApp.openById 拋錯仍能成功回應，loadTripDetails 呼叫 0 次",
-    allZeroOpenPassed,
-    `訪客大廳 0 開表: ${guestTripsPassed}, PIN 解鎖 0 開表: ${pinTripDataPassed}, 管理員 bootstrap 0 開表: ${adminBootstrapPassed}, 子表載入呼叫: ${loadTripDetailsCalls} 次`
+    "[認證快取與錯誤隔離] verifyIdToken 動態 TTL 延長至 55 分鐘，驗證失敗回傳 auth_error 且不降級訪客",
+    allPassed,
+    `動態 TTL 快取 55 分鐘: ${hasDynamicTtl}, GAS 明確回傳 auth_error: ${hasDoGetAuthError}, 前端保留 Token 僅提示重試: ${hasAppAuthErrorHandle}`
   );
 })();
 
@@ -426,23 +330,22 @@ assertCheck(
 })();
 
 // ----------------------------------------------------
-// 測試 10：GAS 完整快取失效矩陣累加執行 (絕無互斥 else if)
+// 測試 10：Google Sheets 資料庫直連與唯一真理源審查
 // ----------------------------------------------------
-(function testCacheInvalidationMatrixAccumulative() {
-  const hasAccumulativeFlags = gasCode.includes('shouldClearPublic = false') &&
-    gasCode.includes('shouldClearTrip = false') &&
-    gasCode.includes('shouldBumpRev = false') &&
-    gasCode.includes('if (name !== undefined || startDate !== undefined || endDate !== undefined || duration !== undefined || theme !== null)') &&
-    gasCode.includes('if (newPasswordToSet !== null)') &&
-    gasCode.includes('if (allowedUsers !== undefined)') &&
-    gasCode.includes('bumpAccessRev: shouldBumpRev');
+(function testSpreadsheetSingleSourceOfTruth() {
+  const hasDirectOpenMaster = gasCode.includes('SpreadsheetApp.openById(MASTER_SHEET_ID)') &&
+    gasCode.includes('masterSpreadsheet.getSheetByName("Trips")') &&
+    gasCode.includes('tripSheet.getDataRange().getValues()');
 
-  const hasCreateTripClear = gasCode.includes('invalidateCaches({ clearPublicTrips: true, bumpAccessRev: true });');
+  const hasDirectGetUserAccess = gasCode.includes('function getUserAccess(email)') &&
+    gasCode.includes('const masterSpreadsheet = SpreadsheetApp.openById(MASTER_SHEET_ID);');
+
+  const allPassed = hasDirectOpenMaster && hasDirectGetUserAccess;
 
   assertCheck(
-    "[快取失效矩陣] updateTripMeta 各欄位累加判定失效，createTrip 遞增版本號",
-    hasAccumulativeFlags && hasCreateTripClear,
-    "名稱/日期/PIN/成員修改累加清除對應快取，新增行程遞增 ACCESS_REVISION 確保權限即時包含新行程"
+    "[資料庫直連審查] 每次請求直連開啟 Google Sheets Trips 表，試算表為唯一真理源",
+    allPassed,
+    `主控表直連開啟: ${hasDirectOpenMaster}, 角色存取直連查表: ${hasDirectGetUserAccess}`
   );
 })();
 

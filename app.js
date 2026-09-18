@@ -36,39 +36,9 @@ const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.go
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
 const APP_BUILD_VERSION = "20260918_13";
 
-// 智能行程顯示名稱轉換 (將舊版 ID 或技術命名轉換為溫暖手帳風格名稱，技術 ID 留存於後台編輯中)
+// 智能行程顯示名稱轉換 (直接依資料庫 Trips 工作表名稱為唯一準則，絕不寫死特定行程名稱)
 function getTripDisplayName(name = "", uuid = "") {
-  const n = (name || "").trim();
-  const u = (uuid || "").trim();
-  if (!n && !u) return "未命名旅程";
-  
-  // 比對岡山/四國歷史舊名稱或系統 ID
-  const lowerN = n.toLowerCase();
-  const lowerU = u.toLowerCase();
-  if (
-    lowerN === "2027-02okayama" ||
-    lowerN === "trip-okayama202702" ||
-    lowerN === "okayama202702" ||
-    lowerU === "2027-02okayama" ||
-    lowerU === "trip-okayama202702" ||
-    lowerU === "okayama202702"
-  ) {
-    return "2027岡山・四國之旅";
-  }
-
-  // 比對奧地利・捷克名稱或 ID
-  if (
-    lowerN === "austria-czech" ||
-    lowerN === "austriaczech" ||
-    lowerN === "austria_czech" ||
-    lowerU === "austria-czech" ||
-    lowerU === "austriaczech" ||
-    lowerU === "austria_czech"
-  ) {
-    return "奧地利・捷克之旅";
-  }
-
-  return n || u;
+  return String(name || uuid || "未命名旅程").trim();
 }
 
 // 前端全局狀態管理：身分雙軌架構 (authStatus 控制顯示，verifiedRole 控制實質權限)
@@ -104,30 +74,24 @@ function canEditCurrentTrip() {
   );
 }
 
-// 預設安全之公開行程摘要骨架 (無快取或冷啟動時 0 秒立即呈現卡片，不含任何 PIN 密碼，大幅消弭等待焦慮)
-const PUBLIC_TRIP_SUMMARIES = [
-  {
-    uuid: "trip-okayama202702",
-    name: "2027岡山・四國之旅",
-    hasPassword: true,
-    startDate: "2027-02-12",
-    endDate: "2027-02-19",
-    duration: "8天7夜"
-  },
-  {
-    uuid: "Austria-Czech",
-    name: "奧地利・捷克之旅",
-    hasPassword: true,
-    startDate: "2027-12-11",
-    endDate: "2027-12-25",
-    duration: "15天14夜"
-  }
-];
+// 預先同步載入本地快取 (資料庫為唯一正式來源，localStorage 僅保存上一次成功讀取之快取)
+function loadCachedTrips() {
+  try {
+    const cached = localStorage.getItem("cache_tripsList");
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {}
+  return [];
+}
 
-let tripsList = [...PUBLIC_TRIP_SUMMARIES]; // 可存取的行程列表 (預設以公開摘要秒開大廳)
+let tripsList = loadCachedTrips();
+let isInitialTripsLoaded = tripsList.length > 0;
 let currentTripUuid = "";
-let tripData = null;
- // 當前行程詳細手冊資料
+let tripData = null; // 當前行程詳細手冊資料
 let currentTab = "checklist";
 let selectedDay = 0;
 let currentFoodFilter = "all"; // 美食分類過濾：'all' | 'must' | 'todo' | 'done' | 地區名稱
@@ -143,17 +107,6 @@ try {
       }
     });
     localStorage.setItem("app_cache_version", "20260906_lock_v3");
-  }
-} catch (e) {}
-
-// 預先同步載入本地快取
-try {
-  const cachedTrips = localStorage.getItem("cache_tripsList");
-  if (cachedTrips) {
-    const parsed = JSON.parse(cachedTrips);
-    if (Array.isArray(parsed) && parsed.length > 0) {
-      tripsList = parsed;
-    }
   }
 } catch (e) {}
 
@@ -1316,10 +1269,14 @@ function updateAuthUI() {
       badge.innerHTML = `⏳ ${hintText} (${escapeHtml(userName)})`;
       if (adminHubActions) adminHubActions.style.display = "none";
     } else if (authStatus === "auth-error") {
-      badge.className = "user-badge badge-guest";
-      badge.innerHTML = `⚠️ 身分驗證逾時 (${escapeHtml(userName)}) <span style="font-size:11px;text-decoration:underline;cursor:pointer;margin-left:4px;" onclick="fetchTrips({force:true})">[點此重試]</span>`;
+      badge.className = "user-badge badge-user";
+      if (expired) {
+        badge.innerHTML = `⚠️ 登入憑證已過期 (${escapeHtml(userName)}) <span style="font-size:11px;text-decoration:underline;cursor:pointer;margin-left:4px;" onclick="triggerGoogleLogin()">[點此重新登入]</span>`;
+      } else {
+        badge.innerHTML = `⚠️ 身分驗證暫時失敗 (${escapeHtml(userName)}) <span style="font-size:11px;text-decoration:underline;cursor:pointer;margin-left:4px;" onclick="fetchTrips({force:true})">[點此重新連線]</span>`;
+      }
       if (adminHubActions) adminHubActions.style.display = "none";
-    } else if (userRole === "admin") {
+    } else if (authStatus === "authenticated" && verifiedRole === "admin") {
       badge.className = "user-badge badge-admin";
       if (expired) {
         // 憑證真過期時才提示續期
@@ -1328,7 +1285,7 @@ function updateAuthUI() {
         badge.innerText = `👑 管理員 (${userName})`;
       }
       if (adminHubActions) adminHubActions.style.display = "block";
-    } else if (userRole === "user") {
+    } else if (authStatus === "authenticated" && verifiedRole === "user") {
       // 判定是否持有任一行程之編輯授權
       let hasAnyCanEdit = false;
       for (const [uuid, perm] of tripPermissions.entries()) {
@@ -1776,22 +1733,22 @@ async function fetchTrips({ force = false } = {}) {
           try { sessionStorage.setItem("auth_role_hint", "user"); } catch (e) {}
         }
 
+        isInitialTripsLoaded = true;
         tripsList = (result.trips || []).map((t) => {
           if (t && t.uuid) {
             if (t.canEdit !== undefined) {
               tripPermissions.set(t.uuid, { canEdit: Boolean(t.canEdit) });
             }
           }
-          // 空日期三層 Fallback 機制：保留既有快取值或預設公開摘要，防空字串覆蓋
+          // 空日期 Fallback 機制：保留既有快取值，防後端空字串覆蓋
           const existing = tripsList.find((item) => item.uuid === t.uuid);
-          const fallback = PUBLIC_TRIP_SUMMARIES.find((item) => item.uuid === t.uuid);
           return {
             uuid: t.uuid,
             name: t.name,
             hasPassword: Boolean(t.hasPassword),
-            startDate: t.startDate || (existing ? existing.startDate : "") || (fallback ? fallback.startDate : "") || "",
-            endDate: t.endDate || (existing ? existing.endDate : "") || (fallback ? fallback.endDate : "") || "",
-            duration: t.duration || (existing ? existing.duration : "") || (fallback ? fallback.duration : "") || ""
+            startDate: t.startDate || (existing ? existing.startDate : "") || "",
+            endDate: t.endDate || (existing ? existing.endDate : "") || "",
+            duration: t.duration || (existing ? existing.duration : "") || ""
           };
         });
 
@@ -1843,24 +1800,36 @@ async function fetchTrips({ force = false } = {}) {
         } else if (!currentTripUuid && !isAdminRoute) {
           renderHubTripsGrid();
         }
+      } else if (result.status === "auth_error") {
+        // 後端 Google 身分驗證暫時失敗（網路抖動/tokeninfo延遲）：
+        // 嚴格保留 idToken、不清除登入憑證、不將角色降級為 guest，維持目前畫面！
+        isInitialTripsLoaded = true;
+        authStatus = "auth-error";
+        updateAuthUI();
+        showToast(result.message || "身分驗證暫時失敗，請點擊重試連線");
+        if (!currentTripUuid) {
+          renderHubTripsGrid();
+        }
       }
     } catch (e) {
       console.warn("連線後端狀態:", e);
+      isInitialTripsLoaded = true;
       if (idToken && !isTokenExpired(idToken)) {
+        // Token 未過期，純粹是網路中斷或後端連線失敗，絕不降級為 guest，保留目前身分畫面！
         authStatus = "auth-error";
       } else {
         authStatus = "guest";
+        verifiedRole = "guest";
+        userRole = "guest";
+        tripPermissions.clear();
       }
-      verifiedRole = "guest";
-      userRole = "guest";
-      tripPermissions.clear(); // 驗證失敗清除舊授權，防舊介面殘留
       updateAuthUI();
       const container = document.getElementById("hubTripsGrid");
       if (container && tripsList.length === 0) {
         container.innerHTML = `
           <div style="text-align:center;padding:40px 10px;color:#888;grid-column:1/-1;background:var(--glass-bg);border-radius:20px;border:1.5px dashed rgba(200, 59, 43, 0.4);backdrop-filter:blur(16px);">
-            <p style="font-size:14px;margin-bottom:12px;font-weight:700;color:var(--red);">⚠️ 伺服器連線延遲，請點擊下方按鈕重試</p>
-            <button class="glass-btn" style="background:var(--moss-gradient);color:#fff;display:inline-flex;" onclick="fetchTrips({force:true})">🔄 重新載入行程</button>
+            <p style="font-size:14px;margin-bottom:12px;font-weight:700;color:var(--red);">⚠️ 後端連線失敗，無法取得最新行程資料</p>
+            <button class="glass-btn" style="background:var(--moss-gradient);color:#fff;display:inline-flex;" onclick="fetchTrips({force:true})">🔄 點此重新連線</button>
           </div>
         `;
       }
@@ -1883,10 +1852,20 @@ function renderHubTripsGrid() {
   if (!container) return;
 
   if (tripsList.length === 0) {
+    if (!isInitialTripsLoaded) {
+      // 第一次使用、尚無本地快取：顯示雲端載入中骨架
+      container.innerHTML = `
+        <div style="text-align:center;padding:40px 10px;color:#888;grid-column:1/-1;background:var(--glass-bg);border-radius:20px;border:1.5px dashed rgba(197, 160, 89, 0.4);backdrop-filter:blur(16px);">
+          <p style="font-size:14px;margin-bottom:10px;font-weight:700;color:var(--moss);">⏳ 正在自雲端載入行程清單，請稍候...</p>
+        </div>
+      `;
+      return;
+    }
+    // 已完成請求但資料庫確實無任何行程
     container.innerHTML = `
       <div style="text-align:center;padding:40px 10px;color:#888;grid-column:1/-1;background:var(--glass-bg);border-radius:20px;border:1.5px dashed rgba(197, 160, 89, 0.4);backdrop-filter:blur(16px);">
         <p style="font-size:14px;margin-bottom:10px;font-weight:700;color:var(--moss);">目前尚無任何公開行程</p>
-        ${userRole === "admin"
+        ${verifiedRole === "admin"
         ? '<button class="glass-btn" style="background:var(--moss-gradient);color:#fff;display:inline-flex;" onclick="openCreateTripModal()">＋ 建立第一筆旅遊行程</button>'
         : '<p style="font-size:12px;color:#888;">請聯絡管理員建立行程或登入管理員帳號。</p>'
       }
