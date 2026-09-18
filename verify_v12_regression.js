@@ -117,8 +117,10 @@ assertCheck(
   vm.createContext(sandbox);
   vm.runInContext(adapterCode, sandbox);
 
-  // 靜態核對正式呼叫點：確認 app.js 的 8 處門禁呼叫均採用兩參數格式
-  const twoParamCallCount = [...appCode.matchAll(/isTripUnlocked\s*\(\s*[^,]+,\s*[^,)]+\s*\)/g)].length;
+  // 靜態核對正式呼叫點：明確扣除函式宣告本身，精確鎖定恰好 8 處正式呼叫
+  const allOccurrences = [...appCode.matchAll(/\bisTripUnlocked\s*\(/g)].length;
+  const functionDefinitions = [...appCode.matchAll(/function\s+isTripUnlocked\s*\(/g)].length;
+  const twoParamCallCount = allOccurrences - functionDefinitions;
 
   // 情境 A：管理員登入，頁面以 2 個參數呼叫設有密碼之行程
   sandbox.userRole = "admin";
@@ -149,7 +151,7 @@ assertCheck(
 
   const allPassedP0 =
     adapterMatch !== null &&
-    twoParamCallCount >= 8 &&
+    twoParamCallCount === 8 &&
     adminResult === true &&
     memberResult === true &&
     guestLockedResult === false &&
@@ -159,7 +161,7 @@ assertCheck(
   assertCheck(
     "[單元實測+靜態接線] 門禁轉接函式操作型單元測試＋正式程式靜態接線檢查",
     allPassedP0,
-    `轉接函式擷取: 成功, 靜態接線點: ${twoParamCallCount}處, 管理員放行: ${adminResult}, 成員放行: ${memberResult}, 訪客攔截: ${!guestLockedResult}, PIN放行: ${guestUnlockedResult}`
+    `轉接函式擷取: 成功, 正式呼叫點(扣除定義): ${twoParamCallCount}處(吻合8處), 管理員放行: ${adminResult}, 成員放行: ${memberResult}, 訪客攔截: ${!guestLockedResult}, PIN放行: ${guestUnlockedResult}`
   );
 })();
 
@@ -338,14 +340,17 @@ assertCheck(
 // 測試 11：靜態檢查 - 正式呼叫點全面使用轉接函式，DOM 賦值不含 escapeAttribute
 // ----------------------------------------------------
 (function testCallSitesAndDomAssignments() {
-  const twoParamCalls = [...appCode.matchAll(/isTripUnlocked\s*\(\s*[^,]+,\s*[^,)]+\s*\)/g)];
+  const allOccurrences = [...appCode.matchAll(/\bisTripUnlocked\s*\(/g)].length;
+  const functionDefinitions = [...appCode.matchAll(/function\s+isTripUnlocked\s*\(/g)].length;
+  const twoParamCalls = allOccurrences - functionDefinitions;
+
   const domDirectSrc = appCode.includes('img.src = sanitizeUrl(');
   const noDoubleEscapeCurrentImg = !appCode.includes('escapeAttribute(escapeAttribute(');
 
   assertCheck(
     "[整合調用驗證] 正式 8 處門禁呼叫點均使用統一轉接函式，DOM 賦值乾淨無多餘轉義",
-    twoParamCalls.length >= 8 && domDirectSrc && noDoubleEscapeCurrentImg,
-    `2 參數門禁呼叫點共計 ${twoParamCalls.length} 處，DOM 圖片賦值使用乾淨 URL，無雙重轉義`
+    twoParamCalls === 8 && domDirectSrc && noDoubleEscapeCurrentImg,
+    `2 參數正式呼叫點精準為 ${twoParamCalls} 處 (已扣除函式定義)，DOM 圖片賦值使用乾淨 URL，無雙重轉義`
   );
 })();
 
