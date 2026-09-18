@@ -10,8 +10,22 @@ const {
   escapeHtml,
   updateConfirmedSnapshot,
   rollbackTripState,
-  isTripUnlocked,
+  isTripUnlocked: isTripUnlockedCore,
 } = (typeof TripState !== "undefined" ? TripState : (typeof require === "function" ? require("./trip-state.js") : {}));
+
+// 統一門禁轉接函式：自動注入當前頁面的登入身分與憑證有效性，保留正式頁面現有兩參數呼叫慣例
+function isTripUnlocked(tripUuid, hasPassword) {
+  const role = typeof userRole !== "undefined" ? userRole : "guest";
+  const token = typeof idToken !== "undefined" ? idToken : null;
+  const expired = typeof isTokenExpired === "function" ? isTokenExpired(token) : false;
+  return isTripUnlockedCore(
+    tripUuid,
+    hasPassword,
+    role,
+    token,
+    expired
+  );
+}
 
 // 全域登入世代計數器：登出或身分切換時遞增，徹底防止登出前未完成的非同步儲存回填敏感資料
 let authGeneration = 0;
@@ -20,7 +34,7 @@ let authGeneration = 0;
 // =========================================================================
 const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
-const APP_BUILD_VERSION = "20260917_11";
+const APP_BUILD_VERSION = "20260917_12";
 
 // 智能行程顯示名稱轉換 (將舊版 ID 或技術命名轉換為溫暖手帳風格名稱，技術 ID 留存於後台編輯中)
 function getTripDisplayName(name = "", uuid = "") {
@@ -1854,7 +1868,7 @@ function renderHubTripsGrid() {
       return `
         <a href="?trip=${encodeURIComponent(safeUuid)}" class="trip-hub-card" onclick="event.preventDefault(); openTripByUuid('${safeUuid}')" aria-label="${safeName}行程手冊" style="text-decoration:none;color:inherit;display:flex;">
           <div class="hub-card-cover-wrap">
-            <img class="hub-card-cover" src="${coverInfo.url}" alt="${altText}" loading="lazy" referrerpolicy="no-referrer" onerror="handleImgError(this)">
+            <img class="hub-card-cover" src="${escapeAttribute(coverInfo.url)}" alt="${altText}" loading="lazy" referrerpolicy="no-referrer" onerror="handleImgError(this)">
             <div class="hub-card-tag">${coverInfo.tag}</div>
           </div>
           <div class="hub-card-body">
@@ -2530,7 +2544,7 @@ function renderChecklist() {
           : "";
         const safeTitle = escapeHtml(item.title || "");
         const safeNote = escapeHtml(item.note || "");
-        const safeLink = sanitizeUrl(item.link);
+        const safeLink = escapeAttribute(sanitizeUrl(item.link));
         return `
           <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid rgba(220, 226, 222, 0.45);transition:all 0.2s;">
             <input type="checkbox" style="width:18px;height:18px;accent-color:var(--moss);margin-top:2px;cursor:${canEdit ? "pointer" : "default"};border-radius:6px;flex-shrink:0;" ${item.done ? "checked" : ""} ${canEdit ? `onclick="toggleChecklistItem(${i})"` : "disabled"}>
@@ -2575,7 +2589,7 @@ function renderChecklist() {
       const safeCat = escapeHtml(item.cat || "備忘");
       const safeTitle = escapeHtml(item.title || "");
       const safeNote = escapeHtml(item.note || "");
-      const safeLink = sanitizeUrl(item.link);
+      const safeLink = escapeAttribute(sanitizeUrl(item.link));
       return `
         <div style="display:flex;align-items:flex-start;gap:14px;padding:14px 0;border-bottom:1px solid rgba(220, 226, 222, 0.45);transition:all 0.2s;">
           <input type="checkbox" style="width:20px;height:20px;accent-color:var(--moss);margin-top:2px;cursor:${canEdit ? "pointer" : "default"};border-radius:6px;" ${item.done ? "checked" : ""} ${canEdit ? `onclick="toggleChecklistItem(${i})"` : "disabled"}>
@@ -3399,8 +3413,8 @@ function renderItinerary() {
       const displayTime = cleanTimeDisplay(item.time);
       const safePlace = escapeHtml(item.place || "未命名景點");
       const safeDesc = escapeHtml(item.desc || "");
-      const safeImgUrl = sanitizeUrl(item.imgUrl);
-      const safeLink = sanitizeUrl(item.link);
+      const safeImgUrl = escapeAttribute(sanitizeUrl(item.imgUrl));
+      const safeLink = escapeAttribute(sanitizeUrl(item.link));
 
       return `
         <div class="tl">
@@ -4375,7 +4389,7 @@ function renderFood() {
       const safeEmoji = escapeHtml(item.emoji || "🍴");
       const safeName = escapeHtml(item.name || "");
       const safeDesc = escapeHtml(item.desc || "");
-      const safeImgUrl = sanitizeUrl(item.imgUrl);
+      const safeImgUrl = escapeAttribute(sanitizeUrl(item.imgUrl));
       const detectedArea = extractFoodArea(item);
 
       // 自動依美食/店家名稱產生 Google 地圖導航搜尋連結
@@ -4743,8 +4757,8 @@ function renderShopping() {
         ? "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(queryTarget)
         : "";
 
-      const safeLink = sanitizeUrl(item.link);
-      const safeImgUrl = sanitizeUrl(item.imgUrl);
+      const safeLink = escapeAttribute(sanitizeUrl(item.link));
+      const safeImgUrl = escapeAttribute(sanitizeUrl(item.imgUrl));
       const safeBuyer = escapeHtml(item.buyer || "委託人");
       const safeName = escapeHtml(item.name || "未命名商品");
       const safeLocation = escapeHtml(item.location || "");
@@ -5622,7 +5636,7 @@ function renderTransport() {
     const m = maps[0];
     const safeTitle = escapeHtml(m.title || "主要交通路線圖");
     const safeNote = escapeHtml(m.note || "");
-    const safeUrl = sanitizeUrl(m.url);
+    const safeUrl = escapeAttribute(sanitizeUrl(m.url));
     const editActions = canEdit
       ? `
         <div class="item-actions">
@@ -5663,7 +5677,7 @@ function renderTransport() {
         ${maps.map((m, idx) => {
           const safeTitle = escapeHtml(m.title || `路線圖 ${idx + 1}`);
           const safeNote = escapeHtml(m.note || "");
-          const safeUrl = sanitizeUrl(m.url);
+          const safeUrl = escapeAttribute(sanitizeUrl(m.url));
           const editMapActions = canEdit
             ? `
               <div class="item-actions" onclick="event.stopPropagation()">

@@ -1,7 +1,7 @@
 /**
  * trip-state.js - 旅遊手冊狀態管理與核心門禁模組
  * 雙模支援：同時供瀏覽器端 (window.TripState) 與 Node.js 自動化測試共用
- * 版本：20260917_11
+ * 版本：20260917_12
  */
 
 (function (root, factory) {
@@ -56,12 +56,12 @@
       .replace(/'/g, "&#39;");
   }
 
-  // 安全清理與跳脫 URL (檢查協議白名單並強制跳脫引號，杜絕 src/href 屬性穿透)
+  // 協議安全校驗：驗證合法白名單 (http/https/data/blob/mailto/相對路徑)，回傳原始乾淨 URL，不混入 HTML 轉義
   function sanitizeUrl(url) {
     if (!url) return "";
     const trimmed = String(url).trim();
     if (/^(https?:\/\/|data:image\/|blob:|\/|mailto:|\.\/)/i.test(trimmed)) {
-      return escapeAttribute(trimmed);
+      return trimmed;
     }
     return "#";
   }
