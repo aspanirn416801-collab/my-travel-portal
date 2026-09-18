@@ -1,19 +1,26 @@
-// 安全跳脫 HTML 屬性 (防止雙引號與單引號破壞屬性邊界或產生 XSS)
-function escapeAttribute(str) {
-  if (str === null || str === undefined) return "";
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
+// =========================================================================
+// 核心狀態管理與安全工具：唯一源頭引用 trip-state.js (正式網站與自動化測試共用，嚴禁重複宣告)
+// =========================================================================
+const {
+  confirmedSnapshots,
+  memoryUnlockedPins,
+  tripPermissions,
+  deepClone,
+  escapeAttribute,
+  escapeHtml,
+  updateConfirmedSnapshot,
+  rollbackTripState,
+  isTripUnlocked,
+} = (typeof TripState !== "undefined" ? TripState : (typeof require === "function" ? require("./trip-state.js") : {}));
+
+// 全域登入世代計數器：登出或身分切換時遞增，徹底防止登出前未完成的非同步儲存回填敏感資料
+let authGeneration = 0;
 // =========================================================================
 // 公版設定：請填入您的 Google Client ID 與 GAS API URL
 // =========================================================================
 const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
-const APP_BUILD_VERSION = "20260917_10";
+const APP_BUILD_VERSION = "20260917_11";
 
 // 智能行程顯示名稱轉換 (將舊版 ID 或技術命名轉換為溫暖手帳風格名稱，技術 ID 留存於後台編輯中)
 function getTripDisplayName(name = "", uuid = "") {
@@ -55,7 +62,7 @@ let idToken = localStorage.getItem("google_id_token") || null;
 let userRole = "guest"; // 'admin' | 'user' | 'guest' (絕不信任本地快取，防止偽冒)
 
 // 記憶體專屬權限管理：嚴禁寫入 localStorage，換帳號或登出時立即清除！
-const tripPermissions = new Map(); // key: tripUuid, value: { canEdit: boolean }
+
 let tripRequestSequence = 0; // 跨行程請求流水號，徹底杜絕 Race Condition 舊回應覆蓋
 
 // 判定當前行程是否具備編輯權限 (管理員全權、或經後端認證的授權成員)
@@ -89,18 +96,7 @@ const PUBLIC_TRIP_SUMMARIES = [
 let tripsList = [...PUBLIC_TRIP_SUMMARIES]; // 可存取的行程列表 (預設以公開摘要秒開大廳)
 let currentTripUuid = "";
 let tripData = null;
-// 跨行程確認快照字典：以 tripUuid 為唯一鍵進行物理隔離，徹底防止跨行程還原串錯 (例如岡山覆蓋奧捷)
-const confirmedSnapshots = new Map(); // key: tripUuid, value: deepClonedData
-
-// 統一更新確認快照與 Session 快取 (僅限經雲端確認成功或初次合法載入時調用)
-function updateConfirmedSnapshot(uuid, data) {
-  if (!uuid || !data) return;
-  try {
-    const cloned = JSON.parse(JSON.stringify(data));
-    confirmedSnapshots.set(uuid, cloned);
-    sessionStorage.setItem("session_trip_" + uuid, JSON.stringify(cloned));
-  } catch (e) {}
-} // 當前行程詳細手冊資料
+ // 當前行程詳細手冊資料
 let currentTab = "checklist";
 let selectedDay = 0;
 let currentFoodFilter = "all"; // 美食分類過濾：'all' | 'must' | 'todo' | 'done' | 地區名稱
@@ -670,23 +666,7 @@ function onWeatherCitySelectChange(cityId) {
   renderWeatherCard(false);
 }
 
-// 記憶體專屬已解鎖 PIN 映射表：不存入 LocalStorage/SessionStorage，關閉或重新整理即自動失效
-const memoryUnlockedPins = new Map(); // key: tripUuid, value: pin
-
-function isTripUnlocked(tripUuid, tripHasPassword) {
-  if (!tripUuid) return true;
-  // 管理員尊榮特權：持有有效 Token 直接放行
-  if (userRole === "admin" && idToken && !isTokenExpired(idToken)) return true;
-  // 授權成員特權：後端授權 canEdit 者直接免 PIN 放行
-  const perm = tripPermissions.get(tripUuid);
-  if (perm && perm.canEdit && idToken && !isTokenExpired(idToken)) return true;
-
-  // 若未設密碼 (布林 false、空字串、null、undefined) 則直接放行，絕不誤鎖
-  if (!tripHasPassword) return true;
-
-  // 訪客模式：必須在當前記憶體中持有已驗證的 PIN
-  return memoryUnlockedPins.has(tripUuid);
-}
+// memoryUnlockedPins 與 isTripUnlocked 已統一由 TripState 模組接管
 
 function markTripUnlocked(tripUuid, pin) {
   if (!tripUuid) return;
@@ -1477,6 +1457,7 @@ function handleCredentialResponse(response) {
 }
 
 function logout() {
+  authGeneration++; // 關鍵：推進登入世代計數器，徹底廢棄登出前任何尚未完成的非同步儲存回調，杜絕敏感資料回填！
   idToken = null;
   userRole = "guest";
   localStorage.removeItem("google_id_token");
@@ -1519,15 +1500,7 @@ function logout() {
 // =========================================================================
 // 安全性防禦函式 (XSS 與惡意連結過濾)
 // =========================================================================
-function escapeHtml(str) {
-  if (str === null || str === undefined) return "";
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
+// escapeHtml 統一由 TripState 模組唯一提供
 
 // 將各類型的 Google Drive 網址轉換為相容性最高、支援直連外嵌的格式 (lh3.googleusercontent.com)
 function formatDriveImageUrl(url) {
@@ -1563,11 +1536,7 @@ function handleImgError(img) {
 function sanitizeUrl(url) {
   if (!url) return "";
   const formatted = formatDriveImageUrl(url);
-  const trimmed = String(formatted).trim();
-  if (/^(https?:\/\/|data:image\/|blob:|\/|mailto:)/i.test(trimmed)) {
-    return trimmed;
-  }
-  return "#";
+  return TripState.sanitizeUrl(formatted);
 }
 
 // 智能目的地地名與國家封面圖庫 (支援全球中英文關鍵字自動匹配)
@@ -2298,6 +2267,7 @@ async function save() {
   }
 
   const savingTripUuid = currentTripUuid;
+  const savingAuthGeneration = authGeneration; // 鎖定發起時的登入世代
 
   // 寫入前執行去重與清洗
   tripData = sanitizeAndDeduplicateTrip(tripData);
@@ -2334,6 +2304,13 @@ async function save() {
       }),
     });
     const result = await res.json();
+
+    // 關鍵門禁：若在儲存連線等待期間使用者已登出或身分切換，絕對廢棄此舊回應，禁止回填快照或 Session！
+    if (savingAuthGeneration !== authGeneration || !idToken || userRole === "guest") {
+      console.warn("登出或身分切換後丟棄過期的儲存回應，拒絕回填敏感手冊！");
+      return false;
+    }
+
     if (result.status === "success") {
       // 雲端確認成功後，以鎖定的 savingPayload 更新確認快照與 Session，絕不誤存當前其他行程之資料
       updateConfirmedSnapshot(savingTripUuid, savingPayload);
@@ -2350,6 +2327,9 @@ async function save() {
       return false;
     }
   } catch (e) {
+    if (savingAuthGeneration !== authGeneration || !idToken || userRole === "guest") {
+      return false;
+    }
     showToast("⚠️ 連線異常，雲端同步失敗，已還原變更");
     // 網路異常：嚴格僅還原目前 savingTripUuid 之快照，並同步覆蓋 Session
     rollbackTripState(savingTripUuid, currentTripUuid, sessionStorage, (restored) => {
@@ -2361,22 +2341,7 @@ async function save() {
   }
 }
 
-// 失敗精準回滾輔助函式：只還原目標行程，絕不跨行程串錯
-function rollbackTripState(uuid) {
-  if (!uuid) return;
-  try {
-    const confirmed = confirmedSnapshots.get(uuid);
-    if (confirmed) {
-      if (currentTripUuid === uuid) {
-        tripData = JSON.parse(JSON.stringify(confirmed));
-        if (tripData && tripData.days) sortTripDays(tripData.days);
-        render();
-      }
-      // 同步還原 Session 快取，防止重新整理後又讀到未成功儲存的版本
-      sessionStorage.setItem("session_trip_" + uuid, JSON.stringify(confirmed));
-    }
-  } catch (err) {}
-}
+// rollbackTripState 已統一由 TripState 模組接管
 
 function uid() {
   return Math.random().toString(36).slice(2, 8);
@@ -6218,7 +6183,7 @@ function openEditRouteMapModal(idx) {
       <input type="hidden" id="editMapImgUrl" value="${escapeAttribute(currentImg)}">
     </div>
     <div id="editMapPreviewDiv" style="margin-top:8px;">
-      ${currentImg ? `<img src="${currentImg}" style="max-height:140px;border-radius:10px;border:1px solid #DDD;" onerror="handleImgError(this)">` : ""}
+      ${currentImg ? `<img src="${escapeAttribute(sanitizeUrl(currentImg))}" style="max-height:140px;border-radius:10px;border:1px solid #DDD;" onerror="handleImgError(this)">` : ""}
     </div>
     <div class="ef-wrap" style="margin-top:12px;">
       <div class="ef-label">備註說明 / 適用區間</div>

@@ -1,7 +1,7 @@
 /**
  * trip-state.js - 旅遊手冊狀態管理與核心門禁模組
- * 雙模支援：同時供瀏覽器端 (window.TripState) 與 Node.js 自動化測試共用，杜絕測試與上線程式分家
- * 版本：20260917_10
+ * 雙模支援：同時供瀏覽器端 (window.TripState) 與 Node.js 自動化測試共用
+ * 版本：20260917_11
  */
 
 (function (root, factory) {
@@ -12,15 +12,6 @@
     // Browser 全域物件
     const exports = factory();
     root.TripState = exports;
-    // 將核心函式與變數掛載至全域，保持既有程式碼調用相容
-    root.confirmedSnapshots = exports.confirmedSnapshots;
-    root.memoryUnlockedPins = exports.memoryUnlockedPins;
-    root.tripPermissions = exports.tripPermissions;
-    root.updateConfirmedSnapshot = exports.updateConfirmedSnapshot;
-    root.rollbackTripState = exports.rollbackTripState;
-    root.isTripUnlocked = exports.isTripUnlocked;
-    root.escapeAttribute = exports.escapeAttribute;
-    root.escapeHtml = exports.escapeHtml;
   }
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   // 1. 跨行程確認快照字典：以 tripUuid 進行物理隔離，防止跨行程非同步覆蓋 (例如岡山覆蓋奧捷)
@@ -63,6 +54,16 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
+  }
+
+  // 安全清理與跳脫 URL (檢查協議白名單並強制跳脫引號，杜絕 src/href 屬性穿透)
+  function sanitizeUrl(url) {
+    if (!url) return "";
+    const trimmed = String(url).trim();
+    if (/^(https?:\/\/|data:image\/|blob:|\/|mailto:|\.\/)/i.test(trimmed)) {
+      return escapeAttribute(trimmed);
+    }
+    return "#";
   }
 
   // 統一更新確認快照與 Session 快取 (僅限經雲端確認成功或初次合法載入時調用)
@@ -129,6 +130,7 @@
     deepClone,
     escapeAttribute,
     escapeHtml,
+    sanitizeUrl,
     updateConfirmedSnapshot,
     rollbackTripState,
     isTripUnlocked,
