@@ -88,7 +88,8 @@ const PUBLIC_TRIP_SUMMARIES = [
 
 let tripsList = [...PUBLIC_TRIP_SUMMARIES]; // 可存取的行程列表 (預設以公開摘要秒開大廳)
 let currentTripUuid = "";
-let tripData = null; // 當前行程詳細手冊資料
+let tripData = null;
+let lastConfirmedTripData = null; // 最近一次經雲端確認或載入之手冊完整備份快照 (供失敗時精準回滾) // 當前行程詳細手冊資料
 let currentTab = "checklist";
 let selectedDay = 0;
 let currentFoodFilter = "all"; // 美食分類過濾：'all' | 'must' | 'todo' | 'done' | 地區名稱
@@ -669,8 +670,8 @@ function isTripUnlocked(tripUuid, tripHasPassword) {
   const perm = tripPermissions.get(tripUuid);
   if (perm && perm.canEdit && idToken && !isTokenExpired(idToken)) return true;
 
-  // 若未設密碼則直接放行
-  if (tripHasPassword === false) return true;
+  // 若未設密碼 (布林 false、空字串、null、undefined) 則直接放行，絕不誤鎖
+  if (!tripHasPassword) return true;
 
   // 訪客模式：必須在當前記憶體中持有已驗證的 PIN
   return memoryUnlockedPins.has(tripUuid);
@@ -908,10 +909,10 @@ window.addEventListener("pageshow", function () {
 
 function showTripView() {
   const trip = tripsList.find((t) => t.uuid === currentTripUuid) || tripData;
-  const tripPassword = trip ? (trip.password || "") : "";
-  // 雙重安全閥：若未解鎖，絕對不允許開啟手冊畫面
-  if (currentTripUuid && !isTripUnlocked(currentTripUuid, tripPassword)) {
-    showLockedView(trip || { uuid: currentTripUuid, name: currentTripUuid, password: tripPassword });
+  const hasPassword = trip ? Boolean(trip.hasPassword || trip.password) : false;
+  // 雙重安全閥：若未解鎖，絕對不允許開啟手冊畫面 (無密碼公開行程直接放行)
+  if (currentTripUuid && !isTripUnlocked(currentTripUuid, hasPassword)) {
+    showLockedView(trip || { uuid: currentTripUuid, name: currentTripUuid, hasPassword: true });
     return;
   }
 
@@ -1680,12 +1681,12 @@ function getAutoCoverInfo(name = "", uuid = "", customUrl = "") {
   };
 }
 
-// In-flight Promise 管理：禁止同時間發送重複請求，顯著降低 GAS 冷啟動延遲
+// In-flight Promise 管理：以 Token 與目標行程 UUID 雙重複合鍵去重，徹底防止串頁與舊回應覆蓋
 let inFlightTripsPromise = null;
-let inFlightTripsToken = null;
+let inFlightTripsKey = null;
 let tripsRequestSeq = 0;
 
-// 取得行程清單與初始化 (支援一次性 bootstrap 合併請求與 In-flight 合併機制)
+// 取得行程清單與初始化 (支援一次性 bootstrap 合併請求與 In-flight 精準併發控制)
 async function fetchTrips({ force = false } = {}) {
   // 1. 優先從本地快取瞬間秒開大廳，0 等待！
   try {
@@ -1698,26 +1699,28 @@ async function fetchTrips({ force = false } = {}) {
     }
   } catch (e) {}
 
-  // 若目前有相同憑證的請求正在連線中且非強制重刷，直接共用 Promise，不打第二遍 GAS
-  if (inFlightTripsPromise && !force && inFlightTripsToken === idToken) {
+  // 複合去重鍵：必須同時綁定登入 Token 與目標行程 UUID
+  const requestKey = `${idToken || "guest"}__${currentTripUuid || "hub"}`;
+  if (inFlightTripsPromise && !force && inFlightTripsKey === requestKey) {
     return inFlightTripsPromise;
   }
 
   const currentSeq = ++tripsRequestSeq;
-  inFlightTripsToken = idToken;
+  const requestedTripUuid = currentTripUuid; // 鎖定發起時的目標行程，防止非同步串頁
+  inFlightTripsKey = requestKey;
 
-  inFlightTripsPromise = (async () => {
+  let currentPromise = null;
+  currentPromise = (async () => {
     try {
       const tokenParam = idToken ? `&token=${encodeURIComponent(idToken)}` : "";
-      const currentPin = currentTripUuid ? (memoryUnlockedPins.get(currentTripUuid) || "") : "";
-      const tripParam = currentTripUuid ? `&tripUuid=${encodeURIComponent(currentTripUuid)}&tripPassword=${encodeURIComponent(currentPin)}` : "";
+      const currentPin = requestedTripUuid ? (memoryUnlockedPins.get(requestedTripUuid) || "") : "";
+      const tripParam = requestedTripUuid ? `&tripUuid=${encodeURIComponent(requestedTripUuid)}&tripPassword=${encodeURIComponent(currentPin)}` : "";
       
-      // 當前如果在行程手冊中，使用 bootstrap 端點一次取回清單、角色與手冊資料
-      const actionName = currentTripUuid ? "bootstrap" : "getTrips";
+      const actionName = requestedTripUuid ? "bootstrap" : "getTrips";
       const res = await fetch(`${GAS_API_URL}?action=${actionName}${tokenParam}${tripParam}`);
       const result = await res.json();
 
-      // 若後續已有新請求發出，放棄過期回應
+      // 若後續已有更新的請求發出，放棄過期回應
       if (currentSeq !== tripsRequestSeq) return;
 
       if (result.status === "success") {
@@ -1745,21 +1748,22 @@ async function fetchTrips({ force = false } = {}) {
 
         updateAuthUI();
 
-        // 若 bootstrap 端點同時回傳了當前手冊資料，立即更新畫面
-        if (result.currentTrip && currentTripUuid) {
+        // 嚴格行程校驗：僅當使用者目前仍停留在發起請求時之目標行程時，才套用手冊資料
+        if (result.currentTrip && requestedTripUuid && currentTripUuid === requestedTripUuid) {
           if (result.canEdit !== undefined) {
-            tripPermissions.set(currentTripUuid, { canEdit: Boolean(result.canEdit) });
+            tripPermissions.set(requestedTripUuid, { canEdit: Boolean(result.canEdit) });
           }
           tripData = sanitizeAndDeduplicateTrip(result.currentTrip);
           if (tripData && tripData.days) sortTripDays(tripData.days);
+          // 同步更新上一次確認成功之快照
+          lastConfirmedTripData = JSON.parse(JSON.stringify(tripData));
           try {
-            sessionStorage.setItem("session_trip_" + currentTripUuid, JSON.stringify(tripData));
+            sessionStorage.setItem("session_trip_" + requestedTripUuid, JSON.stringify(tripData));
           } catch (e) {}
           showTripView();
           initCountdown();
           render();
-        } else if (currentTripUuid && !result.currentTrip) {
-          // 若無合裝手冊資料，維持既有取得
+        } else if (requestedTripUuid && currentTripUuid === requestedTripUuid && !result.currentTrip) {
           fetchTripData();
         }
 
@@ -1801,10 +1805,15 @@ async function fetchTrips({ force = false } = {}) {
         `;
       }
     } finally {
-      inFlightTripsPromise = null;
+      // 僅在自己仍是進行中 Promise 時才清空，防止舊請求 finally 誤清除新請求
+      if (inFlightTripsPromise === currentPromise) {
+        inFlightTripsPromise = null;
+        inFlightTripsKey = null;
+      }
     }
   })();
 
+  inFlightTripsPromise = currentPromise;
   return inFlightTripsPromise;
 }
 
@@ -2284,8 +2293,12 @@ async function save() {
     return false;
   }
 
-  // 失敗回滾防護：建立修改前之深拷貝快照
-  const backupSnapshot = JSON.stringify(tripData);
+  // 若尚未建立初始備份快照，立即初始化
+  if (!lastConfirmedTripData) {
+    try {
+      lastConfirmedTripData = JSON.parse(JSON.stringify(tripData));
+    } catch (e) {}
+  }
 
   // 寫入前執行去重與清洗
   tripData = sanitizeAndDeduplicateTrip(tripData);
@@ -2326,13 +2339,19 @@ async function save() {
     });
     const result = await res.json();
     if (result.status === "success") {
+      // 成功後更新確認快照
+      try {
+        lastConfirmedTripData = JSON.parse(JSON.stringify(tripData));
+      } catch (e) {}
       showToast("雲端同步成功 ✓");
       return true;
     } else {
       showToast("⚠️ " + (result.message || "雲端儲存失敗，已還原變更"));
+      // 寫入失敗時精準回滾至上一次確認成功的快照
       try {
-        if (backupSnapshot) {
-          tripData = JSON.parse(backupSnapshot);
+        if (lastConfirmedTripData) {
+          tripData = JSON.parse(JSON.stringify(lastConfirmedTripData));
+          if (tripData && tripData.days) sortTripDays(tripData.days);
           render();
         }
       } catch (err) {}
@@ -2341,8 +2360,9 @@ async function save() {
   } catch (e) {
     showToast("⚠️ 連線異常，雲端同步失敗，已還原變更");
     try {
-      if (backupSnapshot) {
-        tripData = JSON.parse(backupSnapshot);
+      if (lastConfirmedTripData) {
+        tripData = JSON.parse(JSON.stringify(lastConfirmedTripData));
+        if (tripData && tripData.days) sortTripDays(tripData.days);
         render();
       }
     } catch (err) {}
@@ -2630,14 +2650,17 @@ function renderChecklist() {
   `;
 }
 
-function toggleChecklistItem(index) {
+async function toggleChecklistItem(index) {
   if (!canEditCurrentTrip()) {
     showToast("⚠️ 目前為唯讀模式，無法變更勾選狀態");
     return;
   }
   tripData.checklist[index].done = !tripData.checklist[index].done;
-  save();
   renderChecklist();
+  const ok = await save();
+  if (ok === false) {
+    renderChecklist();
+  }
 }
 
 function editChecklistItem(index) {
@@ -2650,19 +2673,19 @@ function editChecklistItem(index) {
   const formHtml = `
     <div class="ef-wrap">
       <div class="ef-label">類別標籤</div>
-      <input type="text" id="editChecklistCat" class="ef-input" value="${item.cat || ""}">
+      <input type="text" id="editChecklistCat" class="ef-input" value="${escapeAttribute(item.cat || "")}">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">項目名稱 <span style="color:var(--red);">*</span></div>
-      <input type="text" id="editChecklistTitle" class="ef-input" value="${item.title || ""}">
+      <input type="text" id="editChecklistTitle" class="ef-input" value="${escapeAttribute(item.title || "")}">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">備註說明</div>
-      <input type="text" id="editChecklistNote" class="ef-input" value="${item.note || ""}">
+      <input type="text" id="editChecklistNote" class="ef-input" value="${escapeAttribute(item.note || "")}">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">外部連結</div>
-      <input type="text" id="editChecklistLink" class="ef-input" value="${item.link || ""}">
+      <input type="text" id="editChecklistLink" class="ef-input" value="${escapeAttribute(item.link || "")}">
     </div>
   `;
 
@@ -2962,25 +2985,25 @@ function openEditFlightModal(type) {
   const formHtml = `
     <div class="ef-wrap">
       <div class="ef-label">航空公司</div>
-      <input type="text" id="editFlightAirline" class="ef-input" value="${f.airline || ""}">
+      <input type="text" id="editFlightAirline" class="ef-input" value="${escapeAttribute(f.airline || "")}">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">航班編號 (例如: IT214)</div>
-      <input type="text" id="editFlightNo" class="ef-input" value="${f.no || ""}">
+      <input type="text" id="editFlightNo" class="ef-input" value="${escapeAttribute(f.no || "")}">
     </div>
     <div style="display:flex;gap:10px;">
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">出發地</div>
-        <input type="text" id="editFlightFrom" class="ef-input" value="${f.from || ""}">
+        <input type="text" id="editFlightFrom" class="ef-input" value="${escapeAttribute(f.from || "")}">
       </div>
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">目的地</div>
-        <input type="text" id="editFlightTo" class="ef-input" value="${f.to || ""}">
+        <input type="text" id="editFlightTo" class="ef-input" value="${escapeAttribute(f.to || "")}">
       </div>
     </div>
     <div class="ef-wrap">
       <div class="ef-label">搭乘日期</div>
-      <input type="date" id="editFlightDate" class="ef-input" value="${f.date || ""}">
+      <input type="date" id="editFlightDate" class="ef-input" value="${escapeAttribute(f.date || "")}">
     </div>
     <div style="display:flex;gap:10px;">
       <div class="ef-wrap" style="flex:1;">
@@ -3915,7 +3938,7 @@ function openEditItineraryModal(dayIdx, itemIdx) {
         <button type="button" class="time-tag" onclick="document.getElementById('editItTime').value='14:00'">14:00</button>
         <button type="button" class="time-tag" onclick="document.getElementById('editItTime').value='18:00'">18:00</button>
       </div>
-      <input type="text" id="editItTime" class="ef-input" placeholder="例如: 上午、10:30、14:00~16:00" value="${item.time || ""}">
+      <input type="text" id="editItTime" class="ef-input" placeholder="例如: 上午、10:30、14:00~16:00" value="${escapeAttribute(item.time || "")}">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">景點或活動名稱 <span style="color:var(--red);">*</span></div>
@@ -3923,7 +3946,7 @@ function openEditItineraryModal(dayIdx, itemIdx) {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">參考網址 / 補充資料 (景點官網、門票預約、介紹等，選填)</div>
-      <input type="text" id="editItLink" class="ef-input" placeholder="https://..." value="${item.link || ""}">
+      <input type="text" id="editItLink" class="ef-input" placeholder="https://..." value="${escapeAttribute(item.link || "")}">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">說明備忘事項</div>
@@ -4141,7 +4164,7 @@ function deleteItineraryItem(dayIdx, itemIdx) {
 }
 
 // 手動調整景點前後順序 (上移 / 下移)
-function moveItineraryItem(dayIdx, itemIdx, offset) {
+async function moveItineraryItem(dayIdx, itemIdx, offset) {
   if (!canEditCurrentTrip()) {
     showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
     return;
@@ -4155,12 +4178,14 @@ function moveItineraryItem(dayIdx, itemIdx, offset) {
   const item = day.items.splice(itemIdx, 1)[0];
   day.items.splice(targetIdx, 0, item);
   renderItinerary();
-  save();
-  showToast("已調整景點順序");
+  const ok = await save();
+  if (ok !== false) {
+    showToast("已調整景點順序 ✓");
+  }
 }
 
 // 依時段自動排序當日所有景點
-function autoSortCurrentDayItems(dayIdx) {
+async function autoSortCurrentDayItems(dayIdx) {
   if (!canEditCurrentTrip()) {
     showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
     return;
@@ -4173,8 +4198,10 @@ function autoSortCurrentDayItems(dayIdx) {
   }
   sortDayItems(day.items);
   renderItinerary();
-  save();
-  showToast("已依時段順序重新排列！");
+  const ok = await save();
+  if (ok !== false) {
+    showToast("已依時段順序重新排列！ ✓");
+  }
 }
 
 function openAddItineraryModal(dayIdx) {
@@ -4468,14 +4495,17 @@ function renderFood() {
   `;
 }
 
-function toggleFoodDone(index) {
+async function toggleFoodDone(index) {
   if (!canEditCurrentTrip()) {
     showToast("⚠️ 目前為唯讀模式，無法修改品嚐狀態");
     return;
   }
   tripData.food[index].done = !tripData.food[index].done;
-  save();
   renderFood();
+  const ok = await save();
+  if (ok === false) {
+    renderFood();
+  }
 }
 
 function openEditFoodModal(index) {
@@ -4492,11 +4522,11 @@ function openEditFoodModal(index) {
     </div>
     <div class="ef-wrap">
       <div class="ef-label">美食或店家名稱 <span style="color:var(--red);">*</span> (輸入後自動產生地圖導航)</div>
-      <input type="text" id="editFoodName" class="ef-input" value="${item.name || ""}">
+      <input type="text" id="editFoodName" class="ef-input" value="${escapeAttribute(item.name || "")}">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">地區/分區 (例如: 老城區、市中心、河畔大道，選填)</div>
-      <input type="text" id="editFoodArea" class="ef-input" placeholder="例如: 老城區、市中心、河畔大道" value="${item.area || extractFoodArea(item) || ""}">
+      <input type="text" id="editFoodArea" class="ef-input" placeholder="例如: 老城區、市中心、河畔大道" value="${escapeAttribute(item.area || extractFoodArea(item) || "")}">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">特色說明或推薦菜色</div>
@@ -4852,15 +4882,18 @@ function renderShopping() {
   `;
 }
 
-function toggleShoppingDone(index) {
+async function toggleShoppingDone(index) {
   if (!canEditCurrentTrip()) {
     showToast("⚠️ 目前為唯讀模式，無法修改代購狀態");
     return;
   }
   if (!tripData.shopping || !tripData.shopping[index]) return;
   tripData.shopping[index].done = !tripData.shopping[index].done;
-  save();
   renderShopping();
+  const ok = await save();
+  if (ok === false) {
+    renderShopping();
+  }
 }
 
 function openAddShoppingModal() {
@@ -4966,11 +4999,11 @@ function openEditShoppingModal(index) {
       <div class="time-tags">
         ${buyerTags}
       </div>
-      <input type="text" id="editShoppingBuyer" class="ef-input" value="${item.buyer || "自己"}">
+      <input type="text" id="editShoppingBuyer" class="ef-input" value="${escapeAttribute(item.buyer || "自己")}">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">商品名稱 <span style="color:var(--red);">*</span></div>
-      <input type="text" id="editShoppingName" class="ef-input" value="${item.name || ""}">
+      <input type="text" id="editShoppingName" class="ef-input" value="${escapeAttribute(item.name || "")}">
     </div>
     <div style="display:flex;gap:10px;">
       <div class="ef-wrap" style="flex:1;">
@@ -4979,16 +5012,16 @@ function openEditShoppingModal(index) {
       </div>
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">預估價格 / 預算</div>
-        <input type="text" id="editShoppingPrice" class="ef-input" value="${item.price || ""}">
+        <input type="text" id="editShoppingPrice" class="ef-input" value="${escapeAttribute(item.price || "")}">
       </div>
     </div>
     <div class="ef-wrap">
       <div class="ef-label">購買地點 / 店名 (輸入後自動產生 Google 地圖導航按鈕)</div>
-      <input type="text" id="editShoppingLocation" class="ef-input" placeholder="例如: 市中心旗艦店、大型連鎖超市、特色市集" value="${item.location || ""}">
+      <input type="text" id="editShoppingLocation" class="ef-input" placeholder="例如: 市中心旗艦店、大型連鎖超市、特色市集" value="${escapeAttribute(item.location || "")}">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">參考網址</div>
-      <input type="text" id="editShoppingLink" class="ef-input" value="${item.link || ""}">
+      <input type="text" id="editShoppingLink" class="ef-input" value="${escapeAttribute(item.link || "")}">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">備註說明 (規格、色號、退稅注意事項等)</div>
@@ -5133,13 +5166,9 @@ function renderAdminView() {
           </div>
 
           <div style="margin-top:14px;padding-top:12px;border-top:1px dashed #E2E8F0;font-size:12px;color:#555;line-height:1.8;">
-            <div style="display:flex;flex-wrap:wrap;gap:12px;">
-              <div>🔐 存取密碼：${pwdDisplay}</div>
-              <div>👥 授權人員：${usersDisplay}</div>
-            </div>
-            <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:4px;">
-              <div>📄 Google 試算表：${sheetUrl ? `<a href="${sheetUrl}" target="_blank" rel="noopener noreferrer" style="color:#2563EB;text-decoration:underline;font-weight:bold;">開啟雲端試算表 ↗</a>` : '<span style="color:#999;">尚未綁定</span>'}</div>
-              <div>📁 雲端圖片資料夾：${folderUrl ? `<a href="${folderUrl}" target="_blank" rel="noopener noreferrer" style="color:#2563EB;text-decoration:underline;font-weight:bold;">開啟雲端硬碟相簿 ↗</a>` : '<span style="color:#999;">尚未綁定</span>'}</div>
+            <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;">
+              <div>🔐 存取狀態：${t.hasPassword ? '<span style="font-weight:bold;color:#D97706;background:#FEF3C7;padding:2px 8px;border-radius:6px;">🔒 設有專屬密碼保護</span>' : '<span style="font-weight:bold;color:#059669;background:#D1FAE5;padding:2px 8px;border-radius:6px;">🔓 公開無密碼行程</span>'}</div>
+              <div style="color:#64748B;font-size:11px;">ℹ️ 點選上方「✏️ 編輯設定」即可向伺服器取得完整管理設定 (包含試算表連結、Drive相簿、原PIN與成員名單)</div>
             </div>
           </div>
         </div>
@@ -5364,7 +5393,7 @@ async function openEditTripMetaModal(uuid) {
   const formHtml = `
     <div class="ef-wrap">
       <div class="ef-label">行程識別碼 (UUID，唯讀)</div>
-      <input type="text" class="ef-input" value="${trip.uuid}" disabled style="background:#F0F0F0;">
+      <input type="text" class="ef-input" value="${escapeAttribute(trip.uuid)}" disabled style="background:#F0F0F0;">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">行程名稱 <span style="color:var(--red);">*</span></div>
@@ -5373,16 +5402,16 @@ async function openEditTripMetaModal(uuid) {
     <div style="display:flex;gap:10px;">
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">出發日期</div>
-        <input type="date" id="editTripStartDate" class="ef-input" value="${currentStartDate}" onchange="autoSyncEditTripDuration()">
+        <input type="date" id="editTripStartDate" class="ef-input" value="${escapeAttribute(currentStartDate)}" onchange="autoSyncEditTripDuration()">
       </div>
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">結束日期</div>
-        <input type="date" id="editTripEndDate" class="ef-input" value="${currentEndDate}" onchange="autoSyncEditTripDuration()">
+        <input type="date" id="editTripEndDate" class="ef-input" value="${escapeAttribute(currentEndDate)}" onchange="autoSyncEditTripDuration()">
       </div>
     </div>
     <div class="ef-wrap">
       <div class="ef-label">天數說明 (自動依日期計算，亦可微調)</div>
-      <input type="text" id="editTripDuration" class="ef-input" value="${currentDuration}" placeholder="例如: 8天7夜">
+      <input type="text" id="editTripDuration" class="ef-input" value="${escapeAttribute(currentDuration)}" placeholder="例如: 8天7夜">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">🎨 專案主題色彩</div>
@@ -6440,11 +6469,11 @@ function openEditTransportModal(idx) {
     <div style="display:flex;gap:10px;">
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">發車/抵達時間</div>
-        <input type="text" id="editTransTime" class="ef-input" value="${item.time || ""}">
+        <input type="text" id="editTransTime" class="ef-input" value="${escapeAttribute(item.time || "")}">
       </div>
       <div class="ef-wrap" style="flex:1;">
         <div class="ef-label">預估費用 / 人</div>
-        <input type="text" id="editTransCost" class="ef-input" value="${item.cost || ""}">
+        <input type="text" id="editTransCost" class="ef-input" value="${escapeAttribute(item.cost || "")}">
       </div>
     </div>
     <div style="display:flex;gap:10px;">

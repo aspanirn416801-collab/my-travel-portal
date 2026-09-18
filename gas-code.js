@@ -611,8 +611,26 @@ function doPost(e) {
   
   // 2. 建立新行程與初始化 (支援自動建立 Google 雲端硬碟資料夾與試算表)
   if (action === "createTrip") {
-    const uuid = postData.uuid;
-    const name = postData.name;
+    const uuid = (postData.uuid || "").trim();
+    const name = (postData.name || "").trim();
+
+    if (!uuid || !name) {
+      return ContentService.createTextOutput(JSON.stringify({
+        status: "error",
+        message: "缺少必要參數：行程識別碼 (UUID) 或名稱不能為空"
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // P2: 行程識別碼 (UUID) 防重複檢查（必須在建立任何 Drive 資料夾或試算表前執行，防止留下孤立垃圾檔案）
+    for (let i = 1; i < tripRows.length; i++) {
+      if (tripRows[i][0] === uuid) {
+        return ContentService.createTextOutput(JSON.stringify({
+          status: "error",
+          message: "行程識別碼 (UUID)「" + uuid + "」已存在，請使用不同識別碼！"
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
+    }
+
     let sheetId = (postData.sheetId || "").trim();
     let folderId = (postData.folderId || "").trim();
     const allowedUsers = postData.allowedUsers || "";
@@ -657,16 +675,6 @@ function doPost(e) {
     }
     
     const password = (postData.password || "").trim();
-    
-    // P2: 行程識別碼 (UUID) 防重複檢查
-    for (let i = 1; i < tripRows.length; i++) {
-      if (tripRows[i][0] === uuid) {
-        return ContentService.createTextOutput(JSON.stringify({
-          status: "error",
-          message: "行程識別碼 (UUID)「" + uuid + "」已存在，請使用不同識別碼！"
-        })).setMimeType(ContentService.MimeType.JSON);
-      }
-    }
 
     let finalDuration = duration;
     if (!finalDuration && startDate && endDate) {
