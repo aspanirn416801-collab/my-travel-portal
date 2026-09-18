@@ -94,9 +94,9 @@ assertCheck(
 })();
 
 // ----------------------------------------------------
-// 測試 3：【P0 重點實測】正式頁面兩參數呼叫 isTripUnlocked(tripUuid, hasPassword) 整合接線實測
+// 測試 3：門禁轉接函式操作型單元測試＋正式程式靜態接線檢查
 // ----------------------------------------------------
-(function testPageTwoParamUnlockIntegration() {
+(function testAdapterUnitAndWiring() {
   // 建立沙盒環境模擬正式頁面的執行上下文
   const sandbox = {
     TripState,
@@ -108,29 +108,28 @@ assertCheck(
     console,
   };
 
-  // 提取 app.js 頂部的轉接函式定義並在沙盒中執行
+  // 從 app.js 實際原始碼中動態擷取轉接函式定義，確保沙盒中執行的正是 app.js 內的真實邏輯
+  const adapterMatch = appCode.match(/function isTripUnlocked\s*\([\s\S]*?\n\}/);
   const adapterCode = `
     const { isTripUnlocked: isTripUnlockedCore } = TripState;
-    function isTripUnlocked(tripUuid, hasPassword) {
-      const role = typeof userRole !== "undefined" ? userRole : "guest";
-      const token = typeof idToken !== "undefined" ? idToken : null;
-      const expired = typeof isTokenExpired === "function" ? isTokenExpired(token) : false;
-      return isTripUnlockedCore(tripUuid, hasPassword, role, token, expired);
-    }
+    ${adapterMatch ? adapterMatch[0] : ""}
   `;
   vm.createContext(sandbox);
   vm.runInContext(adapterCode, sandbox);
 
+  // 靜態核對正式呼叫點：確認 app.js 的 8 處門禁呼叫均採用兩參數格式
+  const twoParamCallCount = [...appCode.matchAll(/isTripUnlocked\s*\(\s*[^,]+,\s*[^,)]+\s*\)/g)].length;
+
   // 情境 A：管理員登入，頁面以 2 個參數呼叫設有密碼之行程
   sandbox.userRole = "admin";
   sandbox.idToken = "valid_admin_token";
-  const adminResult = sandbox.isTripUnlocked("trip-with-pin", true); // 正式頁面 2 參數呼叫！
+  const adminResult = sandbox.isTripUnlocked("trip-with-pin", true);
 
   // 情境 B：授權成員登入 (canEdit = true)，頁面以 2 個參數呼叫
   sandbox.userRole = "user";
   sandbox.idToken = "valid_member_token";
   sandbox.tripPermissions.set("trip-member-pin", { canEdit: true });
-  const memberResult = sandbox.isTripUnlocked("trip-member-pin", true); // 正式頁面 2 參數呼叫！
+  const memberResult = sandbox.isTripUnlocked("trip-member-pin", true);
 
   // 情境 C：訪客身分 (guest)，頁面以 2 個參數呼叫，無記憶體 PIN -> 應被鎖住
   sandbox.userRole = "guest";
@@ -149,6 +148,8 @@ assertCheck(
   sandbox.tripPermissions.clear();
 
   const allPassedP0 =
+    adapterMatch !== null &&
+    twoParamCallCount >= 8 &&
     adminResult === true &&
     memberResult === true &&
     guestLockedResult === false &&
@@ -156,9 +157,9 @@ assertCheck(
     publicTripResult === true;
 
   assertCheck(
-    "[P0 整合實測] 正式頁面兩參數呼叫 isTripUnlocked(tripUuid, hasPassword) 完整接線",
+    "[單元實測+靜態接線] 門禁轉接函式操作型單元測試＋正式程式靜態接線檢查",
     allPassedP0,
-    `管理員2參數放行: ${adminResult}, 授權成員2參數放行: ${memberResult}, 訪客未解鎖攔截: ${!guestLockedResult}, 訪客PIN放行: ${guestUnlockedResult}, 公開行程放行: ${publicTripResult}`
+    `轉接函式擷取: 成功, 靜態接線點: ${twoParamCallCount}處, 管理員放行: ${adminResult}, 成員放行: ${memberResult}, 訪客攔截: ${!guestLockedResult}, PIN放行: ${guestUnlockedResult}`
   );
 })();
 
@@ -367,7 +368,8 @@ setTimeout(() => {
   console.log("==================================================");
 
   if (allPassed) {
-    console.log("🎉 恭喜！20260917_12 正式整合型全生命週期實測與架構審查 100% 通過！");
+    console.log("🎉 程式碼層級：20260917_12 操作型單元實測、接線檢查與架構審查 100% 通過！");
+    console.log("👉 提醒：真實 Google 帳號管理員/成員登入與雲端寫入，請依線上驗收指南進行實測。");
     process.exit(0);
   } else {
     console.error("❌ 仍有測試項目未通過，請檢查上述失敗項目！");
