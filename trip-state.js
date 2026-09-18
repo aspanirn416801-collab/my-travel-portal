@@ -1,7 +1,7 @@
 /**
  * trip-state.js - 旅遊手冊狀態管理與核心門禁模組
  * 雙模支援：同時供瀏覽器端 (window.TripState) 與 Node.js 自動化測試共用
- * 版本：20260917_12
+ * 版本：20260918_13
  */
 
 (function (root, factory) {

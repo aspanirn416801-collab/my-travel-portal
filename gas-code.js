@@ -79,6 +79,91 @@ function verifyIdToken(token) {
   return null;
 }
 
+// =========================================================================
+// 核心快取服務與權限版本控制 (CacheService + ScriptProperties + LockService)
+// =========================================================================
+
+// 取得當前權限版本號 (持久化於 ScriptProperties)
+function getAccessRevision() {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    return props.getProperty("ACCESS_REVISION") || "1";
+  } catch (e) {
+    return "1";
+  }
+}
+
+// 遞增權限版本號 (LockService 併發保護，最長等待 10 秒)
+function bumpAccessRevision() {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    const props = PropertiesService.getScriptProperties();
+    const current = Number(props.getProperty("ACCESS_REVISION") || "1");
+    props.setProperty("ACCESS_REVISION", String(current + 1));
+  } catch (e) {
+    Logger.log("遞增權限版本號失敗: " + e);
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
+  }
+}
+
+// 安全寫入 CacheService (90KB 上限保護，保留試算表備援)
+function safePutCache(key, data, ttlSeconds) {
+  if (!key || !data) return false;
+  try {
+    const serialized = JSON.stringify(data);
+    const bytes = Utilities.newBlob(serialized).getBytes().length;
+    if (bytes < 90000) {
+      const cache = CacheService.getScriptCache();
+      cache.put(key, serialized, ttlSeconds || 300);
+      return true;
+    } else {
+      Logger.log("快取項目超過 90KB (" + bytes + " bytes)，安全略過 CacheService: " + key);
+      return false;
+    }
+  } catch (e) {
+    Logger.log("寫入快取異常: " + e);
+    return false;
+  }
+}
+
+// 安全讀取 CacheService (含 JSON 解析錯誤自動清除降級)
+function safeGetCache(key) {
+  if (!key) return null;
+  try {
+    const cache = CacheService.getScriptCache();
+    const cached = cache.get(key);
+    if (!cached) return null;
+    try {
+      return JSON.parse(cached);
+    } catch (parseErr) {
+      cache.remove(key);
+      return null;
+    }
+  } catch (e) {
+    return null;
+  }
+}
+
+// 快取失效管理：各端點寫入成功後精準調用 (累加執行，絕不用互斥 else if)
+function invalidateCaches(options) {
+  const opts = options || {};
+  const cache = CacheService.getScriptCache();
+  if (opts.clearPublicTrips) {
+    try { cache.remove("public_trips_v1"); } catch (e) {}
+  }
+  if (opts.clearTripUuid) {
+    try {
+      cache.remove("trip_meta_" + opts.clearTripUuid);
+      cache.remove("trip_content_" + opts.clearTripUuid);
+    } catch (e) {}
+  }
+  if (opts.bumpAccessRev) {
+    bumpAccessRevision();
+  }
+}
+
 // 自動根據出發與結束日期推算天數晚數 (例如: 8天7夜)
 function calcTripDurationInGas(startDate, endDate) {
   if (!startDate || !endDate) return "";
@@ -213,20 +298,60 @@ function doGet(e) {
     const action = e.parameter.action;
     const authHeader = e.parameter.token || "";
     let token = authHeader;
-  
-  // 身份驗證 (未提供 token 或驗證失敗則為 guest 訪客)
-  let email = null;
-  if (token) {
-    email = verifyIdToken(token);
-  }
-  
-  let access = { role: "guest", trips: [] };
-  const masterSpreadsheet = SpreadsheetApp.openById(MASTER_SHEET_ID);
+
+    // =========================================================================
+    // 快取前置檢查 (CacheService 前置於 SpreadsheetApp.openById 之前)
+    // =========================================================================
+
+    // 1. 訪客公開大廳端點 (getTrips 且無 Token)：
+    // 快取命中時直接回傳，避免執行 SpreadsheetApp.openById()！實際速度依 GAS 冷啟動及網路狀態而異。
+    if (action === "getTrips" && !token) {
+      const cachedPublic = safeGetCache("public_trips_v1");
+      if (cachedPublic) {
+        return ContentService.createTextOutput(JSON.stringify({
+          status: "success",
+          role: "guest",
+          trips: cachedPublic
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
+    }
+
+    // 身份驗證 (未提供 token 或驗證失敗則為 guest 訪客)
+    let email = null;
+    if (token) {
+      email = verifyIdToken(token);
+    }
+
+    // 2. 已驗證帳號之權限快取檢查 (以 Email 雜湊與當前 ACCESS_REVISION 進行版本隔離)
+    let access = null;
+    if (email) {
+      const accessCacheKey = "access_" + hashToken(email) + "_" + getAccessRevision();
+      const cachedAccess = safeGetCache(accessCacheKey);
+      if (cachedAccess) {
+        access = cachedAccess;
+        // 若 action 為 getTrips 且權限快取命中，直接回傳，無需開表！
+        if (action === "getTrips") {
+          return ContentService.createTextOutput(JSON.stringify({
+            status: "success",
+            role: access.role,
+            trips: access.trips
+          })).setMimeType(ContentService.MimeType.JSON);
+        }
+      }
+    }
+
+    // 3. Cache Miss 時才開啟主控試算表 (延遲載入)
+    const masterSpreadsheet = SpreadsheetApp.openById(MASTER_SHEET_ID);
   const tripSheet = masterSpreadsheet.getSheetByName("Trips");
   const tripRows = tripSheet.getDataRange().getValues();
   
   if (email) {
-    access = getUserAccess(email);
+    if (!access) {
+      access = getUserAccess(email);
+      // 成功讀取後安全存入權限快取 (綁定 accessRevision)
+      const accessCacheKey = "access_" + hashToken(email) + "_" + getAccessRevision();
+      safePutCache(accessCacheKey, access, 300);
+    }
   } else {
     // 訪客模式：讀取所有行程之公開摘要（絕不包含密碼與內部試算表 ID）
     const publicTrips = [];
@@ -253,6 +378,8 @@ function doGet(e) {
       }
     }
     access = { role: "guest", trips: publicTrips };
+    // 成功讀取後安全存入公開行程快取 (時效 600 秒)
+    safePutCache("public_trips_v1", publicTrips, 600);
   }
   
   // 一次性初始化合併端點：整合角色、行程清單與目前手冊資料，解決冷啟動兩段式等待過長問題
@@ -295,18 +422,24 @@ function doGet(e) {
 
         if (isAdmin || isMember || hasValidPin || isPublicWithoutPin) {
           try {
-            const data = loadTripDetails(targetSheetId);
-            if (!data.name && tripName) data.name = tripName;
-            if (!data.startDate && tripStartDate) data.startDate = tripStartDate;
-            if (!data.endDate && tripEndDate) data.endDate = tripEndDate;
-            if (!data.duration && tripDuration) data.duration = tripDuration;
-            if (!data.duration && data.startDate && data.endDate) {
-              data.duration = calcTripDurationInGas(data.startDate, data.endDate);
+            // 優先檢查手冊純內容快取
+            let data = safeGetCache("trip_content_" + tripUuid);
+            if (!data) {
+              data = loadTripDetails(targetSheetId);
+              if (!data.name && tripName) data.name = tripName;
+              if (!data.startDate && tripStartDate) data.startDate = tripStartDate;
+              if (!data.endDate && tripEndDate) data.endDate = tripEndDate;
+              if (!data.duration && tripDuration) data.duration = tripDuration;
+              if (!data.duration && data.startDate && data.endDate) {
+                data.duration = calcTripDurationInGas(data.startDate, data.endDate);
+              }
+              delete data.password;
+              delete data.allowed_users;
+              delete data.sheet_id;
+              delete data.folder_id;
+              // 成功讀取後安全存入手冊快取 (檢查 < 90KB)
+              safePutCache("trip_content_" + tripUuid, data, 300);
             }
-            delete data.password;
-            delete data.allowed_users;
-            delete data.sheet_id;
-            delete data.folder_id;
             currentTripData = data;
           } catch (loadErr) {}
         }
@@ -551,6 +684,9 @@ function doPost(e) {
       saveTripContentOnly(targetSheetId, data);
     }
 
+    // 快取失效：清除該行程手冊內容快取
+    invalidateCaches({ clearTripUuid: tripUuid });
+
     return ContentService.createTextOutput(JSON.stringify({ status: "success", message: "Cloud sync success" }))
                          .setMimeType(ContentService.MimeType.JSON);
   }
@@ -591,6 +727,9 @@ function doPost(e) {
         const fileId = file.getId();
         const previewUrl = "https://lh3.googleusercontent.com/d/" + fileId;
         
+        // 快取失效：清除該行程手冊內容快取
+        invalidateCaches({ clearTripUuid: tripUuid });
+
         return ContentService.createTextOutput(JSON.stringify({ status: "success", url: previewUrl }))
                              .setMimeType(ContentService.MimeType.JSON);
       } catch (err) {
@@ -686,6 +825,10 @@ function doPost(e) {
       initializeSubSheet(sheetId, name, startDate, endDate, finalDuration, password, theme);
       const tripSheet = masterSpreadsheet.getSheetByName("Trips");
       tripSheet.appendRow([uuid, name, sheetId, folderId, allowedUsers, password, startDate, endDate, finalDuration]);
+
+      // 快取失效：清除公開行程清單，並遞增權限版本號 (確保已登入者權限即時包含新行程)
+      invalidateCaches({ clearPublicTrips: true, bumpAccessRev: true });
+
       return ContentService.createTextOutput(JSON.stringify({ 
         status: "success", 
         sheetId: sheetId,
@@ -772,6 +915,36 @@ function doPost(e) {
           metaMap["Theme"] = theme;
         }
         setInfoSheetMap(infoSheet, metaMap);
+
+        // 快取失效矩陣：累加判定執行，絕不用互斥 else if！
+        let shouldClearPublic = false;
+        let shouldClearTrip = false;
+        let shouldBumpRev = false;
+
+        // 1. 修改名稱、出發日期、結束日期、天數或主題色彩
+        if (name !== undefined || startDate !== undefined || endDate !== undefined || duration !== undefined || theme !== null) {
+          shouldClearPublic = true;
+          shouldClearTrip = true; // 同步清除手冊內部頂部資料快取
+        }
+
+        // 2. 修改 PIN 密碼
+        if (newPasswordToSet !== null) {
+          shouldClearPublic = true;
+          shouldClearTrip = true;
+        }
+
+        // 3. 修改成員名單
+        if (allowedUsers !== undefined) {
+          shouldClearTrip = true;
+          shouldBumpRev = true; // 遞增 ACCESS_REVISION，舊成員權限快取立即失效
+        }
+
+        invalidateCaches({
+          clearPublicTrips: shouldClearPublic,
+          clearTripUuid: shouldClearTrip ? tripUuid : "",
+          bumpAccessRev: shouldBumpRev
+        });
+
         return ContentService.createTextOutput(JSON.stringify({ status: "success", message: "Trip meta updated successfully" }))
                              .setMimeType(ContentService.MimeType.JSON);
       } catch (err) {

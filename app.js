@@ -34,7 +34,7 @@ let authGeneration = 0;
 // =========================================================================
 const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
-const APP_BUILD_VERSION = "20260917_12";
+const APP_BUILD_VERSION = "20260918_13";
 
 // 智能行程顯示名稱轉換 (將舊版 ID 或技術命名轉換為溫暖手帳風格名稱，技術 ID 留存於後台編輯中)
 function getTripDisplayName(name = "", uuid = "") {
@@ -71,9 +71,11 @@ function getTripDisplayName(name = "", uuid = "") {
   return n || u;
 }
 
-// 前端全局狀態管理 (身分以有效 Token 與後端即時回傳為唯一依歸)
+// 前端全局狀態管理：身分雙軌架構 (authStatus 控制顯示，verifiedRole 控制實質權限)
 let idToken = localStorage.getItem("google_id_token") || null;
-let userRole = "guest"; // 'admin' | 'user' | 'guest' (絕不信任本地快取，防止偽冒)
+let authStatus = (idToken && !isTokenExpired(idToken)) ? "verifying" : "guest"; // 'guest' | 'verifying' | 'authenticated' | 'auth-error'
+let verifiedRole = "guest"; // 'admin' | 'user' | 'guest' (唯一依據：本次 GAS 驗證成功回傳，絕不信任本地快取)
+let userRole = "guest"; // 向後相容全站呼叫點，數值嚴格由 verifiedRole 同步
 
 // 記憶體專屬權限管理：嚴禁寫入 localStorage，換帳號或登出時立即清除！
 
@@ -764,6 +766,8 @@ async function handleTripUnlockSubmit(e) {
 
   // 2. 嚴格由後端 Google Apps Script 進行 PIN 驗證 (不在前端儲存任何明文密碼，杜絕越權繞過)
   showLoading("正在驗證密碼，請稍候...");
+  const requestedUuid = currentTripUuid;
+  const unlockSequence = ++tripRequestSequence;
   try {
     const tokenParam = idToken ? `&token=${encodeURIComponent(idToken)}` : "";
     const res = await fetch(
@@ -773,6 +777,11 @@ async function handleTripUnlockSubmit(e) {
     );
     const result = await res.json();
     hideLoading();
+
+    // 雙重流水號防競態檢查：行程切換或有新請求發出時，舊回應直接作廢
+    if (requestedUuid !== currentTripUuid || unlockSequence !== tripRequestSequence) {
+      return;
+    }
 
     if (result.status === "locked" || result.status === "error") {
       if (errEl) {
@@ -1086,7 +1095,7 @@ function navigateTo(tripUuid, targetTab = "") {
 
     if (hasPassword && !isTripUnlocked(currentTripUuid, hasPassword)) {
       showLockedView(trip || { uuid: currentTripUuid, name: (trip && trip.name) || currentTripUuid });
-      fetchTripData();
+      return; // 嚴格 return！未解鎖前絕不發起 fetchTripData() 請求，杜絕競態回鎖！
     } else {
       showTripView();
       fetchTripData();
@@ -1283,9 +1292,17 @@ function updateAuthUI() {
 
     if (loginBtn) loginBtn.style.display = "none";
 
-    if (userRole === "verifying") {
+    let roleHint = "";
+    try { roleHint = sessionStorage.getItem("auth_role_hint") || ""; } catch (e) {}
+
+    if (authStatus === "verifying") {
       badge.className = "user-badge badge-user";
-      badge.innerHTML = `⏳ 正在驗證帳號權限... (${escapeHtml(userName)})`;
+      const hintText = roleHint === "admin" ? "正在恢復管理員身分..." : "正在恢復登入身分...";
+      badge.innerHTML = `⏳ ${hintText} (${escapeHtml(userName)})`;
+      if (adminHubActions) adminHubActions.style.display = "none";
+    } else if (authStatus === "auth-error") {
+      badge.className = "user-badge badge-guest";
+      badge.innerHTML = `⚠️ 身分驗證逾時 (${escapeHtml(userName)}) <span style="font-size:11px;text-decoration:underline;cursor:pointer;margin-left:4px;" onclick="fetchTrips({force:true})">[點此重試]</span>`;
       if (adminHubActions) adminHubActions.style.display = "none";
     } else if (userRole === "admin") {
       badge.className = "user-badge badge-admin";
@@ -1297,11 +1314,17 @@ function updateAuthUI() {
       }
       if (adminHubActions) adminHubActions.style.display = "block";
     } else if (userRole === "user") {
+      // 判定是否持有任一行程之編輯授權
+      let hasAnyCanEdit = false;
+      for (const [uuid, perm] of tripPermissions.entries()) {
+        if (perm && perm.canEdit) { hasAnyCanEdit = true; break; }
+      }
+      const titleLabel = hasAnyCanEdit ? "團員" : "已登入 (未授權)";
       badge.className = "user-badge badge-user";
       if (expired) {
-        badge.innerHTML = `👤 團員 (${escapeHtml(userName)}) <span style="font-size:11px;opacity:0.9;text-decoration:underline;cursor:pointer;margin-left:4px;" onclick="triggerGoogleLogin()">[憑證已逾期，點此續期]</span>`;
+        badge.innerHTML = `👤 ${titleLabel} (${escapeHtml(userName)}) <span style="font-size:11px;opacity:0.9;text-decoration:underline;cursor:pointer;margin-left:4px;" onclick="triggerGoogleLogin()">[憑證已逾期，點此續期]</span>`;
       } else {
-        badge.innerText = `👤 團員 (${userName})`;
+        badge.innerText = `👤 ${titleLabel} (${userName})`;
       }
       if (adminHubActions) adminHubActions.style.display = "none";
     } else {
@@ -1473,7 +1496,10 @@ function handleCredentialResponse(response) {
 function logout() {
   authGeneration++; // 關鍵：推進登入世代計數器，徹底廢棄登出前任何尚未完成的非同步儲存回調，杜絕敏感資料回填！
   idToken = null;
+  authStatus = "guest";
+  verifiedRole = "guest";
   userRole = "guest";
+  try { sessionStorage.removeItem("auth_role_hint"); } catch (e) {}
   localStorage.removeItem("google_id_token");
   localStorage.removeItem("cache_userRole");
 
@@ -1703,7 +1729,10 @@ async function fetchTrips({ force = false } = {}) {
       const currentPin = requestedTripUuid ? (memoryUnlockedPins.get(requestedTripUuid) || "") : "";
       const tripParam = requestedTripUuid ? `&tripUuid=${encodeURIComponent(requestedTripUuid)}&tripPassword=${encodeURIComponent(currentPin)}` : "";
       
-      const actionName = requestedTripUuid ? "bootstrap" : "getTrips";
+      // 智慧端點選擇：只有當目標行程存在且持有有效 Token 時才呼叫 bootstrap；未登入訪客直接呼叫 getTrips 命中快取！
+      const hasValidToken = idToken && !isTokenExpired(idToken);
+      const shouldBootstrap = requestedTripUuid && hasValidToken;
+      const actionName = shouldBootstrap ? "bootstrap" : "getTrips";
       const res = await fetch(`${GAS_API_URL}?action=${actionName}${tokenParam}${tripParam}`);
       const result = await res.json();
 
@@ -1711,7 +1740,14 @@ async function fetchTrips({ force = false } = {}) {
       if (currentSeq !== tripsRequestSeq) return;
 
       if (result.status === "success") {
-        userRole = result.role || "guest";
+        verifiedRole = result.role || "guest";
+        userRole = verifiedRole;
+        authStatus = "authenticated";
+        if (verifiedRole === "admin") {
+          try { sessionStorage.setItem("auth_role_hint", "admin"); } catch (e) {}
+        } else if (verifiedRole === "user") {
+          try { sessionStorage.setItem("auth_role_hint", "user"); } catch (e) {}
+        }
 
         tripsList = (result.trips || []).map((t) => {
           if (t && t.uuid) {
@@ -1719,13 +1755,16 @@ async function fetchTrips({ force = false } = {}) {
               tripPermissions.set(t.uuid, { canEdit: Boolean(t.canEdit) });
             }
           }
+          // 空日期三層 Fallback 機制：保留既有快取值或預設公開摘要，防空字串覆蓋
+          const existing = tripsList.find((item) => item.uuid === t.uuid);
+          const fallback = PUBLIC_TRIP_SUMMARIES.find((item) => item.uuid === t.uuid);
           return {
             uuid: t.uuid,
             name: t.name,
             hasPassword: Boolean(t.hasPassword),
-            startDate: t.startDate || "",
-            endDate: t.endDate || "",
-            duration: t.duration || ""
+            startDate: t.startDate || (existing ? existing.startDate : "") || (fallback ? fallback.startDate : "") || "",
+            endDate: t.endDate || (existing ? existing.endDate : "") || (fallback ? fallback.endDate : "") || "",
+            duration: t.duration || (existing ? existing.duration : "") || (fallback ? fallback.duration : "") || ""
           };
         });
 
@@ -1748,7 +1787,12 @@ async function fetchTrips({ force = false } = {}) {
           initCountdown();
           render();
         } else if (requestedTripUuid && currentTripUuid === requestedTripUuid && !result.currentTrip) {
-          fetchTripData();
+          // 僅在該行程已解鎖（無密碼或持有驗證）時才發動手冊載入；若仍鎖定，絕不盲目呼叫！
+          const currentTripObj = tripsList.find((t) => t.uuid === requestedTripUuid);
+          const currentHasPwd = Boolean(currentTripObj && currentTripObj.hasPassword);
+          if (isTripUnlocked(requestedTripUuid, currentHasPwd)) {
+            fetchTripData();
+          }
         }
 
         const isAdminRoute =
@@ -1775,10 +1819,14 @@ async function fetchTrips({ force = false } = {}) {
       }
     } catch (e) {
       console.warn("連線後端狀態:", e);
-      if (userRole === "verifying") {
-        userRole = "guest";
-        updateAuthUI();
+      if (idToken && !isTokenExpired(idToken)) {
+        authStatus = "auth-error";
+      } else {
+        authStatus = "guest";
       }
+      verifiedRole = "guest";
+      userRole = "guest";
+      updateAuthUI();
       const container = document.getElementById("hubTripsGrid");
       if (container && tripsList.length === 0) {
         container.innerHTML = `
