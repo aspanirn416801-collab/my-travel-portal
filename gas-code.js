@@ -8,8 +8,12 @@
 // 請貼上您在第一步建立的「主控試算表 (Master Sheet)」的 ID
 const MASTER_SHEET_ID = "YOUR_MASTER_SHEET_ID_HERE";
 
-// 請填寫您的 Google Client ID (用於防止 Token 偽造/跨應用替換)
-const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID_HERE";
+// 請填寫您的 Google Client ID (用於防止 GIS Token 偽造/跨應用替換)
+const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
+
+// Firebase 專案配置 (用於 Firebase ID Token 驗證)
+const FIREBASE_API_KEY = "AIzaSyCx2E_CGqqd0j6xtMSDYeWbdpXPZcReKLM";
+const FIREBASE_PROJECT_ID = "my-travel-portal-1d647";
 
 // 雲端硬碟總資料夾名稱（當建立新行程且未指定 ID 時，所有行程資料夾與手冊將自動歸檔於此路徑下）
 const ROOT_TRAVEL_FOLDER_NAME = "my-travels";
@@ -39,48 +43,172 @@ function hashToken(token) {
   }).join("");
 }
 
-// 驗證前端傳過來的 Google ID Token (嚴格僅透過 Google 官方 Tokeninfo 驗證，並使用 CacheService 暫存 300 秒)
+let lastAuthErrorReason = "";
+
+// 輔助函式：未驗證解析 Token Payload Claims (僅用於驗證器路由派發，絕不據此授權！)
+function peekTokenClaims(token) {
+  if (!token || typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  try {
+    let b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    while (b64.length % 4) { b64 += "="; }
+    let decodedStr = "";
+    if (typeof Utilities !== "undefined" && Utilities.base64Decode) {
+      decodedStr = Utilities.newBlob(Utilities.base64Decode(b64)).getDataAsString("UTF-8");
+    } else if (typeof Buffer !== "undefined") {
+      decodedStr = Buffer.from(b64, "base64").toString("utf8");
+    }
+    const payload = JSON.parse(decodedStr);
+    return {
+      iss: payload.iss || "",
+      exp: Number(payload.exp) || 0,
+      aud: payload.aud || ""
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+// 核心雙軌驗證器：基於 iss 嚴格路由分流，選定後失敗即阻斷拒絕，絕不交叉嘗試！
 function verifyIdToken(token) {
-  if (!token) return null;
-  
-  // 1. 優先查詢伺服器快取 (以 Token SHA-256 雜湊為鍵，時效 300 秒)
-  const tokenKey = "auth_" + hashToken(token);
-  const cache = CacheService.getScriptCache();
-  const cachedEmail = cache.get(tokenKey);
-  if (cachedEmail) {
-    return cachedEmail;
+  lastAuthErrorReason = "";
+  if (!token) {
+    lastAuthErrorReason = "未收到 Token";
+    return null;
   }
 
-  // 2. 線上請求 Google 官方 Tokeninfo 驗證簽章與發行方 (拒絕未經簽章驗證之本地解碼)
+  // 1. 優先查詢伺服器快取 (綁定完整 Token SHA-256 雜湊，且快取命中仍須檢核到期時間)
+  const tokenKey = "auth_" + hashToken(token);
+  const cache = CacheService.getScriptCache();
+  const cachedDataStr = cache.get(tokenKey);
+  if (cachedDataStr) {
+    try {
+      const cached = JSON.parse(cachedDataStr);
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (cached && cached.email && cached.exp && nowSec < cached.exp) {
+        return cached.email;
+      } else {
+        cache.remove(tokenKey);
+      }
+    } catch (e) {
+      cache.remove(tokenKey);
+    }
+  }
+
+  // 2. 解析未驗證 claims (僅作路由依據，絕不授權)
+  const claims = peekTokenClaims(token);
+  if (!claims || !claims.iss) {
+    lastAuthErrorReason = "Token 格式無效或無法解析 iss";
+    return null;
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (claims.exp && nowSec >= claims.exp) {
+    lastAuthErrorReason = "Token 已超過宣告之到期時間 (Expired)";
+    return null;
+  }
+
+  // 3. 嚴格路由分流
+  const expectedFirebaseIss = "https://securetoken.google.com/" + FIREBASE_PROJECT_ID;
+  if (claims.iss === expectedFirebaseIss) {
+    // 路由 A：Firebase Auth 專用驗證器（選定後若失敗直接拒絕，絕不嘗試 GIS）
+    return verifyFirebaseToken(token, claims.exp, tokenKey);
+  } else if (claims.iss === "accounts.google.com" || claims.iss === "https://accounts.google.com") {
+    // 路由 B：Google GIS 專用驗證器（選定後若失敗直接拒絕，絕不嘗試 Firebase）
+    return verifyGisToken(token, claims.exp, tokenKey);
+  } else {
+    lastAuthErrorReason = "不支援的 Token 發行方 (iss): " + claims.iss;
+    return null;
+  }
+}
+
+// 專用驗證器 A：Firebase accounts:lookup (驗證簽章與發行專案)
+function verifyFirebaseToken(token, exp, tokenKey) {
+  try {
+    const url = "https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=" + encodeURIComponent(FIREBASE_API_KEY);
+    const payload = JSON.stringify({ idToken: token });
+    const response = UrlFetchApp.fetch(url, {
+      method: "post",
+      contentType: "application/json",
+      payload: payload,
+      muteHttpExceptions: true
+    });
+
+    const respCode = response.getResponseCode();
+    const respText = response.getContentText();
+
+    if (respCode === 200) {
+      const json = JSON.parse(respText);
+      if (json && Array.isArray(json.users) && json.users.length > 0) {
+        const user = json.users[0];
+        if (user && user.email) {
+          const cleanEmail = normalizeEmail(user.email);
+          const nowSec = Math.floor(Date.now() / 1000);
+          const remainingSec = Math.floor(exp) - nowSec;
+          if (remainingSec > 60) {
+            const ttl = Math.floor(Math.min(remainingSec - 60, 1800));
+            try {
+              const cache = CacheService.getScriptCache();
+              cache.put(tokenKey, JSON.stringify({ email: cleanEmail, exp: exp }), ttl);
+            } catch (cErr) {}
+          }
+          return cleanEmail;
+        } else {
+          lastAuthErrorReason = "Firebase 回傳無 email 欄位";
+        }
+      } else {
+        lastAuthErrorReason = "Firebase 回傳 users 清單為空: " + respText;
+      }
+    } else {
+      lastAuthErrorReason = "Firebase HTTP " + respCode + ": " + respText;
+    }
+  } catch (e) {
+    lastAuthErrorReason = "Firebase 驗證異常: " + e.message;
+  }
+  return null;
+}
+
+// 專用驗證器 B：Google OAuth2 Tokeninfo (驗證 GIS 舊版簽章與 Client ID 受眾)
+function verifyGisToken(token, exp, tokenKey) {
   try {
     const url = "https://oauth2.googleapis.com/tokeninfo?id_token=" + encodeURIComponent(token);
     const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
-    if (response.getResponseCode() === 200) {
-      const json = JSON.parse(response.getContentText());
+
+    const respCode = response.getResponseCode();
+    const respText = response.getContentText();
+
+    if (respCode === 200) {
+      const json = JSON.parse(respText);
+      // 嚴格核對受眾 (aud)
       if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_ID !== "YOUR_GOOGLE_CLIENT_ID_HERE") {
         if (json.aud !== GOOGLE_CLIENT_ID) {
-          Logger.log("安全性警示: Token aud 不匹配，拒絕存取");
+          lastAuthErrorReason = "GIS Token 受眾 (aud) 不匹配，拒絕存取 (預期: " + GOOGLE_CLIENT_ID + "，實際: " + json.aud + ")";
+          Logger.log(lastAuthErrorReason);
           return null;
         }
       }
       if (json.email) {
         const cleanEmail = normalizeEmail(json.email);
-        // 驗證成功後動態快取至 Token 有效期結束（上限 3300 秒，約 55 分鐘，保留 60 秒網路緩衝）
-        // 徹底避免 5 分鐘後快取失效重複連線 Google 造成卡頓或網路延遲失聯
-        try {
-          const nowSec = Math.floor(Date.now() / 1000);
-          const expSec = Number(json.exp) || (nowSec + 3600);
-          const remainingSec = expSec - nowSec;
-          const ttl = Math.max(60, Math.min(remainingSec - 60, 3300));
-          cache.put(tokenKey, cleanEmail, ttl);
-        } catch (cErr) {}
+        const nowSec = Math.floor(Date.now() / 1000);
+        const remainingSec = Math.floor(exp) - nowSec;
+        if (remainingSec > 60) {
+          const ttl = Math.floor(Math.min(remainingSec - 60, 1800));
+          try {
+            const cache = CacheService.getScriptCache();
+            cache.put(tokenKey, JSON.stringify({ email: cleanEmail, exp: exp }), ttl);
+          } catch (cErr) {}
+        }
         return cleanEmail;
+      } else {
+        lastAuthErrorReason = "GIS Token 回傳無 email 欄位";
       }
+    } else {
+      lastAuthErrorReason = "GIS Tokeninfo HTTP " + respCode + ": " + respText;
     }
   } catch (e) {
-    Logger.log("Tokeninfo 線上驗證異常: " + e.message);
+    lastAuthErrorReason = "GIS 驗證異常: " + e.message;
   }
-
   return null;
 }
 

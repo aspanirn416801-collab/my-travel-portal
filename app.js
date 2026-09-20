@@ -1149,80 +1149,68 @@ document.addEventListener("DOMContentLoaded", function () {
   fetchTrips();
 });
 
-// 初始化 Google 登入元件 (無論登入與否均能運作)
+// 初始化 Firebase Auth 長效登入監聽器
 function initGoogleAuth() {
-  try {
-    if (window.google && google.accounts && google.accounts.id) {
-      google.accounts.id.initialize({
-        client_id: GOOGLE_CLIENT_ID,
-        callback: handleCredentialResponse,
-        auto_select: false,
-        cancel_on_tap_outside: true,
+  const attachListener = () => {
+    if (window.firebaseAuth && window.onAuthStateChanged) {
+      window.onAuthStateChanged(window.firebaseAuth, async (user) => {
+        if (user) {
+          try {
+            const token = await user.getIdToken();
+            handleCredentialResponse({ credential: token, user: user });
+          } catch (tokenErr) {
+            console.warn("取得 Firebase Token 失敗:", tokenErr);
+          }
+        } else {
+          // 訪客未登入模式：若原本持有已登入 Token 則執行登出清理
+          if (idToken) {
+            logout();
+          } else {
+            updateAuthUI();
+          }
+        }
       });
-
-      // 預先在彈窗中渲染 Google 官方原生按鈕 (100% 手機相容)
-      renderGsiOfficialButton();
-
-      // 若已有登入憑證但即將逾期，嘗試無感自動續期
-      if (idToken && isTokenExpired(idToken)) {
-        try {
-          google.accounts.id.prompt();
-        } catch (err) {}
-      }
     }
-  } catch (e) {
-    console.warn("Google SDK 初始化警示:", e);
+  };
+
+  if (window.firebaseAuth) {
+    attachListener();
+  } else {
+    document.addEventListener("firebase-ready", attachListener, { once: true });
   }
 
   updateAuthUI();
 }
 
 function renderGsiOfficialButton() {
-  const container = document.getElementById("gsiButtonContainer");
-  if (container && window.google && google.accounts && google.accounts.id) {
-    container.innerHTML = "";
-    google.accounts.id.renderButton(container, {
-      theme: "outline",
-      size: "large",
-      type: "standard",
-      shape: "pill",
-      text: "signin_with",
-      logo_alignment: "left",
-      width: 260,
-    });
-  }
+  // Firebase 模組化架構下由自訂按鈕直接觸發，保留空實作避免相容性呼叫報錯
 }
 
-function triggerGoogleLogin() {
-  // 保存目前完整網址（含 trip 與 tab 參數），確保登入後 100% 回到原行程分頁
+// 喚起 Google 彈窗登入 (由 Firebase Auth 處理，相容所有主流瀏覽器與行動裝置)
+async function triggerGoogleLogin() {
+  // 保存目前完整網址（含 trip 與 tab 參數），確保登入後回到原行程分頁
   try {
     sessionStorage.setItem("returnAfterLogin", window.location.href);
   } catch (e) {}
 
-  const modal = document.getElementById("googleLoginModal");
-  if (modal) modal.style.display = "flex";
+  closeGoogleLoginModal();
 
-  if (window.google && google.accounts && google.accounts.id) {
-    try {
-      google.accounts.id.initialize({
-        client_id: GOOGLE_CLIENT_ID,
-        callback: handleCredentialResponse,
-        auto_select: false,
-      });
-
-      renderGsiOfficialButton();
-
-      // 同時嘗試喚起 One Tap 快速登入
-      google.accounts.id.prompt((notification) => {
-        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-          console.log("One Tap 未直接顯示，請點選彈窗按鈕進行登入");
-        }
-      });
-    } catch (e) {
-      console.warn("GSI 觸發狀態:", e);
-    }
-  } else {
+  if (!window.firebaseAuth || !window.signInWithPopup) {
     alert("Google 登入服務載入中，請稍候重試。");
+    return;
+  }
+
+  try {
+    const result = await window.signInWithPopup(window.firebaseAuth, window.googleProvider);
+    if (result && result.user) {
+      const token = await result.user.getIdToken();
+      handleCredentialResponse({ credential: token, user: result.user });
+    }
+  } catch (err) {
+    console.warn("Firebase Google 登入狀態:", err);
+    if (err.code !== "auth/popup-closed-by-user" && err.code !== "auth/cancelled-popup-request") {
+      showToast("登入未完成: " + (err.message || err.code));
+    }
   }
 }
 
@@ -1516,7 +1504,10 @@ function handleCredentialResponse(response) {
 }
 
 function logout() {
-  authGeneration++; // 關鍵：推進登入世代計數器，徹底廢棄登出前任何尚未完成的非同步儲存回調，杜絕敏感資料回填！
+  authGeneration++;
+  if (window.firebaseAuth && window.signOut) {
+    window.signOut(window.firebaseAuth).catch(() => {});
+  } // 關鍵：推進登入世代計數器，徹底廢棄登出前任何尚未完成的非同步儲存回調，杜絕敏感資料回填！
   idToken = null;
   authStatus = "guest";
   verifiedRole = "guest";

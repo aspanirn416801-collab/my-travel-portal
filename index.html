@@ -2849,7 +2849,12 @@ body.large { font-size: 16px; }
         </p>
         
         <!-- Google 官方原生按鈕渲染容器 (支援手機點擊) -->
-        <div id="gsiButtonContainer" style="display: flex; justify-content: center; min-height: 44px; margin-bottom: 14px;"></div>
+        <div id="gsiButtonContainer" style="display: flex; justify-content: center; min-height: 44px; margin-bottom: 14px;">
+          <button class="hub-nav-btn" style="background:#1A3822;color:#fff;border-color:#1A3822;padding:10px 24px;border-radius:24px;font-size:14px;font-weight:600;display:flex;align-items:center;gap:10px;cursor:pointer;" onclick="triggerGoogleLogin()">
+            <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#fff" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.616z"/><path fill="#fff" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/><path fill="#fff" d="M3.964 10.707c-.18-.54-.282-1.117-.282-1.707s.102-1.167.282-1.707V4.961H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.039l3.007-2.332z"/><path fill="#fff" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.961L3.964 7.293C4.672 5.166 6.656 3.58 9 3.58z"/></svg>
+            使用 Google 帳號登入
+          </button>
+        </div>
         
         <p style="font-size: 11px; color: #999; margin-top: 14px; line-height: 1.5;">
           💡 若在 LINE / FB 內建瀏覽器中無法登入，請點選右上角「以 Safari / Chrome 開啟」。
@@ -2884,7 +2889,38 @@ body.large { font-size: 16px; }
   </div>
 
   <!-- Google Identity Services SDK -->
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <!-- 引入 Firebase 現代化 SDK (長效登入模組) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.9.0/firebase-app.js";
+    import { 
+      getAuth, 
+      GoogleAuthProvider, 
+      signInWithPopup, 
+      signOut, 
+      onAuthStateChanged 
+    } from "https://www.gstatic.com/firebasejs/10.9.0/firebase-auth.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCx2E_CGqqd0j6xtMSDYeWbdpXPZcReKLM",
+      authDomain: "my-travel-portal-1d647.firebaseapp.com",
+      projectId: "my-travel-portal-1d647",
+      storageBucket: "my-travel-portal-1d647.firebasestorage.app",
+      messagingSenderId: "289759891120",
+      appId: "1:289759891120:web:342844d6f074bd026cb575"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const provider = new GoogleAuthProvider();
+
+    window.firebaseAuth = auth;
+    window.googleProvider = provider;
+    window.signInWithPopup = signInWithPopup;
+    window.signOut = signOut;
+    window.onAuthStateChanged = onAuthStateChanged;
+
+    document.dispatchEvent(new CustomEvent("firebase-ready"));
+  </script>
     <!-- 核心邏輯主程式 (支援單次載入、SPA分頁切換與防畫面跳動) -->
     <!-- 核心狀態管理與安全跳脫模組 (正式網頁與自動化測試共用) -->
     <script src="trip-state.js?v=20260918_13"></script>
