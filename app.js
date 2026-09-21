@@ -34,7 +34,7 @@ let authGeneration = 0;
 // =========================================================================
 const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
-const APP_BUILD_VERSION = "20260921_17";
+const APP_BUILD_VERSION = "20260921_18";
 
 // 智能行程顯示名稱轉換 (直接依資料庫 Trips 工作表名稱為唯一準則，絕不寫死特定行程名稱)
 function getTripDisplayName(name = "", uuid = "") {
@@ -6017,8 +6017,8 @@ function renderTransport() {
             const editActions = canEdit
               ? `
               <div class="item-actions">
-                <button type="button" class="btn-mini btn-icon-move" onclick="moveTransportRouteItem(${origIdx}, -1, '${escapeAttribute(tag)}')" aria-label="上移" title="上移" ${localIdx === 0 || isTransportOrderSaving ? "disabled" : ""}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg></button>
-                <button type="button" class="btn-mini btn-icon-move" onclick="moveTransportRouteItem(${origIdx}, 1, '${escapeAttribute(tag)}')" aria-label="下移" title="下移" ${localIdx === arr.length - 1 || isTransportOrderSaving ? "disabled" : ""}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
+                <button type="button" class="btn-mini btn-icon-move" onclick="moveTransportRouteItem(${origIdx}, -1)" aria-label="上移" title="上移" ${localIdx === 0 || isTransportOrderSaving ? "disabled" : ""}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg></button>
+                <button type="button" class="btn-mini btn-icon-move" onclick="moveTransportRouteItem(${origIdx}, 1)" aria-label="下移" title="下移" ${localIdx === arr.length - 1 || isTransportOrderSaving ? "disabled" : ""}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
                 <button class="btn-mini" onclick="openEditTransportModal(${origIdx})">✏️ 修改</button>
                 <button class="btn-mini btn-mini-danger" onclick="deleteTransportItem(${origIdx})">🗑️ 刪除</button>
               </div>
@@ -6483,8 +6483,8 @@ function openUploadRouteMapModal() {
 // 等待交通路線順序寫入完成，避免連點競態
 let isTransportOrderSaving = false;
 
-// 手動調整同天 (或全域) 交通路線前後順序 (上移 / 下移)
-async function moveTransportRouteItem(origIdx, offset, tag) {
+// 手動調整同天 (或全域) 交通路線前後順序 (上移 / 下移) - 僅接受純數字索引，徹底避免標籤字串引發屬性注入
+async function moveTransportRouteItem(origIdx, offset) {
   if (isTransportOrderSaving) return;
   if (!canEditCurrentTrip()) {
     showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
@@ -6492,6 +6492,8 @@ async function moveTransportRouteItem(origIdx, offset, tag) {
   }
   if (!tripData || !tripData.transport || !Array.isArray(tripData.transport.routes)) return;
   const routes = tripData.transport.routes;
+  if (!Number.isInteger(origIdx) || !routes[origIdx]) return;
+  const tag = routes[origIdx].dayTag || "主要交通";
 
   // 取得同一 tag 內的所有項目的原始索引
   const tagIndices = [];
@@ -6572,13 +6574,19 @@ function openAddTransportModal() {
     }
   };
 
+  window.onSelectTransitDayIndex = function (index) {
+    if (Number.isInteger(index) && dayOptions[index]) {
+      window.onSelectTransitDay(dayOptions[index].tag);
+    }
+  };
+
   const tagButtonsHtml = dayOptions.length
     ? `
       <div class="time-tags" style="margin-bottom:8px;">
         ${dayOptions
           .map(
-            (opt) =>
-              `<button type="button" class="time-tag" onclick="window.onSelectTransitDay('${opt.tag}')">${opt.tag}</button>`
+            (opt, index) =>
+              `<button type="button" class="time-tag" onclick="window.onSelectTransitDayIndex(${index})">${escapeHtml(opt.tag)}</button>`
           )
           .join("")}
         <button type="button" class="time-tag" onclick="window.onSelectTransitDay('主要交通')">主要交通</button>
