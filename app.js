@@ -34,7 +34,7 @@ let authGeneration = 0;
 // =========================================================================
 const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
-const APP_BUILD_VERSION = "20260920_14";
+const APP_BUILD_VERSION = "20260921_15";
 
 // 智能行程顯示名稱轉換 (直接依資料庫 Trips 工作表名稱為唯一準則，絕不寫死特定行程名稱)
 function getTripDisplayName(name = "", uuid = "") {
@@ -80,6 +80,8 @@ let verifiedRole = "guest"; // 'admin' | 'user' | 'guest' (唯一依據：本次
 let userRole = "guest"; // 向後相容全站呼叫點，數值嚴格由 verifiedRole 同步
 let authenticatedUid = null;
 let firebaseSignOutPending = false;
+let isLoggingIn = false;
+let isLoggingOut = false;
 
 function hasVerifiedFirebaseSession() {
   return authStatus === "authenticated" && Boolean(idToken) && Boolean(authenticatedUid) &&
@@ -88,6 +90,10 @@ function hasVerifiedFirebaseSession() {
 
 // Obtain a fresh SDK token for each protected API call; never persist the JWT ourselves.
 async function getFreshIdToken(required = false) {
+  if (firebaseSignOutPending || isLoggingOut || authStatus === "signout-failed") {
+    if (required) throw new Error("登出尚未完成，請先重試登出");
+    return "";
+  }
   const user = firebaseSignOutPending ? null : window.firebaseAuth?.currentUser;
   if (!user) {
     if (required) throw new Error("請先登入 Google 帳號");
@@ -759,6 +765,7 @@ function showLockedView(trip) {
 // 門禁解鎖表單送出驗證 (0.001 秒本地極速瞬驗 + 零卡頓秒開)
 async function handleTripUnlockSubmit(e) {
   if (e) e.preventDefault();
+  if (isLoggingOut || firebaseSignOutPending || authStatus === "signout-failed") return;
   const inputEl = document.getElementById("lockedTripPwdInput");
   const errEl = document.getElementById("lockedTripErrorMsg");
   const inputPwd = (inputEl ? inputEl.value : "").trim();
@@ -842,6 +849,7 @@ async function handleTripUnlockSubmit(e) {
 
 // 點擊大廳行程卡片時的安全進入路由
 function openTripByUuid(uuid) {
+  if (isLoggingOut || firebaseSignOutPending || authStatus === "signout-failed") return;
   const trip = tripsList.find((t) => t.uuid === uuid);
   const hasPassword = Boolean(trip && trip.hasPassword);
 
@@ -1075,6 +1083,7 @@ function initRouter() {
 
 // 路由導航切換函式 (嚴格鎖定目標行程 UUID，並支援攜帶指定分頁 tab)
 function navigateTo(tripUuid, targetTab = "") {
+  if ((isLoggingOut || firebaseSignOutPending || authStatus === "signout-failed") && tripUuid) return;
   const currentPath = window.location.pathname;
 
   // 獨立後台中心
@@ -1174,6 +1183,7 @@ function initGoogleAuth() {
   const attachListener = () => {
     if (window.firebaseAuth && window.onAuthStateChanged) {
       window.onAuthStateChanged(window.firebaseAuth, async (user) => {
+        if (isLoggingOut || firebaseSignOutPending || authStatus === "signout-failed") return;
         if (user) {
           if (authenticatedUid !== user.uid) {
             // Invalidate guest/previous-account responses before token retrieval.
@@ -1205,12 +1215,13 @@ function initGoogleAuth() {
             }
             handleCredentialResponse({ credential: token, user: user });
           } catch (tokenErr) {
+            if (callbackGeneration !== authGeneration || isLoggingOut || authStatus === "signout-failed") return;
             console.warn("取得 Firebase Token 失敗:", tokenErr);
             authStatus = "auth-error";
             updateAuthUI();
           }
         } else {
-          if (idToken) {
+          if (idToken || authenticatedUid || verifiedRole !== "guest") {
             logout(true);
           } else {
             authStatus = "guest";
@@ -1236,6 +1247,12 @@ function renderGsiOfficialButton() {
 
 // 喚起 Google 彈窗登入 (由 Firebase Auth 處理)
 async function triggerGoogleLogin() {
+  if (isLoggingIn || isLoggingOut || firebaseSignOutPending || authStatus === "signout-failed") return;
+  if (window.firebaseAuth?.currentUser) {
+    showToast("請先登出目前帳號，再登入其他帳號");
+    return;
+  }
+  isLoggingIn = true;
   // 保存目前完整網址（含 trip 與 tab 參數），確保登入後回到原行程分頁
   try {
     sessionStorage.setItem("returnAfterLogin", window.location.href);
@@ -1245,6 +1262,7 @@ async function triggerGoogleLogin() {
 
   if (!window.firebaseAuth || !window.signInWithPopup) {
     alert("Google 登入服務載入中，請稍候重試。");
+    isLoggingIn = false;
     return;
   }
 
@@ -1252,6 +1270,7 @@ async function triggerGoogleLogin() {
     if (!await window.firebasePersistenceReady) {
       throw new Error("瀏覽器無法保留登入狀態，請檢查網站儲存權限");
     }
+    window.googleProvider.setCustomParameters({ prompt: "select_account" });
     // onAuthStateChanged is the single source of login transitions.
     await window.signInWithPopup(window.firebaseAuth, window.googleProvider);
   } catch (err) {
@@ -1259,6 +1278,8 @@ async function triggerGoogleLogin() {
     if (err.code !== "auth/popup-closed-by-user" && err.code !== "auth/cancelled-popup-request") {
       showToast("登入未完成: " + (err.message || err.code));
     }
+  } finally {
+    isLoggingIn = false;
   }
 }
 
@@ -1301,6 +1322,21 @@ function updateAuthUI() {
   const adminHubActions = document.getElementById("adminHubActions");
   const adminCapsule = document.getElementById("adminCapsule");
   const headerLoginBtn = document.getElementById("headerLoginBtn");
+
+  if (authStatus === "logging-out" || authStatus === "signout-failed") {
+    if (adminCapsule) adminCapsule.style.display = "none";
+    if (headerLoginBtn) headerLoginBtn.style.display = "none";
+    if (logoutBtn) logoutBtn.style.display = "none";
+    if (loginBtn) loginBtn.style.display = "none";
+    if (adminHubActions) adminHubActions.style.display = "none";
+    if (badge) {
+      const failed = authStatus === "signout-failed";
+      badge.className = "user-badge badge-user" + (failed ? " badge-actionable" : "");
+      badge.innerText = failed ? "⚠️ 登出未完成 [重試登出]" : "⏳ 正在登出...";
+      badge.onclick = failed ? () => logout() : null;
+    }
+    return;
+  }
 
   const isAdmin = userRole === "admin" && hasVerifiedFirebaseSession();
 
@@ -1394,7 +1430,7 @@ function updateAuthUI() {
     badge.title = canRetry ? "點擊重新連線" : "";
     badge.className = authStatus === "verifying" || canRetry ? "user-badge badge-user" : "user-badge badge-guest";
     badge.innerText = canRetry ? "⚠️ 身分恢復失敗 [點此重試]" : authStatus === "verifying" ? "⏳ 正在恢復登入..." : "訪客模式 (唯讀)";
-    if (logoutBtn) logoutBtn.style.display = "none";
+    if (logoutBtn) logoutBtn.style.display = window.firebaseAuth?.currentUser ? "inline-flex" : "none";
     if (adminHubActions) adminHubActions.style.display = "none";
     if (loginBtn) loginBtn.style.display = "inline-flex";
   }
@@ -1555,17 +1591,21 @@ function handleCredentialResponse(response) {
 }
 
 async function logout(skipFirebaseSignOut = false) {
+  if (isLoggingOut || (!skipFirebaseSignOut && isLoggingIn)) return;
+  isLoggingOut = true;
   authGeneration++;
   // Clear local privileges immediately, then wait for the SDK before fetching as a guest.
   firebaseSignOutPending = !skipFirebaseSignOut;
   idToken = null;
   authenticatedUid = null;
-  authStatus = "guest";
+  authStatus = "logging-out";
   verifiedRole = "guest";
   userRole = "guest";
   try { sessionStorage.removeItem("auth_role_hint"); } catch (e) {}
-  localStorage.removeItem("google_id_token");
-  localStorage.removeItem("cache_userRole");
+  try {
+    localStorage.removeItem("google_id_token");
+    localStorage.removeItem("cache_userRole");
+  } catch (e) {}
 
   // 安全清理：清空記憶體中的權限與 PIN 解鎖狀態
   tripPermissions.clear();
@@ -1575,6 +1615,8 @@ async function logout(skipFirebaseSignOut = false) {
   currentTripUuid = "";      // 重設當前行程 ID
   tripRequestSequence++;     // 推進流水號，使登出前尚未完成的手冊回應徹底失效
   tripsRequestSeq++;         // 推進清單流水號
+  inFlightTripsPromise = null;
+  inFlightTripsKey = null;
 
   // 清除 sessionStorage 中殘留的私密手冊
   try {
@@ -1587,6 +1629,23 @@ async function logout(skipFirebaseSignOut = false) {
 
   // 關閉任何開啟中的對話框
   closeModal();
+  closeMapLightbox();
+  ["page-checklist", "page-flights", "page-transport", "page-itinerary", "page-food", "page-shopping",
+    "adminTripsContainer", "tripWeatherContainer"].forEach((id) => {
+    document.getElementById(id)?.replaceChildren();
+  });
+  const modalBody = document.getElementById("modalBody");
+  if (modalBody) modalBody.replaceChildren();
+  const portalTitle = document.getElementById("portalTitle");
+  if (portalTitle) portalTitle.textContent = "✈️ 旅遊行程手冊";
+  const portalSubtitle = document.getElementById("portalSubtitle");
+  if (portalSubtitle) portalSubtitle.textContent = "載入中...";
+  ["adminUserTag", "modalTitle", "lightboxTitle", "lightboxCaption", "currentTripIndicator"].forEach((id) => {
+    const element = document.getElementById(id);
+    if (element) element.textContent = "";
+  });
+  const lockedPwd = document.getElementById("lockedTripPwdInput");
+  if (lockedPwd) lockedPwd.value = "";
 
   // 隱藏後台管理中心並重設網址
   const adminView = document.getElementById("view-admin");
@@ -1596,21 +1655,31 @@ async function logout(skipFirebaseSignOut = false) {
   }
 
   updateAuthUI();
-  showToast("已安全登出，敏感手冊資料已清除 ✓");
   showHubView();
-  if (!skipFirebaseSignOut && window.firebaseAuth && window.signOut) {
-    try {
+  let signedOut = false;
+  try {
+    if (!skipFirebaseSignOut) {
+      if (!window.firebaseAuth || typeof window.signOut !== "function") {
+        throw new Error("Firebase 登出服務尚未就緒");
+      }
       await window.signOut(window.firebaseAuth);
-    } catch (error) {
-      firebaseSignOutPending = false;
-      authStatus = "auth-error";
-      updateAuthUI();
-      showToast("登出未完成，請再試一次");
-      return;
     }
+    signedOut = true;
+  } catch (error) {
+    console.warn("Firebase 登出未完成:", error);
+    authStatus = "signout-failed";
+    showToast("登出未完成，請點擊重試登出");
+  } finally {
+    isLoggingOut = false;
+    firebaseSignOutPending = false;
+    updateAuthUI();
   }
-  firebaseSignOutPending = false;
-  fetchTrips();
+  if (signedOut) {
+    authStatus = "guest";
+    updateAuthUI();
+    showToast("已安全登出，敏感手冊資料已清除 ✓");
+    fetchTrips({ force: true });
+  }
 }
 
 // =========================================================================
@@ -1777,6 +1846,7 @@ let tripsRequestSeq = 0;
 
 // 取得行程清單與初始化 (支援一次性 bootstrap 合併請求與 In-flight 精準併發控制)
 async function fetchTrips({ force = false } = {}) {
+  if (isLoggingOut || firebaseSignOutPending || authStatus === "signout-failed") return;
   // 強制重試時：若持有 Token 立即重設顯示軌為 verifying，避免顯示誤導
   if (force) {
     authStatus = (idToken && !isTokenExpired(idToken)) ? "verifying" : "guest";
@@ -1801,6 +1871,7 @@ async function fetchTrips({ force = false } = {}) {
   }
 
   const currentSeq = ++tripsRequestSeq;
+  const requestGeneration = authGeneration;
   const requestedTripUuid = currentTripUuid; // 鎖定發起時的目標行程，防止非同步串頁
   inFlightTripsKey = requestKey;
 
@@ -1820,7 +1891,7 @@ async function fetchTrips({ force = false } = {}) {
       const result = await res.json();
 
       // 若後續已有更新的請求發出，放棄過期回應
-      if (currentSeq !== tripsRequestSeq) return;
+      if (currentSeq !== tripsRequestSeq || requestGeneration !== authGeneration) return;
 
       if (result.status === "success") {
         verifiedRole = result.role || "guest";
@@ -1911,6 +1982,7 @@ async function fetchTrips({ force = false } = {}) {
         }
       }
     } catch (e) {
+      if (currentSeq !== tripsRequestSeq || requestGeneration !== authGeneration) return;
       console.warn("連線後端狀態:", e);
       isInitialTripsLoaded = true;
       if (idToken && !isTokenExpired(idToken)) {
@@ -2149,6 +2221,7 @@ function sortTripDays(days) {
 
 // 取得特定行程的詳細旅遊資料 (SWR 0 秒瞬間秒開快取機制)
 async function fetchTripData() {
+  if (isLoggingOut || firebaseSignOutPending || authStatus === "signout-failed") return;
   if (!currentTripUuid) return;
 
   const isAdmin = userRole === "admin";
