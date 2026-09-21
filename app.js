@@ -34,7 +34,7 @@ let authGeneration = 0;
 // =========================================================================
 const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
-const APP_BUILD_VERSION = "20260921_16";
+const APP_BUILD_VERSION = "20260921_17";
 
 // 智能行程顯示名稱轉換 (直接依資料庫 Trips 工作表名稱為唯一準則，絕不寫死特定行程名稱)
 function getTripDisplayName(name = "", uuid = "") {
@@ -3600,8 +3600,8 @@ function renderItinerary() {
 
       const editActions = canEdit
         ? `<div class="item-actions">
-             <button type="button" class="btn-mini" onclick="moveItineraryItem(${selectedDay}, ${j}, -1)" aria-label="上移 ${escapeAttribute(item.place || "景點")}" title="上移" ${j === 0 || isItineraryOrderSaving ? "disabled" : ""}>⬆️</button>
-             <button type="button" class="btn-mini" onclick="moveItineraryItem(${selectedDay}, ${j}, 1)" aria-label="下移 ${escapeAttribute(item.place || "景點")}" title="下移" ${j === day.items.length - 1 || isItineraryOrderSaving ? "disabled" : ""}>⬇️</button>
+             <button type="button" class="btn-mini btn-icon-move" onclick="moveItineraryItem(${selectedDay}, ${j}, -1)" aria-label="上移 ${escapeAttribute(item.place || "景點")}" title="上移" ${j === 0 || isItineraryOrderSaving ? "disabled" : ""}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg></button>
+             <button type="button" class="btn-mini btn-icon-move" onclick="moveItineraryItem(${selectedDay}, ${j}, 1)" aria-label="下移 ${escapeAttribute(item.place || "景點")}" title="下移" ${j === day.items.length - 1 || isItineraryOrderSaving ? "disabled" : ""}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
              <button class="btn-mini" onclick="openEditItineraryModal(${selectedDay}, ${j})">✏️ 修改</button>
              <button class="btn-mini btn-mini-danger" onclick="deleteItineraryItem(${selectedDay}, ${j})">🗑️ 刪除</button>
            </div>`
@@ -6004,7 +6004,7 @@ function renderTransport() {
     ? groupKeys
       .map((tag) => {
         const itemsHtml = groupedRoutes[tag]
-          .map((item) => {
+          .map((item, localIdx, arr) => {
             const safeFromTo = escapeHtml(item.fromTo || "未命名路線");
             const safeTime = escapeHtml(item.time || "");
             const safeTrain = escapeHtml(item.trainInfo || "");
@@ -6017,6 +6017,8 @@ function renderTransport() {
             const editActions = canEdit
               ? `
               <div class="item-actions">
+                <button type="button" class="btn-mini btn-icon-move" onclick="moveTransportRouteItem(${origIdx}, -1, '${escapeAttribute(tag)}')" aria-label="上移" title="上移" ${localIdx === 0 || isTransportOrderSaving ? "disabled" : ""}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg></button>
+                <button type="button" class="btn-mini btn-icon-move" onclick="moveTransportRouteItem(${origIdx}, 1, '${escapeAttribute(tag)}')" aria-label="下移" title="下移" ${localIdx === arr.length - 1 || isTransportOrderSaving ? "disabled" : ""}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
                 <button class="btn-mini" onclick="openEditTransportModal(${origIdx})">✏️ 修改</button>
                 <button class="btn-mini btn-mini-danger" onclick="deleteTransportItem(${origIdx})">🗑️ 刪除</button>
               </div>
@@ -6475,6 +6477,56 @@ function deleteRouteMap(idx) {
 // 向下相容舊版按鈕呼叫 (一律導向新增路線圖，避免不小心覆蓋現有地圖)
 function openUploadRouteMapModal() {
   openAddRouteMapModal();
+}
+
+
+// 等待交通路線順序寫入完成，避免連點競態
+let isTransportOrderSaving = false;
+
+// 手動調整同天 (或全域) 交通路線前後順序 (上移 / 下移)
+async function moveTransportRouteItem(origIdx, offset, tag) {
+  if (isTransportOrderSaving) return;
+  if (!canEditCurrentTrip()) {
+    showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
+    return;
+  }
+  if (!tripData || !tripData.transport || !Array.isArray(tripData.transport.routes)) return;
+  const routes = tripData.transport.routes;
+
+  // 取得同一 tag 內的所有項目的原始索引
+  const tagIndices = [];
+  routes.forEach((r, idx) => {
+    if ((r.dayTag || "主要交通") === tag) {
+      tagIndices.push(idx);
+    }
+  });
+
+  const posInTag = tagIndices.indexOf(origIdx);
+  if (posInTag === -1) return;
+  const targetPosInTag = posInTag + offset;
+  if (targetPosInTag < 0 || targetPosInTag >= tagIndices.length) return;
+
+  const targetOrigIdx = tagIndices[targetPosInTag];
+
+  isTransportOrderSaving = true;
+  const tripUuid = currentTripUuid;
+  const generation = authGeneration;
+
+  // 交換兩者在 routes 中的位置
+  const temp = routes[origIdx];
+  routes[origIdx] = routes[targetOrigIdx];
+  routes[targetOrigIdx] = temp;
+
+  renderTransport();
+  try {
+    const ok = await save();
+    if (ok === true && tripUuid === currentTripUuid && generation === authGeneration) {
+      showToast("已調整乘車順序 ✓");
+    }
+  } finally {
+    isTransportOrderSaving = false;
+    if (tripUuid === currentTripUuid && generation === authGeneration) renderTransport();
+  }
 }
 
 // 新增乘車行程對話框

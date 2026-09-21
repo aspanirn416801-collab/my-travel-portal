@@ -2648,6 +2648,33 @@ body.large { font-size: 16px; }
   padding-top: 8px;
   border-top: 1px dashed rgba(0, 0, 0, 0.06);
 }
+
+.btn-icon-move {
+  padding: 4px 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  color: var(--moss);
+  background: rgba(31, 54, 36, 0.07);
+  border: 1px solid rgba(31, 54, 36, 0.15);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.btn-icon-move svg {
+  display: block;
+}
+.btn-icon-move:hover:not(:disabled) {
+  background: var(--moss);
+  color: #FFF;
+  transform: translateY(-1px);
+}
+.btn-icon-move:disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+  pointer-events: none;
+}
 </style>
 </head>
 <body>
@@ -2930,6 +2957,6 @@ body.large { font-size: 16px; }
     <!-- 核心邏輯主程式 (支援單次載入、SPA分頁切換與防畫面跳動) -->
     <!-- 核心狀態管理與安全跳脫模組 (正式網頁與自動化測試共用) -->
     <script src="trip-state.js?v=20260918_13"></script>
-    <script src="app.js?v=20260921_16"></script>
+    <script src="app.js?v=20260921_17"></script>
 </body>
 </html>
