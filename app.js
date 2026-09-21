@@ -2523,12 +2523,6 @@ async function save() {
     return false;
   }
 
-  // 檢查登入憑證是否過期
-  if (isTokenExpired(idToken)) {
-    showToast("登入憑證已過期，請先重新登入以同步雲端");
-    triggerGoogleLogin();
-    return false;
-  }
 
   // 安全設計：不在雲端確認前過早寫入 Session 快取，防止失敗時留下髒資料
   showToast("正在同步至雲端試算表...");
@@ -4296,11 +4290,6 @@ async function uploadImageInModal(input, imgUrlInputId, previewDivId) {
     showToast("⚠️ 目前為唯讀模式，無法上傳照片");
     return;
   }
-  if (isTokenExpired(idToken)) {
-    showToast("登入憑證已逾期，請先登入帳號以授權上傳照片");
-    triggerGoogleLogin();
-    return;
-  }
 
   const previewDiv = document.getElementById(previewDivId);
   previewDiv.innerHTML =
@@ -5493,11 +5482,6 @@ function openCreateTripModal() {
 
       allowedUsers = allowedUsers.replace(/，/g, ",");
 
-      if (isTokenExpired(idToken)) {
-        showToast("登入憑證已逾期，請先登入管理員以建立行程");
-        triggerGoogleLogin();
-        return false;
-      }
 
       showLoading("正在雲端自動建立行程資料夾、初始化試算表結構...");
 
@@ -5578,11 +5562,6 @@ async function openEditTripMetaModal(uuid) {
   const trip = tripsList.find((t) => t.uuid === uuid);
   if (!trip) return;
 
-  if (isTokenExpired(idToken)) {
-    showToast("登入憑證已逾期，請先登入管理員");
-    triggerGoogleLogin();
-    return;
-  }
 
   showLoading("正在載入行程完整設定...");
   let fullMeta = null;
@@ -5703,11 +5682,6 @@ async function openEditTripMetaModal(uuid) {
 
       allowedUsers = allowedUsers.replace(/，/g, ",");
 
-      if (isTokenExpired(idToken)) {
-        showToast("登入憑證已逾期，請先登入管理員以儲存設定");
-        triggerGoogleLogin();
-        return false;
-      }
 
       showLoading("正在更新行程基本設定...");
 
