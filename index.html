@@ -2897,7 +2897,9 @@ body.large { font-size: 16px; }
       GoogleAuthProvider, 
       signInWithPopup, 
       signOut, 
-      onAuthStateChanged 
+      onAuthStateChanged,
+      browserLocalPersistence,
+      setPersistence
     } from "https://www.gstatic.com/firebasejs/10.9.0/firebase-auth.js";
 
     const firebaseConfig = {
@@ -2918,12 +2920,16 @@ body.large { font-size: 16px; }
     window.signInWithPopup = signInWithPopup;
     window.signOut = signOut;
     window.onAuthStateChanged = onAuthStateChanged;
+    window.firebasePersistenceReady = setPersistence(auth, browserLocalPersistence).then(
+      () => true,
+      (error) => { console.warn("無法啟用本機登入保留:", error); return false; }
+    );
 
     document.dispatchEvent(new CustomEvent("firebase-ready"));
   </script>
     <!-- 核心邏輯主程式 (支援單次載入、SPA分頁切換與防畫面跳動) -->
     <!-- 核心狀態管理與安全跳脫模組 (正式網頁與自動化測試共用) -->
     <script src="trip-state.js?v=20260918_13"></script>
-    <script src="app.js?v=20260918_13"></script>
+    <script src="app.js?v=20260920_14"></script>
 </body>
 </html>
