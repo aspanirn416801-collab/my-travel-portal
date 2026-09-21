@@ -2705,45 +2705,121 @@ function closeModal() {
 }
 
 // =========================================================================
-// 1. 必備清單 (Checklist) - 依類別多欄佈局與即時同步
 // =========================================================================
+// 1. 行前清單 (Checklist) - 五大智慧分類標籤過濾與進度儀表板
+// =========================================================================
+const CHECKLIST_MAIN_CATS = [
+  "全部",
+  "證件與預訂",
+  "金錢與通訊",
+  "行李與用品",
+  "健康與保險",
+  "其他事項"
+];
+
+let currentChecklistFilter = "全部";
+
+window.switchChecklistFilter = function(cat) {
+  currentChecklistFilter = cat;
+  renderChecklist();
+};
+
+function getChecklistMainCategory(rawCat) {
+  if (!rawCat) return "其他事項";
+  const s = rawCat.toString().trim();
+  if (CHECKLIST_MAIN_CATS.includes(s) && s !== "全部") return s;
+  const l = s.toLowerCase();
+  // 1. 證件與預訂
+  if (/證件|護照|簽證|visa|門票|票券|車票|預約|預訂|機票|flight|pass|rail|booking|hotel|住宿/i.test(l)) {
+    return "證件與預訂";
+  }
+  // 2. 金錢與通訊
+  if (/金錢|現金|幣|換匯|歐元|克朗|credit|card|cash|pay|payment|通訊|網路|esim|sim|wifi|network/i.test(l)) {
+    return "金錢與通訊";
+  }
+  // 3. 行李與用品
+  if (/行李|衣物|穿著|用品|充電|轉接|插頭|隨身|包|luggage|bag|pack/i.test(l)) {
+    return "行李與用品";
+  }
+  // 4. 健康與保險
+  if (/保險|險|醫療|藥|健康|醫藥|insurance|health|medicine|clinic|退稅|tax|refund/i.test(l)) {
+    return "健康與保險";
+  }
+  return "其他事項";
+}
+
 function renderChecklist() {
   if (!tripData) return;
   const list = tripData.checklist || [];
   const canEdit = canEditCurrentTrip();
 
+  // 整體完成進度（無論選擇哪個分類標籤，上方皆顯示全手冊總進度）
   const doneCount = list.filter((i) => i.done).length;
   const percent = list.length ? Math.round((doneCount / list.length) * 100) : 0;
 
   const addBtn = canEdit
-    ? `<button class="glass-btn" style="background:var(--moss-gradient);color:#fff;width:100%;margin-top:16px;justify-content:center;" onclick="openAddChecklistModal()">＋ 新增必備項目</button>`
+    ? `<button class="glass-btn" style="background:var(--moss-gradient);color:#fff;width:100%;margin-top:16px;justify-content:center;" onclick="openAddChecklistModal()">＋ 新增準備事項</button>`
     : "";
 
-  // 統計分類
-  const catGroups = {};
-  list.forEach((item, i) => {
-    const c = (item.cat || "備忘待辦").trim();
-    if (!catGroups[c]) catGroups[c] = [];
-    catGroups[c].push({ item, originalIdx: i });
+  // 計算五大分類各自的項目筆數
+  const catCounts = { "全部": list.length };
+  CHECKLIST_MAIN_CATS.forEach(c => { if (c !== "全部") catCounts[c] = 0; });
+  list.forEach(item => {
+    const mCat = getChecklistMainCategory(item.cat);
+    catCounts[mCat] = (catCounts[mCat] || 0) + 1;
   });
 
-  const catKeys = Object.keys(catGroups);
-  let contentHtml = "";
+  // 分類標籤切換列 (Filter Pills)
+  const filterPillsHtml = `
+    <div class="time-tags-scroll" style="display:flex;gap:8px;overflow-x:auto;padding:4px 0 16px;scrollbar-width:none;-webkit-overflow-scrolling:touch;margin-top:8px;">
+      ${CHECKLIST_MAIN_CATS.map(cat => {
+        const isActive = (currentChecklistFilter === cat);
+        const count = catCounts[cat] || 0;
+        const activeStyle = isActive
+          ? "background:var(--moss);color:#fff;border-color:var(--moss);box-shadow:0 3px 12px rgba(31,54,36,0.28);"
+          : "background:rgba(255,255,255,0.78);color:var(--moss);border:1px solid var(--mist);backdrop-filter:blur(6px);";
+        return `
+          <button type="button" class="time-tag" style="padding:7px 15px;border-radius:20px;font-size:13px;font-weight:800;white-space:nowrap;cursor:pointer;transition:all 0.2s;${activeStyle}" onclick="window.switchChecklistFilter('${cat}')">
+            ${escapeHtml(cat)} <span style="font-size:11px;opacity:${isActive ? '0.9' : '0.65'};">(${count})</span>
+          </button>
+        `;
+      }).join("")}
+    </div>
+  `;
 
-  if (list.length === 0) {
+  // 根據選擇的分類標籤過濾項目（保留原始索引 originalIdx，讓修改與勾選索引不跑位）
+  let targetItems = [];
+  list.forEach((item, idx) => {
+    const mCat = getChecklistMainCategory(item.cat);
+    if (currentChecklistFilter === "全部" || currentChecklistFilter === mCat) {
+      targetItems.push({ item, originalIdx: idx, mainCat: mCat });
+    }
+  });
+
+  // 渲染清單項目區
+  let contentHtml = "";
+  if (targetItems.length === 0) {
     contentHtml = `
       <div class="card">
-        <div class="card-header"><span class="card-title">✓ 行前準備清單項目</span></div>
-        <p style="color:#888;padding:12px 0;">尚無清單項目</p>
+        <div class="card-header"><span class="card-title">✓ 行前準備清單</span></div>
+        <p style="color:#888;padding:16px 0;text-align:center;">此分類目前尚無準備事項</p>
         ${addBtn}
       </div>
     `;
-  } else if (catKeys.length > 1) {
-    // 多類別展示：桌機版依類別多欄卡片，手機版單欄卡片
-    const groupCardsHtml = catKeys.map((cName) => {
-      const groupItems = catGroups[cName];
-      const gDone = groupItems.filter(g => g.item.done).length;
-      const gRows = groupItems.map(({ item, originalIdx: i }) => {
+  } else {
+    // 依類別分組排版
+    const groups = {};
+    targetItems.forEach(({ item, originalIdx, mainCat }) => {
+      const groupKey = (currentChecklistFilter === "全部") ? mainCat : (item.cat || mainCat);
+      if (!groups[groupKey]) groups[groupKey] = [];
+      groups[groupKey].push({ item, originalIdx });
+    });
+
+    const groupKeys = Object.keys(groups);
+    const groupCardsHtml = groupKeys.map(gKey => {
+      const gItems = groups[gKey];
+      const gDone = gItems.filter(g => g.item.done).length;
+      const gRows = gItems.map(({ item, originalIdx: i }) => {
         const editActions = canEdit
           ? `<div class="item-actions">
                <button class="btn-mini" onclick="editChecklistItem(${i})">✏️ 修改</button>
@@ -2753,12 +2829,16 @@ function renderChecklist() {
         const safeTitle = escapeHtml(item.title || "");
         const safeNote = escapeHtml(item.note || "");
         const safeLink = escapeAttribute(sanitizeUrl(item.link));
+        const safeRawCat = escapeHtml(item.cat || "");
         return `
           <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid rgba(220, 226, 222, 0.45);transition:all 0.2s;">
             <input type="checkbox" style="width:18px;height:18px;accent-color:var(--moss);margin-top:2px;cursor:${canEdit ? "pointer" : "default"};border-radius:6px;flex-shrink:0;" ${item.done ? "checked" : ""} ${canEdit ? `onclick="toggleChecklistItem(${i})"` : "disabled"}>
             <div style="flex:1;min-width:0;${item.done ? "text-decoration:line-through;opacity:0.45;" : ""}">
               <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
-                <div style="font-size:14px;font-weight:800;color:var(--moss);">${safeTitle}</div>
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                  <span style="font-size:14px;font-weight:800;color:var(--moss);">${safeTitle}</span>
+                  ${safeRawCat && safeRawCat !== gKey ? `<span style="font-size:10px;color:#6B5A2A;background:var(--gold-soft);padding:1px 6px;border-radius:6px;font-weight:700;">${safeRawCat}</span>` : ""}
+                </div>
                 ${editActions}
               </div>
               ${safeNote ? `<div style="font-size:12px;color:#555;margin-top:3px;line-height:1.4;">${safeNote}</div>` : ""}
@@ -2771,8 +2851,8 @@ function renderChecklist() {
       return `
         <div class="card" style="margin-bottom:0;">
           <div class="card-header" style="border-bottom:1px solid var(--mist);padding-bottom:8px;margin-bottom:6px;">
-            <span class="card-title" style="font-size:15px;">📌 ${escapeHtml(cName)}</span>
-            <span style="font-size:11px;color:var(--moss);font-weight:700;">${gDone}/${groupItems.length} 完成</span>
+            <span class="card-title" style="font-size:15px;">📌 ${escapeHtml(gKey)}</span>
+            <span style="font-size:11px;color:var(--moss);font-weight:700;">${gDone}/${gItems.length} 完成</span>
           </div>
           ${gRows}
         </div>
@@ -2785,47 +2865,11 @@ function renderChecklist() {
       </div>
       <div style="margin-top:16px;">${addBtn}</div>
     `;
-  } else {
-    // 單一類別卡片
-    const rows = list.map((item, i) => {
-      const editActions = canEdit
-        ? `<div class="item-actions">
-             <button class="btn-mini" onclick="editChecklistItem(${i})">✏️ 修改</button>
-             <button class="btn-mini btn-mini-danger" onclick="deleteChecklistItem(${i})">🗑️ 刪除</button>
-           </div>`
-        : "";
-      const safeCat = escapeHtml(item.cat || "備忘");
-      const safeTitle = escapeHtml(item.title || "");
-      const safeNote = escapeHtml(item.note || "");
-      const safeLink = escapeAttribute(sanitizeUrl(item.link));
-      return `
-        <div style="display:flex;align-items:flex-start;gap:14px;padding:14px 0;border-bottom:1px solid rgba(220, 226, 222, 0.45);transition:all 0.2s;">
-          <input type="checkbox" style="width:20px;height:20px;accent-color:var(--moss);margin-top:2px;cursor:${canEdit ? "pointer" : "default"};border-radius:6px;" ${item.done ? "checked" : ""} ${canEdit ? `onclick="toggleChecklistItem(${i})"` : "disabled"}>
-          <div style="flex:1;${item.done ? "text-decoration:line-through;opacity:0.45;" : ""}">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-              <span style="font-size:10px;font-weight:800;color:#6B5A2A;background:var(--gold-soft);padding:3px 9px;border-radius:8px;letter-spacing:0.5px;border:1px solid rgba(197, 160, 89, 0.3);">${safeCat}</span>
-              ${editActions}
-            </div>
-            <div style="font-size:15px;font-weight:800;color:var(--moss);margin-top:5px;">${safeTitle}</div>
-            ${safeNote ? `<div style="font-size:12px;color:#555;margin-top:3px;line-height:1.5;">${safeNote}</div>` : ""}
-            ${safeLink && safeLink !== "#" ? `<a class="ext-link" href="${safeLink}" target="_blank" rel="noopener noreferrer">🔗 點擊查看/預約</a>` : ""}
-          </div>
-        </div>
-      `;
-    }).join("");
-
-    contentHtml = `
-      <div class="card">
-        <div class="card-header"><span class="card-title">✓ 行前準備清單項目</span></div>
-        ${rows}
-        ${addBtn}
-      </div>
-    `;
   }
 
   document.getElementById("page-checklist").innerHTML = `
     <!-- 輕奢進度儀表板 -->
-    <div class="card" style="background:var(--moss-gradient);color:#FFF;border:none;box-shadow:0 14px 36px rgba(31,54,36,0.25);">
+    <div class="card" style="background:var(--moss-gradient);color:#FFF;border:none;box-shadow:0 14px 36px rgba(31,54,36,0.25);margin-bottom:8px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
         <div>
           <div style="font-size:11px;color:rgba(255,255,255,0.8);letter-spacing:1.5px;font-weight:800;">PREPARATION PROGRESS</div>
@@ -2839,6 +2883,9 @@ function renderChecklist() {
         <div style="width:${percent}%;height:100%;background:linear-gradient(90deg, #DFC17B, #FFF);border-radius:10px;transition:width 0.4s ease;"></div>
       </div>
     </div>
+
+    <!-- 分類快捷過濾標籤列 -->
+    ${filterPillsHtml}
 
     <!-- 清單內容區 -->
     ${contentHtml}
@@ -2867,7 +2914,16 @@ function editChecklistItem(index) {
   const item = tripData.checklist[index];
   const formHtml = `
     <div class="ef-wrap">
-      <div class="ef-label">類別標籤</div>
+      <div class="ef-label">快速推薦分類</div>
+      <select class="ef-input" style="margin-bottom:8px;" onchange="if(this.value) document.getElementById('editChecklistCat').value=this.value;">
+        <option value="">-- 請選擇推薦分類 --</option>
+        <option value="證件與預訂">證件與預訂</option>
+        <option value="金錢與通訊">金錢與通訊</option>
+        <option value="行李與用品">行李與用品</option>
+        <option value="健康與保險">健康與保險</option>
+        <option value="其他事項">其他事項</option>
+      </select>
+      <div class="ef-label">自訂分類名稱</div>
       <input type="text" id="editChecklistCat" class="ef-input" value="${escapeAttribute(item.cat || "")}">
     </div>
     <div class="ef-wrap">
@@ -2879,13 +2935,13 @@ function editChecklistItem(index) {
       <input type="text" id="editChecklistNote" class="ef-input" value="${escapeAttribute(item.note || "")}">
     </div>
     <div class="ef-wrap">
-      <div class="ef-label">外部連結</div>
+      <div class="ef-label">相關連結 (可留空)</div>
       <input type="text" id="editChecklistLink" class="ef-input" value="${escapeAttribute(item.link || "")}">
     </div>
   `;
 
   openFormModal({
-    title: "✏️ 編輯必備清單項目",
+    title: "✏️ 編輯準備事項",
     bodyHtml: formHtml,
     confirmText: "儲存修改",
     onConfirm: async () => {
@@ -2899,7 +2955,7 @@ function editChecklistItem(index) {
         return false;
       }
 
-      tripData.checklist[index].cat = cat || "備忘";
+      tripData.checklist[index].cat = cat || "其他事項";
       tripData.checklist[index].title = title;
       tripData.checklist[index].note = note;
       tripData.checklist[index].link = link;
@@ -2919,7 +2975,7 @@ function deleteChecklistItem(index) {
 
   const item = tripData.checklist[index];
   openConfirmModal({
-    title: "刪除必備項目確認",
+    title: "刪除準備事項確認",
     message: `確定要刪除「${item.title || "此項目"}」嗎？`,
     danger: true,
     confirmText: "確定刪除",
@@ -2938,18 +2994,29 @@ function openAddChecklistModal() {
     return;
   }
 
+  const defaultCat = (currentChecklistFilter !== "全部") ? currentChecklistFilter : "證件與預訂";
+
   const formHtml = `
     <div class="ef-wrap">
-      <div class="ef-label">類別標籤（如：證件票券、電器裝備、隨身衣物）</div>
-      <input type="text" id="addChecklistCat" class="ef-input" value="行前準備">
+      <div class="ef-label">快速推薦分類</div>
+      <select class="ef-input" style="margin-bottom:8px;" onchange="if(this.value) document.getElementById('addChecklistCat').value=this.value;">
+        <option value="">-- 請選擇推薦分類 --</option>
+        <option value="證件與預訂" ${defaultCat === '證件與預訂' ? 'selected' : ''}>證件與預訂</option>
+        <option value="金錢與通訊" ${defaultCat === '金錢與通訊' ? 'selected' : ''}>金錢與通訊</option>
+        <option value="行李與用品" ${defaultCat === '行李與用品' ? 'selected' : ''}>行李與用品</option>
+        <option value="健康與保險" ${defaultCat === '健康與保險' ? 'selected' : ''}>健康與保險</option>
+        <option value="其他事項" ${defaultCat === '其他事項' ? 'selected' : ''}>其他事項</option>
+      </select>
+      <div class="ef-label">自訂分類名稱</div>
+      <input type="text" id="addChecklistCat" class="ef-input" value="${escapeAttribute(defaultCat)}">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">項目名稱 <span style="color:var(--red);">*</span></div>
-      <input type="text" id="addChecklistTitle" class="ef-input" placeholder="例如: 護照正本、日幣現金">
+      <input type="text" id="addChecklistTitle" class="ef-input" placeholder="例如: 美泉宮門票、護照正本">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">備註說明</div>
-      <input type="text" id="addChecklistNote" class="ef-input" placeholder="例如: 檢查效期需超過6個月">
+      <input type="text" id="addChecklistNote" class="ef-input" placeholder="例如: 預約時段 10:00、已購票">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">相關連結 (可留空)</div>
@@ -2958,7 +3025,7 @@ function openAddChecklistModal() {
   `;
 
   openFormModal({
-    title: "➕ 新增必備清單項目",
+    title: "➕ 新增準備事項",
     bodyHtml: formHtml,
     confirmText: "確認新增並同步",
     onConfirm: async () => {
@@ -2975,7 +3042,7 @@ function openAddChecklistModal() {
       if (!tripData.checklist) tripData.checklist = [];
       tripData.checklist.push({
         id: uid(),
-        cat: cat || "備忘",
+        cat: cat || "其他事項",
         title: title,
         note: note,
         link: link,
