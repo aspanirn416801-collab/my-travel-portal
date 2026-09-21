@@ -34,7 +34,7 @@ let authGeneration = 0;
 // =========================================================================
 const GOOGLE_CLIENT_ID = "1097668023463-ibj8qn5c98mhviggncl5a9m3t7dmjc45.apps.googleusercontent.com";
 const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzYvXwpdMDo5kn2TDlvSgbD2s-rXIqPMl6jn66jdWju239vRDqLoq2jcNmcD9vPNKvihA/exec";
-const APP_BUILD_VERSION = "20260921_15";
+const APP_BUILD_VERSION = "20260921_16";
 
 // 智能行程顯示名稱轉換 (直接依資料庫 Trips 工作表名稱為唯一準則，絕不寫死特定行程名稱)
 function getTripDisplayName(name = "", uuid = "") {
@@ -2168,25 +2168,9 @@ function sortDayItems(items) {
   });
 }
 
-// 智能依照 Day 序號 (Day 1 < Day 2 < Day 8) 或日期升冪排序
+// 只調整天數次序；景點次序以試算表 Days 的列順序為準。
 function sortTripDays(days) {
   if (!Array.isArray(days) || days.length === 0) return days || [];
-
-  // 自動檢測並校正每一天的景點時段順序 (若有上午排在下午後面的情況，自動重新排序)
-  days.forEach((d) => {
-    if (d && Array.isArray(d.items) && d.items.length > 1) {
-      let hasInversion = false;
-      for (let k = 0; k < d.items.length - 1; k++) {
-        if (getItineraryTimeScore(d.items[k].time) > getItineraryTimeScore(d.items[k + 1].time)) {
-          hasInversion = true;
-          break;
-        }
-      }
-      if (hasInversion) {
-        sortDayItems(d.items);
-      }
-    }
-  });
 
   if (days.length <= 1) return days;
 
@@ -3539,20 +3523,6 @@ function renderItinerary() {
   const day = tripData.days[selectedDay] || tripData.days[0];
   if (!day) return;
 
-  // 自動檢測並校正當前天數景點時段順序 (純畫面展示排序，絕不自動呼叫 save() 覆蓋雲端行程)
-  if (Array.isArray(day.items) && day.items.length > 1) {
-    let needsSort = false;
-    for (let k = 0; k < day.items.length - 1; k++) {
-      if (getItineraryTimeScore(day.items[k].time) > getItineraryTimeScore(day.items[k + 1].time)) {
-        needsSort = true;
-        break;
-      }
-    }
-    if (needsSort) {
-      sortDayItems(day.items);
-    }
-  }
-
   // 檢查是否有天數跳號 (例如 Day 1, Day 2, Day 4)
   let hasSkippedDays = false;
   tripData.days.forEach((d, idx) => {
@@ -3565,6 +3535,7 @@ function renderItinerary() {
   const dayActions = canEdit
     ? `<div class="item-actions">
          ${hasSkippedDays ? `<button class="btn-mini" style="background:var(--gold-soft);color:#6B5A2A;border-color:var(--gold);" onclick="resequenceAllDays()" title="偵測到天數跳號，點擊自動連續編號">⚡ 連續重編天數</button>` : ""}
+         ${(day.items || []).length > 1 ? `<button type="button" class="btn-mini" onclick="autoSortCurrentDayItems(${selectedDay})" ${isItineraryOrderSaving ? "disabled" : ""}>依時段排序</button>` : ""}
          <button class="btn-mini" onclick="openEditDayTitleModal(${selectedDay})">✏️ 編輯主題</button>
          ${tripData.days.length > 1
       ? `<button class="btn-mini btn-mini-danger" onclick="deleteCurrentDay(${selectedDay})">🗑️ 刪除本日</button>`
@@ -3629,6 +3600,8 @@ function renderItinerary() {
 
       const editActions = canEdit
         ? `<div class="item-actions">
+             <button type="button" class="btn-mini" onclick="moveItineraryItem(${selectedDay}, ${j}, -1)" aria-label="上移 ${escapeAttribute(item.place || "景點")}" title="上移" ${j === 0 || isItineraryOrderSaving ? "disabled" : ""}>⬆️</button>
+             <button type="button" class="btn-mini" onclick="moveItineraryItem(${selectedDay}, ${j}, 1)" aria-label="下移 ${escapeAttribute(item.place || "景點")}" title="下移" ${j === day.items.length - 1 || isItineraryOrderSaving ? "disabled" : ""}>⬇️</button>
              <button class="btn-mini" onclick="openEditItineraryModal(${selectedDay}, ${j})">✏️ 修改</button>
              <button class="btn-mini btn-mini-danger" onclick="deleteItineraryItem(${selectedDay}, ${j})">🗑️ 刪除</button>
            </div>`
@@ -4198,8 +4171,6 @@ function openEditItineraryModal(dayIdx, itemIdx) {
       );
 
       // 編輯景點時段後，自動依時段重新排序
-      sortDayItems(tripData.days[dayIdx].items);
-
       renderItinerary();
       const ok = await save();
       return ok !== false;
@@ -4367,8 +4338,12 @@ function deleteItineraryItem(dayIdx, itemIdx) {
   });
 }
 
+// 等待本次順序寫入完成，避免連點形成互相覆蓋的雲端儲存。
+let isItineraryOrderSaving = false;
+
 // 手動調整景點前後順序 (上移 / 下移)
 async function moveItineraryItem(dayIdx, itemIdx, offset) {
+  if (isItineraryOrderSaving) return;
   if (!canEditCurrentTrip()) {
     showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
     return;
@@ -4379,17 +4354,26 @@ async function moveItineraryItem(dayIdx, itemIdx, offset) {
   const targetIdx = itemIdx + offset;
   if (targetIdx < 0 || targetIdx >= day.items.length) return;
 
+  isItineraryOrderSaving = true;
+  const tripUuid = currentTripUuid;
+  const generation = authGeneration;
   const item = day.items.splice(itemIdx, 1)[0];
   day.items.splice(targetIdx, 0, item);
   renderItinerary();
-  const ok = await save();
-  if (ok !== false) {
-    showToast("已調整景點順序 ✓");
+  try {
+    const ok = await save();
+    if (ok === true && tripUuid === currentTripUuid && generation === authGeneration) {
+      showToast("已調整景點順序 ✓");
+    }
+  } finally {
+    isItineraryOrderSaving = false;
+    if (tripUuid === currentTripUuid && generation === authGeneration) renderItinerary();
   }
 }
 
 // 依時段自動排序當日所有景點
 async function autoSortCurrentDayItems(dayIdx) {
+  if (isItineraryOrderSaving) return;
   if (!canEditCurrentTrip()) {
     showToast("⚠️ 目前為唯讀模式，無法修改手冊內容");
     return;
@@ -4400,11 +4384,19 @@ async function autoSortCurrentDayItems(dayIdx) {
     showToast("景點數量無需排序");
     return;
   }
+  isItineraryOrderSaving = true;
+  const tripUuid = currentTripUuid;
+  const generation = authGeneration;
   sortDayItems(day.items);
   renderItinerary();
-  const ok = await save();
-  if (ok !== false) {
-    showToast("已依時段順序重新排列！ ✓");
+  try {
+    const ok = await save();
+    if (ok === true && tripUuid === currentTripUuid && generation === authGeneration) {
+      showToast("已依時段順序重新排列！ ✓");
+    }
+  } finally {
+    isItineraryOrderSaving = false;
+    if (tripUuid === currentTripUuid && generation === authGeneration) renderItinerary();
   }
 }
 
@@ -4482,8 +4474,6 @@ function openAddItineraryModal(dayIdx) {
       });
 
       // 新增景點後自動依時段重新排序，確保時間軸早中晚順序井然
-      sortDayItems(tripData.days[dayIdx].items);
-
       renderItinerary();
       const ok = await save();
       return ok !== false;
