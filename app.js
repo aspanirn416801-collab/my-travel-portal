@@ -1143,6 +1143,10 @@ window.onpopstate = function () {
   }
 };
 
+// 首次認證解析旗標：確保首次開頁只向 GAS 發送一次精準請求，避免「先發訪客、再發登入」的雙重請求
+let initialAuthResolved = false;
+let initialAuthTimer = null;
+
 // 初始化流程：DOMContentLoaded 立即觸發，不等網路！
 document.addEventListener("DOMContentLoaded", function () {
   initRouter();
@@ -1170,12 +1174,18 @@ document.addEventListener("DOMContentLoaded", function () {
     // 若在後台頁，保持後台渲染，絕不執行大廳渲染！
     renderAdminView();
   } else {
-    // 若在大廳頁，立即渲染大廳卡片！
+    // 若在大廳頁，立即渲染本機大廳卡片（零等待秒開）！
     renderHubTripsGrid();
   }
 
-  // 在背景靜默連線 Google Apps Script 同步最新數據
-  fetchTrips();
+  // 設置 1.5 秒安全逾時：若 Firebase Auth 未能在 1.5 秒內完成身分判斷，自動以訪客身分發起同步
+  initialAuthTimer = setTimeout(() => {
+    if (!initialAuthResolved) {
+      initialAuthResolved = true;
+      console.log("Firebase Auth 本地判定逾時，自動啟動訪客資料同步");
+      fetchTrips();
+    }
+  }, 1500);
 });
 
 // 初始化 Firebase Auth 長效登入監聽器
@@ -1184,6 +1194,16 @@ function initGoogleAuth() {
     if (window.firebaseAuth && window.onAuthStateChanged) {
       window.onAuthStateChanged(window.firebaseAuth, async (user) => {
         if (isLoggingOut || firebaseSignOutPending || authStatus === "signout-failed") return;
+
+        const isFirstStartupCheck = !initialAuthResolved;
+        if (isFirstStartupCheck) {
+          initialAuthResolved = true;
+          if (initialAuthTimer) {
+            clearTimeout(initialAuthTimer);
+            initialAuthTimer = null;
+          }
+        }
+
         if (user) {
           if (authenticatedUid !== user.uid) {
             // Invalidate guest/previous-account responses before token retrieval.
@@ -1226,6 +1246,10 @@ function initGoogleAuth() {
           } else {
             authStatus = "guest";
             updateAuthUI();
+            // 首次啟動且確定為訪客時，只在此時發起一次訪客同步
+            if (isFirstStartupCheck) {
+              fetchTrips();
+            }
           }
         }
       });
@@ -1367,8 +1391,8 @@ function updateAuthUI() {
 
     if (authStatus === "verifying") {
       badge.className = "user-badge badge-user";
-      const hintText = roleHint === "admin" ? "正在恢復管理員身分..." : "正在恢復登入身分...";
-      badge.innerHTML = `⏳ ${hintText} (${escapeHtml(userName)})`;
+      const hintText = roleHint === "admin" ? "正在讀取雲端行程..." : "正在讀取行程手冊...";
+      badge.innerHTML = `☁️ ${hintText} (${escapeHtml(userName)})`;
       if (adminHubActions) adminHubActions.style.display = "none";
     } else if (authStatus === "auth-error") {
       badge.className = "user-badge badge-user badge-actionable";
@@ -1377,7 +1401,7 @@ function updateAuthUI() {
         badge.title = `點擊重新登入 (${userName})`;
         badge.onclick = () => triggerGoogleLogin();
       } else {
-        badge.innerHTML = `⚠️ 驗證失敗 <span style="text-decoration:underline;margin-left:2px;">[點此重試]</span>`;
+        badge.innerHTML = `⚠️ 雲端連線異常 <span style="text-decoration:underline;margin-left:2px;">[點此重試]</span>`;
         badge.title = `點擊重新連線 (${userName})`;
         badge.onclick = () => fetchTrips({force:true});
       }
@@ -1429,7 +1453,7 @@ function updateAuthUI() {
     badge.onclick = canRetry ? () => fetchTrips({ force: true }) : null;
     badge.title = canRetry ? "點擊重新連線" : "";
     badge.className = authStatus === "verifying" || canRetry ? "user-badge badge-user" : "user-badge badge-guest";
-    badge.innerText = canRetry ? "⚠️ 身分恢復失敗 [點此重試]" : authStatus === "verifying" ? "⏳ 正在恢復登入..." : "訪客模式 (唯讀)";
+    badge.innerText = canRetry ? "⚠️ 雲端讀取失敗 [點此重試]" : authStatus === "verifying" ? "☁️ 正在讀取雲端行程..." : "訪客模式 (唯讀)";
     if (logoutBtn) logoutBtn.style.display = window.firebaseAuth?.currentUser ? "inline-flex" : "none";
     if (adminHubActions) adminHubActions.style.display = "none";
     if (loginBtn) loginBtn.style.display = "inline-flex";
@@ -1880,6 +1904,8 @@ async function fetchTrips({ force = false } = {}) {
     try {
       const freshToken = await getFreshIdToken();
       const tokenParam = freshToken ? `&token=${encodeURIComponent(freshToken)}` : "";
+      const isAdminUser = userRole === "admin" || verifiedRole === "admin";
+      const forceParam = (force && freshToken && isAdminUser) ? "&forceRefresh=1" : "";
       const currentPin = requestedTripUuid ? (memoryUnlockedPins.get(requestedTripUuid) || "") : "";
       const tripParam = requestedTripUuid ? `&tripUuid=${encodeURIComponent(requestedTripUuid)}&tripPassword=${encodeURIComponent(currentPin)}` : "";
       
@@ -1887,7 +1913,7 @@ async function fetchTrips({ force = false } = {}) {
       const hasValidToken = Boolean(freshToken);
       const shouldBootstrap = requestedTripUuid && hasValidToken;
       const actionName = shouldBootstrap ? "bootstrap" : "getTrips";
-      const res = await fetch(`${GAS_API_URL}?action=${actionName}${tokenParam}${tripParam}`);
+      const res = await fetch(`${GAS_API_URL}?action=${actionName}${tokenParam}${tripParam}${forceParam}`);
       const result = await res.json();
 
       // 若後續已有更新的請求發出，放棄過期回應
@@ -2203,12 +2229,12 @@ function sortTripDays(days) {
   });
 }
 
-// 取得特定行程的詳細旅遊資料 (SWR 0 秒瞬間秒開快取機制)
-async function fetchTripData() {
+// 取得特定行程的詳細旅遊資料 (SWR 0 秒瞬間秒開快取機制，支援管理員強制刷新)
+async function fetchTripData({ force = false } = {}) {
   if (isLoggingOut || firebaseSignOutPending || authStatus === "signout-failed") return;
   if (!currentTripUuid) return;
 
-  const isAdmin = userRole === "admin";
+  const isAdmin = userRole === "admin" || verifiedRole === "admin";
   const savedUnlockPwd = sessionStorage.getItem("unlocked_trip_" + currentTripUuid) || "";
 
   // 檢查特定行程是否受密碼保護且尚未解鎖
@@ -2229,11 +2255,11 @@ async function fetchTripData() {
   const requestedUuid = currentTripUuid;
   const requestSequence = ++tripRequestSequence;
 
-  // 1. 若當前 Session 存在且已確認通過門禁或具備編輯權限，優先從 Session 快取秒開
+  // 1. 若當前 Session 存在且已確認通過門禁或具備編輯權限，優先從 Session 快取秒開 (若非強制刷新)
   let hasCache = false;
   try {
     const cached = sessionStorage.getItem("session_trip_" + currentTripUuid);
-    if (cached) {
+    if (cached && !force) {
       const parsedData = JSON.parse(cached);
       if (isAdmin || canEditCurrentTrip() || memoryUnlockedPins.has(currentTripUuid)) {
         tripData = sanitizeAndDeduplicateTrip(parsedData);
@@ -2268,12 +2294,13 @@ async function fetchTripData() {
   try {
     const freshToken = await getFreshIdToken();
     const tokenParam = freshToken ? `&token=${encodeURIComponent(freshToken)}` : "";
+    const forceParam = (force && freshToken && isAdmin) ? "&forceRefresh=1" : "";
     const memPin = memoryUnlockedPins.get(currentTripUuid);
     const pwdParam = memPin ? `&tripPassword=${encodeURIComponent(memPin)}` : "";
     const res = await fetch(
       `${GAS_API_URL}?action=getTripData&tripUuid=${encodeURIComponent(
         currentTripUuid,
-      )}${tokenParam}${pwdParam}`,
+      )}${tokenParam}${pwdParam}${forceParam}`,
     );
     const result = await res.json();
 
