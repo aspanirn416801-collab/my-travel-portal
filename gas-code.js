@@ -512,6 +512,7 @@ function doGet(e) {
         // 只有在已確認為系統管理員時，才採納 forceRefresh 略過快取；一般成員或訪客一律忽略！
         if (clientWantsRefresh && access.role === "admin") {
           isForceRefresh = true;
+          access = null; // 管理員強制刷新：清空舊權限快取，強制重新開表讀取最新行程清單！
         } else if (action === "getTrips") {
           // 快取命中且無需強制刷新，直接回傳
           return ContentService.createTextOutput(JSON.stringify({
@@ -529,9 +530,9 @@ function doGet(e) {
     const tripRows = tripSheet ? tripSheet.getDataRange().getDisplayValues() : [];
 
     if (email) {
-      if (!access) {
+      if (!access || isForceRefresh) {
         access = getUserAccess(email, masterSpreadsheet, tripRows);
-        // 成功讀取後安全存入權限快取 (綁定 accessRevision)
+        // 成功讀取後安全存入權限快取 (若為強制刷新則覆寫最新資料)
         const accessCacheKey = "access_" + hashToken(email) + "_" + getAccessRevision();
         safePutCache(accessCacheKey, access, 300);
       }

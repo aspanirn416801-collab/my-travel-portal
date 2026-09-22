@@ -5470,7 +5470,7 @@ function renderAdminView() {
 async function refreshAdminData() {
   showLoading("正在同步最新行程資訊...");
   try {
-    await fetchTrips();
+    await fetchTrips({ force: true });
     renderAdminView();
     showToast("全站行程資料已最新同步 ✓");
   } catch (e) {
