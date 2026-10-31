@@ -5890,6 +5890,34 @@ function ensureTransportData() {
   if (!Array.isArray(tripData.transport.routes)) tripData.transport.routes = [];
 }
 
+// 交通類型偵測：由「車種資訊」優先判斷，其次才看「起訖點」與「備註」，不需新增試算表欄位
+// 順序即優先度（越前面越優先，避免「步行轉搭地鐵」被誤判）
+const TRANSPORT_TYPE_RULES = [
+  { key: "flight", icon: "✈️", label: "飛機", re: /航班|飛機|搭機|航空|flight|airlines?/i },
+  { key: "ropeway", icon: "🚡", label: "纜車", re: /纜車|空中纜車|索道|ropeway|gondola/i },
+  { key: "ferry", icon: "⛴️", label: "渡輪", re: /渡輪|渡船|郵輪|遊船|船班|ferry|cruise/i },
+  { key: "subway", icon: "🚇", label: "地鐵", re: /地鐵|地下鐵|捷運|metro|subway|u-?bahn|\bU[1-9]\b|メトロ|市電|電車路面|tram|輕軌|路面電車/i },
+  { key: "bus", icon: "🚌", label: "巴士", re: /巴士|公車|客運|接駁車?|bus|バス|flixbus|regiojet/i },
+  { key: "taxi", icon: "🚕", label: "計程車", re: /計程車|taxi|uber|bolt|包車|租車|自駕|開車|專車/i },
+  { key: "hsr", icon: "🚄", label: "高鐵／特快", re: /新幹線|高鐵|ktx|shinkansen|のぞみ|ひかり|こだま|はやぶさ|\bICE\b|railjet|\bRJX?\b|特急|特快/i },
+  { key: "train", icon: "🚆", label: "火車", re: /火車|鐵路|鐵道|電車|列車|train|\bJR\b|ÖBB|OEBB|\bR\s?\d|\bEC\b|\bIC\b|快速|普通車|區間/i },
+  { key: "walk", icon: "🚶", label: "步行", re: /步行|走路|徒步|walk|散步/i },
+];
+
+function detectTransportType(item) {
+  const primary = String((item && item.trainInfo) || "");
+  const secondary = [(item && item.fromTo) || "", (item && item.note) || ""].join(" ");
+  // 第一輪只看車種資訊；找不到再放寬到起訖點與備註
+  for (const text of [primary, secondary]) {
+    if (!text.trim()) continue;
+    for (const rule of TRANSPORT_TYPE_RULES) {
+      if (rule.re.test(text)) return rule;
+    }
+  }
+  // 都對不上時用中性預設，不亂猜
+  return { key: "other", icon: "🧭", label: "交通" };
+}
+
 function renderTransport() {
   if (!tripData) return;
   ensureTransportData();
@@ -6119,11 +6147,13 @@ function renderTransport() {
             `
               : "";
 
+            const tType = detectTransportType(item);
+
             return `
-              <div class="transit-item-card">
+              <div class="transit-item-card transit-type-${tType.key}">
                 <div class="transit-header-row">
                   <div class="transit-route-title">
-                    <span>🚆</span>
+                    <span>${tType.icon}</span>
                     <span>${safeFromTo}</span>
                   </div>
                   <div style="display:flex;align-items:center;gap:6px;">
@@ -6132,6 +6162,7 @@ function renderTransport() {
                   </div>
                 </div>
                 <div class="transit-tags-row">
+                  <span class="transit-type-chip">${tType.icon} ${tType.label}</span>
                   ${safeTrain ? `<span class="transit-badge-train">🏷️ ${safeTrain}</span>` : ""}
                   ${safeSeat ? `<span class="transit-badge-seat">💺 ${safeSeat}</span>` : ""}
                   ${safeCost ? `<span class="transit-badge-cost">💵 ${safeCost} ${safeCurr}</span>` : ""}

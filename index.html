@@ -1766,6 +1766,34 @@ body.large { font-size: 16px; }
   border: 1px solid var(--mist);
 }
 
+/* 交通類型彩色標籤：每種交通共用一個 --tt-color，卡片左側色條與標籤同色 */
+.transit-item-card { border-left: 5px solid var(--tt-color, #9AA89F); }
+.transit-type-chip {
+  background: color-mix(in srgb, var(--tt-color, #9AA89F) 14%, #fff);
+  color: color-mix(in srgb, var(--tt-color, #9AA89F) 78%, #000);
+  border: 1px solid color-mix(in srgb, var(--tt-color, #9AA89F) 45%, #fff);
+  font-size: 11px;
+  font-weight: 900;
+  padding: 3px 9px;
+  border-radius: 8px;
+}
+.transit-type-flight  { --tt-color: #4F8FD9; }
+.transit-type-hsr     { --tt-color: #D9534F; }
+.transit-type-train   { --tt-color: #E08A2E; }
+.transit-type-subway  { --tt-color: #8A63C9; }
+.transit-type-bus     { --tt-color: #2F9E6E; }
+.transit-type-taxi    { --tt-color: #C9A227; }
+.transit-type-ferry   { --tt-color: #2BA5B5; }
+.transit-type-ropeway { --tt-color: #D9709A; }
+.transit-type-walk    { --tt-color: #7A8B80; }
+.transit-type-other   { --tt-color: #9AA89F; }
+
+/* 尊重系統「減少動態效果」設定：關閉卡片位移與過場動畫 */
+@media (prefers-reduced-motion: reduce) {
+  .transit-item-card { transition: none; }
+  .transit-item-card:hover { transform: none; }
+}
+
 /* 全螢幕相簿燈箱 Lightbox (支援雙指縮放、拖曳平移與多張地圖切換) */
 .lightbox-overlay {
   position: fixed;
@@ -3047,6 +3075,6 @@ body.large { font-size: 16px; }
     <!-- 核心邏輯主程式 (支援單次載入、SPA分頁切換與防畫面跳動) -->
     <!-- 核心狀態管理與安全跳脫模組 (正式網頁與自動化測試共用) -->
     <script src="trip-state.js?v=20260918_13"></script>
-    <script src="app.js?v=20260922_22"></script>
+    <script src="app.js?v=20261027_23"></script>
 </body>
 </html>
