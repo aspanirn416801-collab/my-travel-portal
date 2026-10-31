@@ -283,6 +283,9 @@ function safeGetCache(key) {
 function invalidateCaches(options) {
   const opts = options || {};
   const cache = CacheService.getScriptCache();
+  try {
+    cache.remove("master_trip_rows_" + getAccessRevision());
+  } catch (e) { }
   if (opts.clearPublicTrips) {
     try { cache.remove("public_trips_v1"); } catch (e) { }
   }
@@ -524,10 +527,17 @@ function doGet(e) {
       }
     }
 
-    // 3. Cache Miss 時才開啟主控試算表 (共用單一實例，消除重複開表與讀表)
-    const masterSpreadsheet = SpreadsheetApp.openById(MASTER_SHEET_ID);
-    const tripSheet = masterSpreadsheet.getSheetByName("Trips");
-    const tripRows = tripSheet ? tripSheet.getDataRange().getDisplayValues() : [];
+    // 3. Cache Miss 時才開啟主控試算表 (結合 master_trip_rows 快取與共用單一實例，消除重複開表與讀表)
+    const masterRowsCacheKey = "master_trip_rows_" + getAccessRevision();
+    const cachedMasterRows = !isForceRefresh ? safeGetCache(masterRowsCacheKey) : null;
+    const masterSpreadsheet = (!cachedMasterRows || (email && (!access || isForceRefresh)))
+      ? SpreadsheetApp.openById(MASTER_SHEET_ID)
+      : null;
+    const tripSheet = masterSpreadsheet ? masterSpreadsheet.getSheetByName("Trips") : null;
+    const tripRows = cachedMasterRows || (tripSheet ? tripSheet.getDataRange().getDisplayValues() : []);
+    if (!cachedMasterRows && tripRows.length > 0) {
+      safePutCache(masterRowsCacheKey, tripRows, 300);
+    }
 
     if (email) {
       if (!access || isForceRefresh) {
@@ -625,8 +635,8 @@ function doGet(e) {
                 delete data.allowed_users;
                 delete data.sheet_id;
                 delete data.folder_id;
-                // 成功讀取後安全存入手冊快取 (檢查 < 90KB，時效設為 90 秒，兼顧流暢度與手動改表及時性)
-                safePutCache("trip_content_" + tripUuid, data, 90);
+                // 成功讀取後安全存入手冊快取 (檢查 < 90KB，時效設為 300 秒 / 5 分鐘，兼顧秒開流暢度與改表更新)
+                safePutCache("trip_content_" + tripUuid, data, 300);
               }
               currentTripData = data;
             } catch (loadErr) { }
@@ -785,8 +795,8 @@ function doGet(e) {
           delete data.sheet_id;
           delete data.folder_id;
 
-          // 成功讀取後安全存入手冊快取 (與 bootstrap 共用同一快取，時效設為 90 秒，避免改表等候過久)
-          safePutCache("trip_content_" + tripUuid, data, 90);
+          // 成功讀取後安全存入手冊快取 (與 bootstrap 共用同一快取，時效設為 300 秒 / 5 分鐘，避免頻繁冷讀表)
+          safePutCache("trip_content_" + tripUuid, data, 300);
         }
 
         return ContentService.createTextOutput(JSON.stringify({

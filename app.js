@@ -1164,6 +1164,20 @@ document.addEventListener("DOMContentLoaded", function () {
     if (hasPassword && !isAdmin && !canEdit && !isUnlocked) {
       showLockedView(trip || { uuid: currentTripUuid, name: (trip && trip.name) || currentTripUuid });
     } else {
+      // 若尚未載入 tripData，優先嘗試從當前分頁 sessionStorage 快取瞬間還原，實現 F5 重整 0 秒秒開
+      if (!tripData) {
+        let roleHint = "";
+        try { roleHint = sessionStorage.getItem("auth_role_hint") || ""; } catch (e) {}
+        if (!hasPassword || isAdmin || canEdit || isUnlocked || roleHint === "admin") {
+          try {
+            const cached = sessionStorage.getItem("session_trip_" + currentTripUuid);
+            if (cached) {
+              tripData = sanitizeAndDeduplicateTrip(JSON.parse(cached));
+              if (tripData && tripData.days) sortTripDays(tripData.days);
+            }
+          } catch (e) {}
+        }
+      }
       showTripView();
       if (tripData) {
         initCountdown();
@@ -1635,6 +1649,8 @@ async function logout(skipFirebaseSignOut = false) {
   tripPermissions.clear();
   memoryUnlockedPins.clear();
   confirmedSnapshots.clear(); // 徹底清空所有行程之確認快照
+  prefetchedTripSet.clear();
+  prefetchTimestampMap.clear();
   tripData = null;           // 清空當前手冊資料
   currentTripUuid = "";      // 重設當前行程 ID
   tripRequestSequence++;     // 推進流水號，使登出前尚未完成的手冊回應徹底失效
@@ -1995,6 +2011,7 @@ async function fetchTrips({ force = false } = {}) {
           }
         } else if (!currentTripUuid && !isAdminRoute) {
           renderHubTripsGrid();
+          scheduleIdleTripPrefetch();
         }
       } else if (result.status === "auth_error") {
         // 後端 Google 身分驗證暫時失敗（網路抖動/tokeninfo延遲）：
@@ -2118,7 +2135,7 @@ function renderHubTripsGrid() {
       const altText = safeName.includes("岡山") ? "日本岡山行程封面照片" : (safeName.includes("奧") || safeName.includes("捷") ? "奧地利捷克行程封面照片" : `${safeName} 封面照片`);
 
       return `
-        <a href="?trip=${encodeURIComponent(safeUuid)}" class="trip-hub-card" onclick="event.preventDefault(); openTripByUuid('${safeUuid}')" aria-label="${safeName}行程手冊" style="text-decoration:none;color:inherit;display:flex;">
+        <a href="?trip=${encodeURIComponent(safeUuid)}" class="trip-hub-card" onclick="event.preventDefault(); openTripByUuid('${safeUuid}')" onmouseenter="prefetchTripByUuid('${safeUuid}')" ontouchstart="prefetchTripByUuid('${safeUuid}')" aria-label="${safeName}行程手冊" style="text-decoration:none;color:inherit;display:flex;">
           <div class="hub-card-cover-wrap">
             <img class="hub-card-cover" src="${escapeAttribute(coverInfo.url)}" alt="${altText}" loading="lazy" referrerpolicy="no-referrer" onerror="handleImgError(this)">
             <div class="hub-card-tag">${coverInfo.tag}</div>
@@ -2229,6 +2246,82 @@ function sortTripDays(days) {
   });
 }
 
+// 輕量精準預載機制：滑鼠移上/手指觸碰卡片或大廳閒置時，預先快取已解鎖行程手冊（嚴守 PIN 門禁與去重保護）
+const prefetchedTripSet = new Set();
+const prefetchTimestampMap = new Map();
+
+async function prefetchTripByUuid(uuid) {
+  if (!uuid || isLoggingOut || firebaseSignOutPending || authStatus === "signout-failed") return;
+  if (prefetchedTripSet.has(uuid)) return;
+
+  // 若 sessionStorage 已有快取，記錄後直接略過，絕不浪費網路流量
+  try {
+    if (sessionStorage.getItem("session_trip_" + uuid)) {
+      prefetchedTripSet.add(uuid);
+      return;
+    }
+  } catch (e) {}
+
+  const trip = tripsList.find((t) => t.uuid === uuid);
+  if (!trip) return;
+  const hasPassword = Boolean(trip.hasPassword);
+  const isAdmin = (userRole === "admin" || verifiedRole === "admin") && hasVerifiedFirebaseSession();
+  const perm = tripPermissions.get(uuid);
+  const canEdit = Boolean(hasVerifiedFirebaseSession() && verifiedRole === "user" && perm?.canEdit);
+  const hasMemPin = memoryUnlockedPins.has(uuid);
+
+  // 嚴格門禁：若設有密碼且目前未解鎖、非管理員、非授權團員，絕對不預載！
+  if (hasPassword && !isAdmin && !canEdit && !hasMemPin) return;
+
+  prefetchedTripSet.add(uuid);
+  const prefetchGen = authGeneration;
+  try {
+    const freshToken = await getFreshIdToken();
+    if (prefetchGen !== authGeneration) return;
+    const tokenParam = freshToken ? `&token=${encodeURIComponent(freshToken)}` : "";
+    const memPin = memoryUnlockedPins.get(uuid);
+    const pwdParam = (typeof memPin === "string" && memPin) ? `&tripPassword=${encodeURIComponent(memPin)}` : "";
+    const res = await fetch(`${GAS_API_URL}?action=getTripData&tripUuid=${encodeURIComponent(uuid)}${tokenParam}${pwdParam}`);
+    const result = await res.json();
+    if (prefetchGen !== authGeneration) return;
+    if (result && result.status === "success" && result.data) {
+      if (result.canEdit !== undefined) {
+        tripPermissions.set(uuid, { canEdit: Boolean(result.canEdit) });
+      }
+      const cleaned = sanitizeAndDeduplicateTrip(result.data);
+      if (cleaned && cleaned.days) sortTripDays(cleaned.days);
+      updateConfirmedSnapshot(uuid, cleaned);
+      prefetchTimestampMap.set(uuid, Date.now());
+    } else {
+      prefetchedTripSet.delete(uuid);
+    }
+  } catch (e) {
+    prefetchedTripSet.delete(uuid);
+  }
+}
+
+// 大廳閒置時最多自動預載第 1 個可直通（免密或已授權）的行程，兼顧秒開體驗與零流量浪費
+function scheduleIdleTripPrefetch() {
+  setTimeout(() => {
+    if (currentTripUuid || isLoggingOut || firebaseSignOutPending) return;
+    for (const t of tripsList) {
+      if (!t || !t.uuid) continue;
+      try {
+        if (sessionStorage.getItem("session_trip_" + t.uuid)) continue;
+      } catch (e) {}
+      const hasPassword = Boolean(t.hasPassword);
+      const isAdmin = (userRole === "admin" || verifiedRole === "admin") && hasVerifiedFirebaseSession();
+      const perm = tripPermissions.get(t.uuid);
+      const canEdit = Boolean(hasVerifiedFirebaseSession() && verifiedRole === "user" && perm?.canEdit);
+      const hasMemPin = memoryUnlockedPins.has(t.uuid);
+      if (!hasPassword || isAdmin || canEdit || hasMemPin) {
+        prefetchTripByUuid(t.uuid);
+        break; // 嚴格限制最多自動預載 1 筆
+      }
+    }
+  }, 600);
+}
+
 // 取得特定行程的詳細旅遊資料 (SWR 0 秒瞬間秒開快取機制，支援管理員強制刷新)
 async function fetchTripData({ force = false } = {}) {
   if (isLoggingOut || firebaseSignOutPending || authStatus === "signout-failed") return;
@@ -2255,13 +2348,17 @@ async function fetchTripData({ force = false } = {}) {
   const requestedUuid = currentTripUuid;
   const requestSequence = ++tripRequestSequence;
 
-  // 1. 若當前 Session 存在且已確認通過門禁或具備編輯權限，優先從 Session 快取秒開 (若非強制刷新)
+  // 1. 若當前 Session 存在且已確認通過門禁（含無密碼公開行程、管理員、授權成員或已輸入 PIN），優先從 Session 快取 0 秒秒開
   let hasCache = false;
   try {
     const cached = sessionStorage.getItem("session_trip_" + currentTripUuid);
     if (cached && !force) {
       const parsedData = JSON.parse(cached);
-      if (isAdmin || canEditCurrentTrip() || memoryUnlockedPins.has(currentTripUuid)) {
+      const currentMeta = tripsList.find((t) => t.uuid === currentTripUuid);
+      const hasPwd = currentMeta ? Boolean(currentMeta.hasPassword) : Boolean(parsedData && parsedData.password);
+      let roleHint = "";
+      try { roleHint = sessionStorage.getItem("auth_role_hint") || ""; } catch (e) {}
+      if (!hasPwd || isAdmin || canEditCurrentTrip() || memoryUnlockedPins.has(currentTripUuid) || roleHint === "admin") {
         tripData = sanitizeAndDeduplicateTrip(parsedData);
         if (tripData && tripData.days) {
           sortTripDays(tripData.days);
@@ -2280,6 +2377,12 @@ async function fetchTripData({ force = false } = {}) {
         showTripView();
         initCountdown();
         render();
+
+        // 若此快取是剛剛 25 秒內由大廳預載完成的最新資料，直接免除重複 API 請求
+        const prefetchedAt = prefetchTimestampMap.get(currentTripUuid) || 0;
+        if (Date.now() - prefetchedAt < 25000) {
+          return;
+        }
       }
     }
   } catch (e) {}
