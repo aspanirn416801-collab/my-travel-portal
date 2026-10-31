@@ -6,7 +6,16 @@
 <title>✈️ LALA’S TRAVEL DOOR</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Noto+Serif+TC:wght@500;700;900&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://script.google.com">
+<link rel="preconnect" href="https://script.googleusercontent.com">
+<link rel="preconnect" href="https://images.unsplash.com">
+<!-- 預載首頁關鍵大圖與 Firebase 認證模組，消除資源瀑布等待 -->
+<link rel="preload" as="image" href="./assets/images/home-hero.webp">
+<link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.9.0/firebase-app.js">
+<link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.9.0/firebase-auth.js">
+<!-- 精簡字體家族與字重：移除未使用的 Cinzel 600 與 Noto Serif TC 500/700，大幅減少中文字型切片下載 -->
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700&family=Noto+Serif+TC:wght@900&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
 :root {
   --washi: #EFF3F1;
@@ -3072,9 +3081,9 @@ body.large { font-size: 16px; }
 
     document.dispatchEvent(new CustomEvent("firebase-ready"));
   </script>
-    <!-- 核心邏輯主程式 (支援單次載入、SPA分頁切換與防畫面跳動) -->
+    <!-- 核心邏輯主程式 (支援單次載入、SPA分頁切換與防畫面跳動，使用 defer 非阻塞載入並確保執行順序) -->
     <!-- 核心狀態管理與安全跳脫模組 (正式網頁與自動化測試共用) -->
-    <script src="trip-state.js?v=20260918_13"></script>
-    <script src="app.js?v=20261027_23"></script>
+    <script src="trip-state.js?v=20260918_13" defer></script>
+    <script src="app.js?v=20261027_23" defer></script>
 </body>
 </html>
